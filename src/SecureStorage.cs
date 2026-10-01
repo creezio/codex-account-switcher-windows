@@ -46,7 +46,8 @@ namespace Creezio.Switcher
         {
             RejectLinks(path);
             if (new FileInfo(path).Length > 4194304) throw new IOException("Fichier trop volumineux.");
-            return File.ReadAllText(path, Encoding.UTF8);
+            using(var stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))
+            using(var reader=new StreamReader(stream,Encoding.UTF8)) return reader.ReadToEnd();
         }
         public static void DeleteOwnedTree(string root, string target)
         {
@@ -80,8 +81,9 @@ namespace Creezio.Switcher
             {
                 clear = ProtectedData.Unprotect(File.ReadAllBytes(FilePath), Entropy, DataProtectionScope.CurrentUser);
                 var data = Json.Read<VaultData>(Encoding.UTF8.GetString(clear));
-                if (data == null || data.Version != 1 || data.Profiles == null) throw new InvalidDataException();
+                if (data == null || (data.Version != 1 && data.Version != 2) || data.Profiles == null) throw new InvalidDataException();
                 foreach (var profile in data.Profiles) if (AuthIdentity.Parse(profile.AuthJson).Key != profile.Key) throw new InvalidDataException();
+                InstanceRules.Normalize(data);
                 return data;
             }
             catch { throw new InvalidOperationException("Impossible d'ouvrir le coffre. Il doit être lu par le même utilisateur Windows. Le fichier existant est conservé."); }
@@ -89,6 +91,13 @@ namespace Creezio.Switcher
         }
         public void Save(VaultData data)
         {
+            InstanceRules.Normalize(data);
+            // Keep the encrypted v1 vault once; older versions refuse the new schema.
+            if(File.Exists(FilePath) && !File.Exists(Path.Combine(Root,"accounts-before-instances.dpapi")))
+            {
+                SafeFiles.RejectLinks(FilePath);
+                SafeFiles.AtomicWrite(Path.Combine(Root,"accounts-before-instances.dpapi"),File.ReadAllBytes(FilePath));
+            }
             byte[] clear = Encoding.UTF8.GetBytes(Json.Write(data));
             try { SafeFiles.AtomicWrite(FilePath, ProtectedData.Protect(clear, Entropy, DataProtectionScope.CurrentUser)); }
             finally { Array.Clear(clear, 0, clear.Length); }

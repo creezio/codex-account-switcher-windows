@@ -1,20 +1,25 @@
 # Codex Account Switcher pour Windows
 
-Une application native et légère pour retrouver les quotas de vos comptes Codex
-et choisir celui que vous souhaitez utiliser. Développée par **Creezio**.
+Une application native pour gérer plusieurs instances Codex en parallèle,
+associer vos comptes à vos espaces et suivre leurs limites. Développée par **Creezio**.
 
-**Version 0.2.0 — bêta avec reset automatique.** Windows 10/11, interface en
+**Version 0.3.0 — bêta multi-instance.** Windows 10/11, interface en
 français, exécutable portable sans droits administrateur ni dépendances NuGet.
 
-[Télécharger la version Windows](https://github.com/creezio/codex-account-switcher-windows/releases/tag/v0.2.0-beta.1)
+[Télécharger la version Windows](https://github.com/creezio/codex-account-switcher-windows/releases/tag/v0.3.0-beta.1)
 · [Versions et téléchargements](https://github.com/creezio/codex-account-switcher-windows/releases)
 · [Plan de réalisation](docs/PLAN.md)
 · [Validation](docs/VALIDATION.md)
 
-![Interface avec deux comptes fictifs](assets/screenshot.png)
+![Gestion des instances, avec des comptes fictifs](assets/screenshot.png)
 
 ## Fonctionnalités
 
+- Création d'instances nommées, avec authentification, interface, réglages et bases séparés.
+- Comptes disponibles pour **toutes les instances, présentes et futures**, ou uniquement une sélection.
+- Ouverture simultanée, nom de l'instance dans le titre de sa fenêtre et fermeture ciblée.
+- Instances retrouvées au redémarrage du switcher ; quitter le switcher les laisse ouvertes.
+- Archivage réversible : les profils et les conversations sont conservés.
 - Ajout de comptes avec la connexion officielle Codex dans votre navigateur.
 - Import du compte présent dans le fichier local `auth.json`.
 - Coffre chiffré avec Windows DPAPI, lié à votre utilisateur Windows.
@@ -27,9 +32,9 @@ français, exécutable portable sans droits administrateur ni dépendances NuGet
   cinq minutes et notifications lorsque les quotas deviennent faibles.
 - Noms personnalisés et retrait des comptes du coffre.
 - Affichage des crédits de reset disponibles et de la prochaine expiration connue.
-- **Reset automatique à 1 % restant ou moins**, activé par défaut sur le compte
-  local enregistré. Contrôle chaque minute, option désactivable dans la barre
-  latérale ou les paramètres.
+- **Reset automatique des limites à 1 % restant ou moins**, activé par défaut sur les
+  comptes utilisés : session habituelle et instances gérées ouvertes. Un même compte
+  est contrôlé une seule fois par minute, même lorsqu'il est partagé entre plusieurs instances.
 
 ## Installation
 
@@ -42,6 +47,10 @@ Windows 10/11 avec **.NET Framework 4.8** est requis. Le programme utilise
 `PATH` et `%LOCALAPPDATA%\OpenAI\Codex\bin`. Sinon, sélectionnez votre `codex.exe`
 dans **Paramètres**. Les lanceurs npm `.cmd` ne sont pas acceptés ; sélectionnez
 le véritable exécutable fourni par votre installation.
+
+L'ouverture des instances exige également l'application de bureau **Codex installée
+depuis le Microsoft Store**, pour l'utilisateur Windows courant. L'installation est
+partagée ; le switcher ne copie pas l'application et ne télécharge aucun SDK.
 
 Le binaire de cette première version n'est pas signé avec Authenticode. Le code
 source, les tests et les sommes SHA-256 sont publiés pour inspection.
@@ -61,35 +70,54 @@ Cliquez sur **Actualiser** pour obtenir les quotas. Les anciennes valeurs sont
 conservées avec un avertissement si une requête échoue. Les recommandations
 excluent les valeurs datant de plus de dix minutes et les comptes en erreur.
 
-### Changer le compte de Codex
+### Créer et utiliser plusieurs instances
 
-1. Terminez les tâches en cours et quittez complètement Codex/ChatGPT ainsi que
-   les terminaux exécutant Codex. Fermez aussi les sessions Codex dans votre IDE.
-2. Dans le switcher, cliquez sur **Utiliser ce compte**.
-3. Rouvrez Codex et vérifiez le compte affiché dans son profil.
+1. Dans **Comptes**, ajoutez les comptes souhaités ou importez leur fichier `auth.json`.
+2. Dans **Instances → Créer une instance**, choisissez un nom, par exemple Travail.
+3. Dans **Comptes → Associer aux instances**, autorisez le compte pour tous les espaces
+   ou cochez uniquement ceux qui doivent le proposer.
+4. Dans la carte de l'instance fermée, choisissez un compte et cliquez sur
+   **Configurer ce compte**, puis **Ouvrir**.
+5. Vous pouvez aussi ouvrir une instance vide, vous connecter dans Codex et cliquer
+   sur **Importer sa connexion**. Un nouveau compte ainsi importé est associé à cet espace.
 
-L'application refuse la bascule lorsqu'elle détecte un processus `codex`,
-`codex-*` ou `ChatGPT`. Elle ne ferme jamais vos applications. Le badge
-**Compte local** désigne le compte enregistré dans le fichier du dossier choisi,
-pas une preuve du compte chargé en mémoire par une application déjà ouverte.
+Un changement de compte exige uniquement la fermeture de l'instance concernée.
+**Fermer** demande confirmation puis ferme sa fenêtre et ses processus : ses tâches
+en cours seront interrompues. Les autres instances restent ouvertes. **Archiver**
+masque un espace fermé sans supprimer ses données ; **Voir les archives** permet de le restaurer.
 
-**Paramètres → Restaurer la connexion précédente** rétablit la dernière
-sauvegarde. Une seule sauvegarde est conservée, chiffrée dans le coffre.
+La **Session habituelle** représente le dossier Codex préexistant. Le switcher ne la
+ferme et ne la relance jamais. Sa bascule reste conservatrice : elle exige la fermeture
+de tous les clients Codex/ChatGPT et CLI connus, comme dans les versions précédentes.
+Le compte affiché est celui du fichier du profil ; il ne prouve pas l'identité déjà
+chargée en mémoire par une application externe.
+
+Les associations définissent les comptes proposés par le switcher. Ce ne sont pas
+des permissions Windows : un utilisateur ayant accès au dossier peut se connecter
+directement dans Codex. Le même compte dans deux instances **partage ses quotas**.
+
+![Comptes et associations aux instances](assets/accounts.png)
+
+**Paramètres → Restaurer la connexion précédente** concerne la session habituelle.
+Chaque instance gérée possède aussi sa propre sauvegarde transactionnelle chiffrée.
 
 Fermer la fenêtre conserve l'icône de notification. Pour arrêter le programme,
 faites un clic droit sur cette icône puis **Quitter**.
+Quitter le switcher laisse les instances Codex ouvertes et arrête le suivi automatique
+des limites. Fermez les instances gérées et le switcher avant de remplacer son exécutable.
 
-### Crédits et reset automatique
+### Réinitialisation automatique des limites d'utilisation
 
 L'application lit les **crédits de réinitialisation gagnés**, distincts du solde
-de crédits d'utilisation achetés. Si une fenêtre du quota `codex` du compte local
+de crédits d'utilisation achetés. Si une fenêtre du quota `codex` d'un compte utilisé
 atteint **1 % restant ou moins** et qu'un crédit compatible est disponible, elle
 demande automatiquement un reset via `account/rateLimitResetCredit/consume`.
 Cela fonctionne pendant que Codex est ouvert et ne nécessite aucun changement
 de compte ni redémarrage de Codex.
 
-- Importez d'abord le compte local pour l'enregistrer dans le coffre. Les autres
-  comptes ne consomment pas leurs crédits automatiquement.
+- Enregistrez le compte dans le coffre et autorisez-le pour l'instance concernée.
+  Les comptes uniquement configurés dans des instances gérées fermées ne déclenchent
+  aucun reset. Une utilisation simultanée ne crée pas de demandes supplémentaires.
 - Le contrôle démarre à l'ouverture du switcher et se répète toutes les **60
   secondes**, y compris lorsque sa fenêtre est masquée. L'actualisation de tous
   les comptes toutes les cinq minutes reste une option séparée. Il ne s'agit pas
@@ -121,18 +149,30 @@ confirmation supplémentaire n'est demandée pour chaque reset automatique.
   `%USERPROFILE%\.codex\auth.json` par défaut. `CODEX_HOME` est respecté et le
   dossier peut être choisi dans les paramètres.
 - Les modes `keyring`, `auto` et `ephemeral` sont refusés pour la bascule et
-  l'import local. Le switcher ne réécrit pas `config.toml`. Les installations
+  l'import local. Le switcher conserve les configurations existantes. Les installations
   gérées qui imposent un autre magasin de connexion ne sont pas prises en charge.
 - Les quotas passent par `codex app-server` et son mode expérimental
   `chatgptAuthTokens`. Une version incompatible produit un état d'erreur, sans
   inventer des quotas. Version testée : voir [VALIDATION.md](docs/VALIDATION.md).
-- La consultation ne renouvelle pas le refresh token d'un compte copié : cela
-  évite d'interférer avec une session ouverte. Le compte actif récupère les
-  nouveaux jetons du fichier local ; un compte inactif expiré doit être reconnecté.
+- La consultation des quotas ne renouvelle pas le refresh token copié. Les jetons
+  plus récents d'un compte reconnu sont récupérés depuis ses profils vers le coffre,
+  sans écrire dans une instance ouverte. Les instances restent des connexions Codex
+  ordinaires ; une session expirée peut demander une nouvelle connexion.
 - La bascule entre deux comptes réels dans l'application de bureau et le parcours
   OAuth complet demandent encore une recette interactive. Les tests automatisés
   couvrent les opérations locales avec des comptes fictifs.
 - Pas de bascule automatique ni de reprise automatique des conversations.
+- Le lancement multiple utilise `CODEX_ELECTRON_USER_DATA_PATH` et le mécanisme Windows
+  [`Invoke-CommandInDesktopPackage`](https://learn.microsoft.com/en-us/powershell/module/appx/invoke-commandindesktoppackage).
+  Ce mécanisme de diagnostic et le réglage interne Electron ne constituent pas un
+  support multi-profil officiel de Codex. Une mise à jour peut changer leur comportement.
+- Des erreurs réseau transitoires ont été observées au premier démarrage. Le switcher
+  les signale sans modifier les politiques réseau ; rouvrir le profil a résolu le cas testé.
+  Certaines intégrations système, notamment les raccourcis globaux, restent partagées.
+- Les nouveaux profils désactivent `features.workspace_dependencies` pour éviter les
+  téléchargements automatiques volumineux d'outils bureautiques. Le code et les terminaux
+  restent disponibles. Ce réglage peut être réactivé explicitement dans leur configuration.
+  Codex peut créer ses propres caches de plugins ; l'archivage conserve ces données.
 - La consommation réelle d'un crédit n'a pas été effectuée comme test : le
   déclenchement et les cas d'échec sont validés avec un serveur simulé. La lecture
   réelle des crédits et des quotas est validée sur le compte local.
@@ -144,6 +184,12 @@ Le coffre `accounts.dpapi` et les paramètres se trouvent dans
 l'utilisateur Windows courant et au compte système. Les noms, adresses et jetons
 des comptes sont tous inclus dans le coffre chiffré. Il n'est pas portable vers un
 autre utilisateur Windows.
+
+Les profils gérés se trouvent sous `instances/<identifiant>/codex-home` et
+`instances/<identifiant>/electron-profile` dans ce même dossier privé. Leurs fichiers
+`auth.json` gardent le format requis par Codex. Les associations et sauvegardes sont
+dans le coffre DPAPI v2 ; la première sauvegarde conserve également l'ancien coffre
+chiffré `accounts-before-instances.dpapi`. Les versions antérieures refusent le format v2.
 
 Pour la connexion officielle, le serveur Codex écrit temporairement sa connexion
 dans un sous-dossier privé `runtime`. Ce serveur est isolé dans un Windows Job
@@ -183,6 +229,15 @@ aucune identité ni valeur de quota dans les journaux :
 
 ```powershell
 .\scripts\test.ps1 -LiveReadOnly
+```
+
+Le test de bureau facultatif ouvre puis ferme uniquement une instance de test. Il
+requiert le paquet Microsoft Store et conserve le profil sous `work/instance-smoke`.
+Pour tester un compte réel, ajoutez `-DesktopAuthFile` avec le chemin d'un fichier
+de connexion que vous êtes autorisé à utiliser. Ces fichiers restent hors Git.
+
+```powershell
+.\scripts\test.ps1 -DesktopSmoke
 ```
 
 Pour produire le ZIP portable :

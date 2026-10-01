@@ -172,7 +172,10 @@ namespace Creezio.Switcher
         public ResetCredits ResetCredits { get; set; }
         public ResetAttempt ResetAttempt { get; set; }
         public string ResetMessage { get; set; }
-        public Profile() { Quotas = new List<QuotaBucket>(); }
+        public bool AllInstances { get; set; }
+        public List<string> InstanceIds { get; set; }
+        public Profile() { Quotas = new List<QuotaBucket>(); AllInstances = true; InstanceIds = new List<string>(); }
+        public bool Allows(string instanceId) { return AllInstances || (InstanceIds != null && InstanceIds.Contains(instanceId)); }
         public bool IsFresh
         {
             get { DateTime time; return String.IsNullOrEmpty(Error) && DateTime.TryParse(QuotaTimeUtc, null, DateTimeStyles.RoundtripKind, out time) && DateTime.UtcNow - time.ToUniversalTime() < TimeSpan.FromMinutes(10) && time.ToUniversalTime() <= DateTime.UtcNow.AddMinutes(1); }
@@ -193,7 +196,17 @@ namespace Creezio.Switcher
         public int Version { get; set; }
         public List<Profile> Profiles { get; set; }
         public string PreviousAuthJson { get; set; }
-        public VaultData() { Version = 1; Profiles = new List<Profile>(); }
+        public List<DesktopInstance> Instances { get; set; }
+        public VaultData() { Version = 2; Profiles = new List<Profile>(); Instances = new List<DesktopInstance>(); }
+    }
+    public sealed class DesktopInstance
+    {
+        public string Id { get; set; }
+        public string Name { get; set; }
+        public string AccountKey { get; set; }
+        public string PreviousAuthJson { get; set; }
+        public bool Archived { get; set; }
+        public bool IsLocal { get { return Id == "local"; } }
     }
     public sealed class Settings
     {

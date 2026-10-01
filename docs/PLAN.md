@@ -36,6 +36,20 @@ Une connexion OAuth réelle exige l'intervention de l'utilisateur dans son navig
 La recette de bascule entre deux comptes réels exige la fermeture de Codex ; elle ne
 sera pas présentée comme effectuée pendant cette conversation active.
 
+## Version 0.3.0 — plusieurs instances
+
+1. Migrer le coffre vers un format v2 conservant comptes, options et sauvegardes.
+2. Séparer les instances persistantes de la session habituelle et des comptes du coffre.
+3. Autoriser un compte dans toutes les instances, futures comprises, ou dans une sélection.
+4. Lancer le paquet Microsoft Store avec un profil UI, un CODEX_HOME et des bases propres.
+5. Confier chaque instance à un hôte persistant : détection après redémarrage du switcher,
+   fermeture ciblée et refus de bascule tant que l'instance est ouverte.
+6. Calculer recommandations et resets par compte autorisé, sans double consommation.
+7. Archiver sans effacer les profils ; réutiliser la même installation Codex et éviter
+   les téléchargements automatiques de dépendances bureautiques dans les nouveaux profils.
+8. Tester migration, associations, séparation, refus, comptes partagés, lancement réel,
+   fermeture ciblée et conservation de la session de travail existante.
+
 ## Après cette version
 
 - Intégration au coffre natif Codex (`keyring`/`auto`) après validation dédiée.

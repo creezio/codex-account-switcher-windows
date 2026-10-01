@@ -30,10 +30,17 @@ namespace Creezio.Switcher
         private bool busy, exiting;
         private CancellationTokenSource operation;
         private List<Profile> demoProfiles;
+        private List<DesktopInstance> demoInstances;
+        private bool instancesView=true, showArchived;
+        private readonly Label heading=new Label(), eyebrow=new Label();
+        private FlowLayoutPanel toolbar;
+        private System.Windows.Forms.Timer instanceTimer;
+        private string instanceFingerprint;
+        private Button instanceNav,accountNav;
         public MainForm(AccountService accounts,bool isDemo)
         {
             service=accounts; demo=isDemo;
-            Text="Codex Account Switcher · Creezio"; ClientSize=new Size(1100,790); MinimumSize=new Size(920,670);
+            Text="Codex Account Switcher · Creezio"; ClientSize=new Size(1240,870); MinimumSize=new Size(1080,720);
             StartPosition=FormStartPosition.CenterScreen; BackColor=Color.FromArgb(248,250,247); ForeColor=Ink;
             Font=new Font("Segoe UI",10); AutoScaleMode=AutoScaleMode.Dpi; Icon=SystemIcons.Application;
             var sidebar=new Panel {Dock=DockStyle.Left,Width=230,BackColor=Color.FromArgb(23,48,42),Padding=new Padding(22)};
@@ -41,33 +48,35 @@ namespace Creezio.Switcher
             var brand=LabelAt("creezio",26,32,180,45,27,FontStyle.Bold,Color.White); sidebar.Controls.Add(brand);
             sidebar.Controls.Add(LabelAt("CODEX\nPOUR WINDOWS",27,88,182,42,8,FontStyle.Bold,Color.FromArgb(171,201,183)));
             var intro=LabelAt("Vos comptes.\nVotre espace.",27,148,179,63,10,FontStyle.Regular,Color.FromArgb(216,231,220)); intro.AutoEllipsis=false; sidebar.Controls.Add(intro);
-            var nav=MakeButton("Comptes",null,true); nav.AutoSize=false; nav.SetBounds(20,229,190,44); nav.BackColor=Color.FromArgb(50,83,68); nav.ForeColor=Color.White; sidebar.Controls.Add(nav);
-            var prefs=SideButton("Paramètres",296,async delegate { ShowSettings(); await Task.FromResult(0); }); sidebar.Controls.Add(prefs);
-            var help=SideButton("Guide d'utilisation",345,async delegate { Process.Start(new ProcessStartInfo("https://github.com/creezio/codex-account-switcher-windows#readme") {UseShellExecute=true}); await Task.FromResult(0); }); sidebar.Controls.Add(help);
-            resetToggle.SetBounds(26,414,178,68);resetToggle.Text="Reset automatique\nà 1 % restant";resetToggle.ForeColor=Color.White;resetToggle.Checked=demo || service.Settings.AutoResetCredits;
+            instanceNav=SideButton("Instances",229,async delegate {instancesView=true;BuildToolbar();await Task.FromResult(0);});sidebar.Controls.Add(instanceNav);
+            accountNav=SideButton("Comptes",277,async delegate {instancesView=false;BuildToolbar();await Task.FromResult(0);});sidebar.Controls.Add(accountNav);
+            var prefs=SideButton("Paramètres",337,async delegate { ShowSettings(); await Task.FromResult(0); }); sidebar.Controls.Add(prefs);
+            var help=SideButton("Guide d'utilisation",385,async delegate { Process.Start(new ProcessStartInfo("https://github.com/creezio/codex-account-switcher-windows#readme") {UseShellExecute=true}); await Task.FromResult(0); }); sidebar.Controls.Add(help);
+            resetToggle.SetBounds(26,450,178,68);resetToggle.Text="Reset des limites\nà 1 % restant";resetToggle.ForeColor=Color.White;resetToggle.Checked=demo || service.Settings.AutoResetCredits;
             resetToggle.CheckedChanged+=delegate {
                 if(demo || resetToggle.Checked==service.Settings.AutoResetCredits) return;
                 bool previous=service.Settings.AutoResetCredits;service.Settings.AutoResetCredits=resetToggle.Checked;
-                try {service.Vault.SaveSettings(service.Settings);status.Text=resetToggle.Checked?"Reset automatique activé : contrôle du compte local chaque minute.":"Reset automatique désactivé. Aucun nouveau crédit ne sera consommé automatiquement.";}
+                try {service.Vault.SaveSettings(service.Settings);status.Text=resetToggle.Checked?"Reset activé : chaque compte utilisé est vérifié une fois par minute, même s'il est partagé entre plusieurs instances.":"Reset automatique désactivé. Aucune réinitialisation ne sera consommée automatiquement.";}
                 catch(Exception error) {service.Settings.AutoResetCredits=previous;resetToggle.Checked=previous;MessageBox.Show(this,Program.SafeError(error),"Creezio");}
             };
             sidebar.Controls.Add(resetToggle);actions.Add(resetToggle);
-            var footer=new Label {Text="PROTECTION LOCALE\n\nConnexions chiffrées pour\nvotre utilisateur Windows.\n\nCreezio · v0.2.0",Dock=DockStyle.Bottom,Height=144,ForeColor=Color.FromArgb(171,201,183),Font=new Font("Segoe UI",9)}; sidebar.Controls.Add(footer);
+            var footer=new Label {Text="PROFILS INDÉPENDANTS\n\nUn compte par instance.\nDes limites par compte.\n\nCreezio · v0.3.0",Dock=DockStyle.Bottom,Height=144,ForeColor=Color.FromArgb(171,201,183),Font=new Font("Segoe UI",9)}; sidebar.Controls.Add(footer);
             var content=new Panel {Dock=DockStyle.Fill,Padding=new Padding(30,0,30,0)}; Controls.Add(content); content.BringToFront();
             var header=new Panel {Dock=DockStyle.Top,Height=181}; content.Controls.Add(header);
-            header.Controls.Add(LabelAt("VOS COMPTES CODEX",0,25,410,22,9,FontStyle.Bold,Green));
-            header.Controls.Add(LabelAt("Gardez de la marge.",0,52,700,47,27,FontStyle.Bold,Ink));
-            subtitle.SetBounds(1,105,700,30); subtitle.ForeColor=Muted; subtitle.Font=new Font("Segoe UI",10); header.Controls.Add(subtitle);
-            var buttons=new FlowLayoutPanel {Left=0,Top=139,Width=740,Height=39,WrapContents=false}; header.Controls.Add(buttons);
-            buttons.Controls.Add(MakeButton("+  Ajouter un compte", async delegate { await AddAccount(); },true));
-            buttons.Controls.Add(MakeButton("Importer le compte local",async delegate { service.ImportCurrent(); status.Text="Connexion locale enregistrée dans le coffre."; await Task.FromResult(0); },false));
-            buttons.Controls.Add(MakeButton("Actualiser",async delegate { await RefreshAll(); },false));
-            cancel.Text="Annuler"; cancel.AutoSize=true; cancel.Height=34; cancel.FlatStyle=FlatStyle.Flat; cancel.Visible=false; cancel.Click+=delegate {if(operation!=null) operation.Cancel();}; buttons.Controls.Add(cancel);
-            var bottom=new Panel {Dock=DockStyle.Bottom,Height=89,Padding=new Padding(0,14,0,0)}; content.Controls.Add(bottom);
-            status.Dock=DockStyle.Fill; status.ForeColor=Muted; status.Font=new Font("Segoe UI",9); status.Text=demo || service.Settings.AutoResetCredits?"Reset automatique à 1 % : contrôle du compte local enregistré chaque minute tant que l'application reste ouverte.":"Reset automatique désactivé. Actualisez les quotas à la demande ou activez l'option dans la barre latérale."; bottom.Controls.Add(status);
+            eyebrow.SetBounds(0,25,850,22);eyebrow.Font=new Font("Segoe UI",9,FontStyle.Bold);eyebrow.ForeColor=Green;header.Controls.Add(eyebrow);
+            heading.SetBounds(0,52,880,47);heading.Font=new Font("Segoe UI",27,FontStyle.Bold);header.Controls.Add(heading);
+            subtitle.SetBounds(1,105,900,30); subtitle.ForeColor=Muted; subtitle.Font=new Font("Segoe UI",10); header.Controls.Add(subtitle);
+            toolbar=new FlowLayoutPanel {Left=0,Top=139,Width=930,Height=39,WrapContents=false,Anchor=AnchorStyles.Left|AnchorStyles.Right|AnchorStyles.Top}; header.Controls.Add(toolbar);
+            cancel.Text="Annuler"; cancel.AutoSize=true; cancel.Height=34; cancel.FlatStyle=FlatStyle.Flat; cancel.Visible=false; cancel.Click+=delegate {if(operation!=null) operation.Cancel();};
+            var bottom=new Panel {Dock=DockStyle.Bottom,Height=69,Padding=new Padding(0,14,0,0)}; content.Controls.Add(bottom);
+            status.Dock=DockStyle.Fill; status.ForeColor=Muted; status.Font=new Font("Segoe UI",9); status.Text="Chaque instance garde ses conversations et ses réglages. Un compte partagé conserve les mêmes limites d'utilisation."; bottom.Controls.Add(status);
             cards.Dock=DockStyle.Fill; cards.FlowDirection=FlowDirection.TopDown; cards.WrapContents=false; cards.AutoScroll=true; cards.Padding=new Padding(0,7,0,10); content.Controls.Add(cards); cards.BringToFront();
             cards.Resize+=delegate { foreach(Control card in cards.Controls) card.Width=Math.Max(520,cards.ClientSize.Width-23); };
-            if(demo) demoProfiles=DemoData();
+            if(demo) {
+                demoProfiles=DemoData();
+                demoInstances=new List<DesktopInstance>{new DesktopInstance{Id="local",Name="Session habituelle",AccountKey=demoProfiles[0].Key},new DesktopInstance{Id=new string('a',32),Name="Développement",AccountKey=demoProfiles[1].Key},new DesktopInstance{Id=new string('b',32),Name="Projets personnels",AccountKey=demoProfiles[0].Key}};
+                demoProfiles[1].AllInstances=false;demoProfiles[1].InstanceIds.Add(new string('a',32));
+            }
             else
             {
                 var menu=new ContextMenuStrip();
@@ -79,10 +88,36 @@ namespace Creezio.Switcher
                 tray.DoubleClick+=delegate { Show(); WindowState=FormWindowState.Normal; Activate(); };
                 timer=new System.Windows.Forms.Timer {Interval=60000};
                 timer.Tick+=async delegate {if(!busy) await Poll();}; timer.Start();
+                instanceTimer=new System.Windows.Forms.Timer {Interval=3000};
+                instanceTimer.Tick+=delegate {if(!busy && instancesView && !cards.Controls.Cast<Control>().SelectMany(c=>c.Controls.Cast<Control>()).OfType<ComboBox>().Any(c=>c.Focused || c.DroppedDown)) {
+                    string current=String.Join("|",service.Data.Instances.Where(i=>!i.Archived).Select(i=>{var s=service.Instances.Runtime.Probe(i);return i.Id+":"+s.Phase+":"+s.NetworkWarning+":"+service.Instances.ActiveKey(i);}));
+                    if(current!=instanceFingerprint) {instanceFingerprint=current;Redraw();}
+                }};instanceTimer.Start();
                 Shown+=async delegate {await Poll();};
             }
             FormClosing+=OnClosing;
+            BuildToolbar();
             Redraw();
+        }
+        private void BuildToolbar()
+        {
+            instanceNav.BackColor=instancesView?Color.FromArgb(50,83,68):Color.FromArgb(23,48,42);
+            accountNav.BackColor=!instancesView?Color.FromArgb(50,83,68):Color.FromArgb(23,48,42);
+            toolbar.Controls.Remove(cancel);
+            foreach(Control control in toolbar.Controls.Cast<Control>().ToArray()) control.Dispose();toolbar.Controls.Clear();
+            if(instancesView) {
+                eyebrow.Text="VOS ESPACES CODEX";heading.Text="Plusieurs comptes. En parallèle.";
+                toolbar.Controls.Add(MakeButton("+  Créer une instance",async delegate {string name=TextPrompt.Ask(this,"Nouvelle instance","Nouvel espace");if(name!=null){service.Instances.Create(name);status.Text="Instance créée. Choisissez un compte autorisé ou ouvrez-la pour vous connecter.";}await Task.FromResult(0);},true));
+                toolbar.Controls.Add(MakeButton("Gérer les comptes",async delegate {instancesView=false;BuildToolbar();await Task.FromResult(0);},false));
+                toolbar.Controls.Add(MakeButton(showArchived?"Masquer les archives":"Voir les archives",async delegate {showArchived=!showArchived;BuildToolbar();await Task.FromResult(0);},false));
+            } else {
+                eyebrow.Text="VOS COMPTES CODEX";heading.Text="La bonne marge, au bon endroit.";
+                toolbar.Controls.Add(MakeButton("+  Ajouter",AddAccount,true));
+                toolbar.Controls.Add(MakeButton("Importer le compte local",async delegate {service.ImportCurrent();status.Text="Compte local enregistré.";await Task.FromResult(0);},false));
+                toolbar.Controls.Add(MakeButton("Importer un fichier",async delegate {using(var picker=new OpenFileDialog{Filter="Connexion Codex (auth.json)|auth.json",CheckFileExists=true}) if(picker.ShowDialog(this)==DialogResult.OK){service.Import(SafeFiles.ReadText(picker.FileName),null);status.Text="Compte importé dans le coffre chiffré.";}await Task.FromResult(0);},false));
+                toolbar.Controls.Add(MakeButton("Actualiser",RefreshAll,false));
+            }
+            toolbar.Controls.Add(cancel);actions.RemoveAll(c=>c.IsDisposed);
         }
         private Button SideButton(string text,int y,Func<Task> click)
         {
@@ -115,11 +150,10 @@ namespace Creezio.Switcher
         {
             if(service.Settings.AutoRefresh && DateTime.UtcNow-lastFullRefreshUtc>=TimeSpan.FromMinutes(5)) await RunOperation(RefreshAll,true);
             else if(service.Settings.AutoResetCredits) await RunOperation(async delegate {
-                var profile=service.Data.Profiles.FirstOrDefault(p=>p.Key==service.ActiveKey());
-                if(profile==null) {status.Text="Pour activer le reset automatique, importez le compte local utilisé par Codex.";return;}
-                await service.Refresh(profile,operation.Token,true);
-                NotifyReset(profile);
-                status.Text=profile.Error ?? profile.ResetMessage ?? "Compte local vérifié à "+DateTime.Now.ToString("HH:mm")+" · reset automatique à 1 % activé.";
+                var active=service.Instances.ActiveProfiles();
+                if(active.Count==0) return;
+                foreach(var profile in active) {await service.Refresh(profile,operation.Token,true);NotifyReset(profile);}
+                status.Text=active.Count+" compte(s) utilisé(s) vérifié(s) à "+DateTime.Now.ToString("HH:mm")+" · une seule vérification par compte partagé.";
             },true);
         }
         private void NotifyReset(Profile profile)
@@ -153,6 +187,7 @@ namespace Creezio.Switcher
         }
         private void Redraw()
         {
+            if(instancesView) {RedrawInstances();return;}
             var profiles=demo?demoProfiles:service.Data.Profiles;
             string active=demo?profiles[0].Key:service.ActiveKey();
             var best=profiles.Where(p=>p.Key!=active && p.Score.HasValue && p.Score>0).OrderByDescending(p=>p.Score).FirstOrDefault();
@@ -173,19 +208,13 @@ namespace Creezio.Switcher
                 card.Width=Math.Max(520,cards.ClientSize.Width-23);
                 var commandBar=new FlowLayoutPanel {Dock=DockStyle.Bottom,Height=45,Padding=new Padding(20,3,0,0),WrapContents=false}; card.Controls.Add(commandBar);
                 var selected=profile;
-                var activate=MakeButton(profile.Key==active?"Compte configuré":"Utiliser ce compte",async delegate {
-                    status.Text="Vérification du compte et préparation de la bascule…";
-                    await service.Switch(selected,operation.Token);
-                    status.Text="Compte configuré et fichier vérifié. Vous pouvez rouvrir Codex ; vérifiez le compte affiché dans son profil.";
-                },profile.Key!=active);
-                activate.Enabled=profile.Key!=active && !demo; commandBar.Controls.Add(activate);
+                var associate=MakeButton("Associer aux instances",async delegate {using(var dialog=new AccountScopeForm(selected,service.Data.Instances)) if(dialog.ShowDialog(this)==DialogResult.OK){service.Instances.SetScope(selected,dialog.AllInstances,dialog.InstanceIds);status.Text="Associations enregistrées. Les connexions ouvertes restent inchangées.";}await Task.FromResult(0);},true);
+                commandBar.Controls.Add(associate);
                 commandBar.Controls.Add(MakeButton("Renommer",async delegate {string name=TextPrompt.Ask(this,"Nom du compte",selected.Label); if(name!=null) {selected.Label=name;service.Save();} await Task.FromResult(0);},false));
                 commandBar.Controls.Add(MakeButton("Retirer",async delegate {
                     if(MessageBox.Show(this,"Retirer ce compte du coffre ? Cela ne déconnecte pas Codex.","Retirer un compte",MessageBoxButtons.YesNo,MessageBoxIcon.Question)==DialogResult.Yes)
                     {
-                        service.Data.Profiles.Remove(selected);
-                        if(!String.IsNullOrEmpty(service.Data.PreviousAuthJson)) { try {if(AuthIdentity.Parse(service.Data.PreviousAuthJson).Key==selected.Key) service.Data.PreviousAuthJson=null;} catch {} }
-                        service.Save(); status.Text="Compte retiré du coffre local.";
+                        service.Instances.Forget(selected);status.Text="Compte retiré du coffre local. Les profils Codex restent conservés.";
                     }
                     await Task.FromResult(0);
                 },false));
@@ -197,16 +226,80 @@ namespace Creezio.Switcher
         {
             using(var dialog=new SettingsForm(service.Settings))
             {
-                if(dialog.ShowDialog(this)==DialogResult.OK) {service.Settings=dialog.Result; service.Vault.SaveSettings(service.Settings);resetToggle.Checked=service.Settings.AutoResetCredits; status.Text="Paramètres enregistrés. Reset automatique : compte local chaque minute. Actualisation globale : toutes les 5 minutes si activée.";}
+                if(dialog.ShowDialog(this)==DialogResult.OK) {service.Settings=dialog.Result; service.Vault.SaveSettings(service.Settings);resetToggle.Checked=service.Settings.AutoResetCredits; status.Text="Paramètres enregistrés. Reset des limites : une vérification par compte utilisé et par minute.";}
                 if(dialog.RestoreRequested) {service.RestorePrevious();status.Text="Connexion précédente restaurée. Vous pouvez rouvrir Codex.";}
             }
         }
+        private void RedrawInstances()
+        {
+            var instances=demo?demoInstances:service.Data.Instances;
+            var profiles=demo?demoProfiles:service.Data.Profiles;
+            subtitle.Text=instances.Count(i=>!i.IsLocal && !i.Archived)+" instance(s) gérée(s) · Comptes autorisés par espace · Session habituelle préservée"+(demo?" · DÉMO":"");
+            cards.SuspendLayout();
+            foreach(Control control in cards.Controls.Cast<Control>().ToArray()) control.Dispose();cards.Controls.Clear();actions.RemoveAll(c=>c.IsDisposed);
+            foreach(var instance in instances.Where(i=>!i.Archived || showArchived)) {
+                var selected=instance;
+                var state=demo?new InstanceState{Running=instance.Id!=new string('b',32),Phase=instance.IsLocal?"external":instance.Id==new string('a',32)?"running":"stopped",WindowReady=true}:service.Instances.Runtime.Probe(instance);
+                string key=demo?instance.AccountKey:service.Instances.ActiveKey(instance);
+                var account=profiles.FirstOrDefault(p=>p.Key==key);
+                bool compact=instance.IsLocal && state.Running;
+                var panel=new Panel {Width=Math.Max(520,cards.ClientSize.Width-23),Height=compact?138:212,BackColor=Color.White,Margin=new Padding(0,0,0,14),Padding=new Padding(20)};
+                panel.Paint+=delegate(object sender,PaintEventArgs e) {using(var pen=new Pen(Line)) e.Graphics.DrawRectangle(pen,0,0,panel.Width-1,panel.Height-1);};
+                panel.Controls.Add(LabelAt(instance.Name,21,15,510,31,16,FontStyle.Bold,Ink));
+                var badge=LabelAt(instance.Archived?"ARCHIVÉE":instance.IsLocal?"SESSION HABITUELLE":state.Phase=="unknown"?"ÉTAT À VÉRIFIER":state.Phase=="error"?"ÉCHEC DU LANCEMENT":state.Running?(state.Phase=="starting"?"DÉMARRAGE…":"OUVERTE") :"FERMÉE",panel.Width-233,20,210,25,9,FontStyle.Bold,state.Running?Green:Muted);badge.Anchor=AnchorStyles.Right|AnchorStyles.Top;panel.Controls.Add(badge);
+                string accountText=account!=null?account.Label+(account.Score.HasValue?" · "+Math.Round(account.Score.Value)+" % de marge":""):key!=null?"Compte connecté hors du coffre":"Aucun compte configuré";
+                panel.Controls.Add(LabelAt(accountText,22,51,850,24,10,FontStyle.Bold,Green));
+                string hint=instance.IsLocal?"La fermeture de cette session se fait dans Codex.":account!=null && !account.Allows(instance.Id)?"Ce compte n'est plus autorisé ici. Associez-le à cette instance ou choisissez-en un autre.":state.NetworkWarning?"Codex signale un problème réseau dans cette instance. Consultez sa fenêtre avant de travailler.":state.Phase=="error" || state.Phase=="unknown"?state.Message:instance.Archived?"Profil et conversations conservés. Restaurez l'instance pour la rouvrir.":"Profil indépendant · "+profiles.Count(p=>p.Allows(instance.Id))+" compte(s) autorisé(s)";
+                if(!compact) panel.Controls.Add(LabelAt(hint,22,80,850,25,9,FontStyle.Regular,Muted));
+                if(!compact && !instance.Archived) {
+                    var choices=new ComboBox {Left=22,Top=112,Width=315,DropDownStyle=ComboBoxStyle.DropDownList,Enabled=!state.Running};
+                    choices.Items.Add(new AccountChoice(null,"Choisir un compte autorisé…"));
+                    foreach(var profile in profiles.Where(p=>p.Allows(instance.Id))) choices.Items.Add(new AccountChoice(profile,profile.Label));
+                    choices.SelectedIndex=0;
+                    for(int n=1;n<choices.Items.Count;n++) if(((AccountChoice)choices.Items[n]).Profile.Key==key) choices.SelectedIndex=n;
+                    panel.Controls.Add(choices);
+                    var configure=MakeButton("Configurer ce compte",async delegate {
+                        var choice=choices.SelectedItem as AccountChoice;
+                        if(choice==null || choice.Profile==null) {status.Text="Choisissez un compte dans la liste.";return;}
+                        status.Text="Vérification du compte pour « "+selected.Name+" »…";
+                        await service.Instances.SelectAccount(selected,choice.Profile,operation.Token);
+                        status.Text="Compte configuré uniquement pour « "+selected.Name+" ». Vous pouvez ouvrir cette instance.";
+                    },false);configure.SetBounds(350,109,200,34);configure.Enabled=!state.Running;panel.Controls.Add(configure);
+                    var best=profiles.Where(p=>p.Allows(instance.Id)&&p.Score>0).OrderByDescending(p=>p.Score).FirstOrDefault();
+                    if(best!=null) panel.Controls.Add(LabelAt("Meilleure marge : "+best.Label,580,116,285,27,9,FontStyle.Regular,Muted));
+                }
+                var bar=new FlowLayoutPanel {Left=22,Top=compact?87:161,Width=880,Height=39,WrapContents=false};panel.Controls.Add(bar);
+                if(instance.Archived) {
+                    bar.Controls.Add(MakeButton("Restaurer l'instance",async delegate {service.Instances.Archive(selected,false);status.Text="Instance restaurée, avec son profil conservé.";await Task.FromResult(0);},true));
+                } else {
+                    if(!instance.IsLocal) {
+                        var launch=MakeButton(state.Running?"Instance ouverte":"Ouvrir",async delegate {status.Text="Ouverture de « "+selected.Name+" »…";await service.Instances.Start(selected,operation.Token);status.Text="Instance ouverte. Vous pouvez travailler en parallèle dans ses fenêtres.";},true);launch.Enabled=!state.Running;bar.Controls.Add(launch);
+                        var stop=MakeButton("Fermer",async delegate {
+                            if(MessageBox.Show(this,"Fermer uniquement « "+selected.Name+" » et ses processus ? Les tâches en cours dans cette instance seront interrompues.","Fermer cette instance",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes) return;
+                            await service.Instances.Runtime.Stop(selected,operation.Token);status.Text="Instance fermée. Les autres sessions sont restées ouvertes.";
+                        },false);stop.Enabled=state.Running;bar.Controls.Add(stop);
+                    }
+                    bar.Controls.Add(MakeButton("Importer sa connexion",async delegate {var imported=service.Instances.Capture(selected);status.Text="Compte importé et associé à « "+selected.Name+" ».";await service.Refresh(imported,operation.Token);},false));
+                    bar.Controls.Add(MakeButton("Renommer",async delegate {string name=TextPrompt.Ask(this,"Nom de l'instance",selected.Name);if(name!=null) service.Instances.Rename(selected,name);await Task.FromResult(0);},false));
+                    if(!instance.IsLocal) {var archive=MakeButton("Archiver",async delegate {service.Instances.Archive(selected,true);status.Text="Instance archivée. Son profil et ses conversations sont conservés.";await Task.FromResult(0);},false);archive.Enabled=!state.Running;bar.Controls.Add(archive);}
+                }
+                cards.Controls.Add(panel);
+            }
+            if(instances.Count(i=>!i.IsLocal&&!i.Archived)==0) {
+                var empty=new Panel{Width=Math.Max(520,cards.ClientSize.Width-23),Height=190,BackColor=Pale,Margin=new Padding(0,5,0,0)};
+                empty.Controls.Add(LabelAt("Créez un espace pour chaque usage.",24,25,800,40,19,FontStyle.Bold,Ink));
+                empty.Controls.Add(LabelAt("Développement, travail, projets personnels…\n\nAssociez un compte à toutes les instances, ou réservez-le à certains espaces.",26,83,810,85,11,FontStyle.Regular,Muted));cards.Controls.Add(empty);
+            }
+            cards.ResumeLayout();
+        }
+        internal void ShowAccountsDemo() {instancesView=false;BuildToolbar();Redraw();}
         private void OnClosing(object sender,FormClosingEventArgs e)
         {
             if(demo) return;
             if(!exiting && e.CloseReason==CloseReason.UserClosing) {e.Cancel=true;Hide();tray.ShowBalloonTip(3000,"Creezio reste accessible","Cliquez sur l'icône près de l'horloge pour rouvrir l'application. Menu Quitter pour l'arrêter.",ToolTipIcon.Info);return;}
             if(busy) {exiting=true;e.Cancel=true;operation.Cancel();return;}
             if(timer!=null) timer.Dispose();
+            if(instanceTimer!=null) instanceTimer.Dispose();
             if(tray!=null) {tray.Visible=false;tray.Dispose();}
         }
         public void RenderDemo(string path)
@@ -225,13 +318,35 @@ namespace Creezio.Switcher
             };
         }
     }
+    internal sealed class AccountChoice
+    {
+        public readonly Profile Profile;private readonly string label;
+        public AccountChoice(Profile profile,string text){Profile=profile;label=text;}
+        public override string ToString(){return label;}
+    }
+    internal sealed class AccountScopeForm : Form
+    {
+        public bool AllInstances;public List<string> InstanceIds;
+        public AccountScopeForm(Profile profile,List<DesktopInstance> instances)
+        {
+            Text="Associations · "+profile.Label;ClientSize=new Size(560,430);StartPosition=FormStartPosition.CenterParent;Font=new Font("Segoe UI",10);FormBorderStyle=FormBorderStyle.FixedDialog;MaximizeBox=false;MinimizeBox=false;
+            Controls.Add(MainForm.LabelAt("Où ce compte peut-il être utilisé ?",22,20,515,32,16,FontStyle.Bold,MainForm.Ink));
+            var all=new CheckBox{Text="Toutes les instances, y compris les prochaines",Left=25,Top=72,Width=505,Checked=profile.AllInstances};Controls.Add(all);
+            var choices=new CheckedListBox{Left=25,Top=116,Width=510,Height=192,CheckOnClick=true,Enabled=!all.Checked};Controls.Add(choices);
+            foreach(var instance in instances) choices.Items.Add(instance.Name+(instance.Archived?" (archivée)":""),profile.InstanceIds.Contains(instance.Id));
+            all.CheckedChanged+=delegate{choices.Enabled=!all.Checked;};
+            Controls.Add(MainForm.LabelAt("L'association rend le compte disponible dans les espaces choisis.\nSon quota reste partagé : ouvrir plusieurs instances ne le multiplie pas.",25,323,510,49,9,FontStyle.Regular,MainForm.Muted));
+            var save=new Button{Text="Enregistrer",Left=385,Top=383,Width=150,Height=32};Controls.Add(save);AcceptButton=save;
+            save.Click+=delegate{AllInstances=all.Checked;InstanceIds=choices.CheckedIndices.Cast<int>().Select(i=>instances[i].Id).ToList();DialogResult=DialogResult.OK;Close();};
+        }
+    }
     internal sealed class AccountCard : Panel
     {
         private readonly Profile profile; private readonly bool active,best;
         public AccountCard(Profile value,bool isActive,bool isBest)
         {
             profile=value; active=isActive; best=isBest;
-            Height=302+Math.Max(0,profile.Quotas.Count-1)*86; BackColor=Color.White; Margin=new Padding(0,0,0,16);
+            Height=332+Math.Max(0,profile.Quotas.Count-1)*86; BackColor=Color.White; Margin=new Padding(0,0,0,16);
             DoubleBuffered=true; ResizeRedraw=true;
         }
         protected override void OnPaint(PaintEventArgs e)
@@ -256,11 +371,12 @@ namespace Creezio.Switcher
                 y+=86;
             }
             int resetY=193+Math.Max(0,profile.Quotas.Count-1)*86;
-            string resetText="CRÉDITS DE RESET · "+(profile.ResetCredits!=null&&profile.ResetCredits.AvailableCount.HasValue?profile.ResetCredits.AvailableCount.Value+" disponible(s)":"non renseignés");
+            string resetText="RÉINITIALISATIONS DES LIMITES · "+(profile.ResetCredits!=null&&profile.ResetCredits.AvailableCount.HasValue?profile.ResetCredits.AvailableCount.Value+" disponible(s)":"non renseignées");
             var next=profile.ResetCredits==null?null:profile.ResetCredits.Next(DateTime.UtcNow);
             if(next!=null && next.ExpiresAt.HasValue) resetText+=" · prochain expirant le "+new DateTimeOffset(1970,1,1,0,0,0,TimeSpan.Zero).AddSeconds(next.ExpiresAt.Value).ToLocalTime().ToString("dd/MM à HH:mm");
             Draw(g,resetText,22,resetY,Width-44,22,9,FontStyle.Bold,MainForm.Green);
             if(!String.IsNullOrEmpty(profile.ResetMessage)) Draw(g,profile.ResetMessage,22,resetY+26,Width-44,27,9,FontStyle.Regular,MainForm.Muted);
+            Draw(g,profile.AllInstances?"DISPONIBLE POUR TOUTES LES INSTANCES · présentes et futures":"ASSOCIÉ À "+profile.InstanceIds.Count+" INSTANCE(S)",22,resetY+59,Width-44,24,8,FontStyle.Bold,MainForm.Green);
         }
         private static void Draw(Graphics g,string text,int x,int y,int w,int h,float size,FontStyle weight,Color color)
         {using(var font=new Font("Segoe UI",size,weight)) TextRenderer.DrawText(g,text,font,new Rectangle(x,y,w,h),color,TextFormatFlags.EndEllipsis|TextFormatFlags.NoPadding);}
@@ -290,8 +406,8 @@ namespace Creezio.Switcher
             folder.Click+=delegate {using(var picker=new FolderBrowserDialog {SelectedPath=home.Text}) if(picker.ShowDialog(this)==DialogResult.OK) home.Text=picker.SelectedPath;};
             var automatic=new CheckBox {Text="Actualiser les quotas toutes les 5 minutes",Left=25,Top=188,Width=580,Checked=current.AutoRefresh};Controls.Add(automatic);
             var notify=new CheckBox {Text="Notifier quand un quota passe sous 10 %",Left=25,Top=225,Width=580,Checked=current.Notifications};Controls.Add(notify);
-            var autoReset=new CheckBox {Text="Utiliser automatiquement un crédit de reset à 1 % restant",Left=25,Top=263,Width=590,Checked=current.AutoResetCredits};Controls.Add(autoReset);
-            Controls.Add(MainForm.LabelAt("Compte local uniquement · vérification chaque minute.\nL'application doit rester ouverte, y compris dans la zone de notification.",25,301,590,50,9,FontStyle.Regular,MainForm.Muted));
+            var autoReset=new CheckBox {Text="Réinitialiser les limites à 1 % si une réinitialisation est disponible",Left=25,Top=263,Width=590,Checked=current.AutoResetCredits};Controls.Add(autoReset);
+            Controls.Add(MainForm.LabelAt("Comptes utilisés : session habituelle et instances ouvertes.\nUne seule demande par compte partagé. Le switcher doit rester ouvert.",25,301,590,50,9,FontStyle.Regular,MainForm.Muted));
             var restore=new Button {Text="Restaurer la connexion précédente",Left=25,Top=361,Width=285,Height=32};Controls.Add(restore);
             restore.Click+=delegate {if(MessageBox.Show(this,"Restaurer la sauvegarde précédente ? Codex doit être fermé.","Restauration",MessageBoxButtons.YesNo)==DialogResult.Yes) {RestoreRequested=true;DialogResult=DialogResult.Cancel;Close();}};
             var save=new Button {Text="Enregistrer",Left=475,Top=425,Width=140,Height=34};Controls.Add(save);AcceptButton=save;

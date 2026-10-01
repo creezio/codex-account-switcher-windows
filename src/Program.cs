@@ -5,7 +5,7 @@ using System.Threading;
 using System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("Creezio Codex Account Switcher")]
-[assembly: System.Reflection.AssemblyVersion("0.2.0.0")]
+[assembly: System.Reflection.AssemblyVersion("0.3.0.0")]
 [assembly: System.Reflection.AssemblyCompany("Creezio")]
 
 namespace Creezio.Switcher
@@ -15,11 +15,12 @@ namespace Creezio.Switcher
         [DllImport("user32.dll")] private static extern bool SetProcessDPIAware();
         [STAThread] private static int Main(string[] args)
         {
+            if(args.Length==2 && args[0]=="--instance-host") return InstanceHost.Run(args[1]);
             SetProcessDPIAware();
             Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
-            if(args.Length==2 && args[0]=="--render-demo")
+            if(args.Length==2 && (args[0]=="--render-demo" || args[0]=="--render-accounts-demo"))
             {
-                using(var form=new MainForm(null,true)) { form.RenderDemo(Path.GetFullPath(args[1])); }
+                using(var form=new MainForm(null,true)) {if(args[0]=="--render-accounts-demo") form.ShowAccountsDemo();form.RenderDemo(Path.GetFullPath(args[1])); }
                 return 0;
             }
             bool first;

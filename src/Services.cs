@@ -122,12 +122,14 @@ namespace Creezio.Switcher
         public readonly Vault Vault;
         public VaultData Data;
         public Settings Settings;
+        public readonly InstanceManager Instances;
         private readonly ResetController resets=new ResetController();
         public AccountService(string root)
         {
             Vault=new Vault(root); Data=Vault.Load(); Settings=Vault.LoadSettings();
             if(String.IsNullOrWhiteSpace(Settings.CodexHome)) Settings.CodexHome=CodexEnvironment.DefaultHome();
             if(String.IsNullOrWhiteSpace(Settings.CodexExecutable) || !File.Exists(Settings.CodexExecutable)) Settings.CodexExecutable=CodexEnvironment.FindExecutable();
+            Instances=new InstanceManager(this);
         }
         public void Save() { Vault.Save(Data); }
         public Profile Import(string auth, string label)
@@ -217,14 +219,13 @@ namespace Creezio.Switcher
             try
             {
                 // Reuse newly refreshed local tokens without touching the active auth file.
-                string path=Path.Combine(Settings.CodexHome,"auth.json");
-                if(ActiveKey()==profile.Key) profile.AuthJson=SafeFiles.ReadText(path);
+                Instances.SyncFreshAuth(profile);
                 using(var rpc=await OpenUsageSession(profile.AuthJson,token))
                 {
                     var gateway=new ResetGateway(rpc);
                     (await gateway.Read(token)).Apply(profile,DateTime.UtcNow);
                     Save();
-                    if(allowAutoReset) await resets.Run(profile,()=>Settings.AutoResetCredits && ActiveKey()==profile.Key,gateway,Save,token);
+                    if(allowAutoReset) await resets.Run(profile,()=>Settings.AutoResetCredits && Instances.IsResetActive(profile),gateway,Save,token);
                 }
             }
             catch(OperationCanceledException) { throw; }
@@ -233,22 +234,14 @@ namespace Creezio.Switcher
         }
         public async Task Switch(Profile profile, CancellationToken token)
         {
-            CodexEnvironment.CheckFileStorage(Settings.CodexHome);
-            if(CodexEnvironment.ClientsRunning()) throw new InvalidOperationException("Fermez complètement Codex/ChatGPT et ses terminaux Codex, puis réessayez. La bascule ne ferme aucune application.");
-            // The authenticated service must accept the selected account before any local change.
-            (await FetchUsage(profile.AuthJson,token)).Apply(profile,DateTime.UtcNow);
-            token.ThrowIfCancellationRequested();
-            var transaction=new SwitchTransaction(Settings.CodexHome,CodexEnvironment.ClientsRunning);
-            transaction.Execute(profile.AuthJson, previous => {
-                Data.PreviousAuthJson=previous;
-                if(previous!=null) { try { Import(previous,null); } catch(InvalidOperationException) { /* API-key backup remains encrypted as-is. */ } }
-                Save();
-            }, delegate {});
+            await Instances.SelectAccount(Data.Instances.First(i=>i.IsLocal),profile,token);
         }
         public void RestorePrevious()
         {
             if(String.IsNullOrEmpty(Data.PreviousAuthJson)) throw new InvalidOperationException("Aucun compte précédent dans le coffre.");
             string previous=Data.PreviousAuthJson;
+            var matching=Data.Profiles.FirstOrDefault(p=>p.AuthJson==previous);
+            if(matching!=null) InstanceRules.RequireAvailable(matching,Data.Instances.First(i=>i.IsLocal));
             new SwitchTransaction(Settings.CodexHome,CodexEnvironment.ClientsRunning,true).Execute(previous, current=> {Data.PreviousAuthJson=current; Save();},delegate {});
         }
     }
