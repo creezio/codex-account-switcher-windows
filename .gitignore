@@ -1,0 +1,13 @@
+work/
+outputs/
+build/
+*.user
+*.suo
+*.pdb
+*.log
+auth.json
+*.vault
+*.dpapi
+.vs/
+bin/
+obj/

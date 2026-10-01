@@ -1,0 +1,47 @@
+# Plan de réalisation — Codex Account Switcher pour Windows
+
+## Objectif
+
+Application native Windows 10/11, en français, avec comptes ChatGPT enregistrés,
+quotas Codex, bascule manuelle et icône dans la zone de notification.
+Dépôt public : `creezio/codex-account-switcher-windows`.
+
+## Première version
+
+1. **Socle léger** : C# / Windows Forms, .NET Framework 4.8 inclus dans les versions
+   Windows ciblées, compilation avec le compilateur Windows existant ; aucun NuGet.
+2. **Comptes** : import de la connexion locale, ajout par le parcours OAuth officiel
+   Codex, noms personnalisés et suppression du coffre local.
+3. **Protection** : coffre chiffré DPAPI pour l'utilisateur Windows, permissions
+   restreintes, écritures atomiques et aucune journalisation des jetons.
+4. **Quotas** : interrogation du serveur officiel `codex app-server` via JSON-RPC,
+   pour chaque compte ; fenêtres, dates de réinitialisation et erreurs explicites.
+5. **Bascule** : stockage fichier uniquement, sauvegarde du compte précédent,
+   refus tant que Codex/ChatGPT est ouvert, remplacement atomique de `auth.json`,
+   contrôle de l'identité et restauration en cas d'échec. Aucune interruption des
+   tâches ni modification des conversations ou de la configuration Codex.
+6. **Interface** : tableau de bord, compte recommandé parmi les quotas frais,
+   actualisation manuelle/périodique et notifications facultatives.
+7. **Livraison** : tests de sécurité et de bascule avec comptes fictifs, essai du
+   protocole local sans connexion, vérification visuelle, ZIP portable, somme SHA-256
+   et pipeline GitHub Actions pour reproduire la compilation et les tests.
+
+## Validation nécessitant l'utilisateur
+
+Une connexion OAuth réelle exige l'intervention de l'utilisateur dans son navigateur.
+La recette de bascule entre deux comptes réels exige la fermeture de Codex ; elle ne
+sera pas présentée comme effectuée pendant cette conversation active.
+
+## Après cette version
+
+- Intégration au coffre natif Codex (`keyring`/`auto`) après validation dédiée.
+- Bascule automatique et reprise de tâches, après validation des interruptions.
+- Crédits de réinitialisation, signature Authenticode et installateur.
+
+## Sources techniques
+
+- https://learn.chatgpt.com/docs/auth#credential-storage
+- https://learn.chatgpt.com/docs/app-server
+- Inspiration fonctionnelle : https://github.com/lordydord/Codex-Account-Switcher
+
+L'implémentation Windows est indépendante : aucun code Swift n'est repris.
