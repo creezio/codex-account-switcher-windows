@@ -96,6 +96,69 @@ namespace Creezio.Switcher
         public QuotaWindow Primary { get; set; }
         public QuotaWindow Secondary { get; set; }
     }
+    public sealed class ResetCredit
+    {
+        public string Id { get; set; }
+        public string ResetType { get; set; }
+        public string Status { get; set; }
+        public long? ExpiresAt { get; set; }
+    }
+    public sealed class ResetCredits
+    {
+        public int? AvailableCount { get; set; }
+        // Null means details were not supplied; an empty list means no detailed credit is available.
+        public List<ResetCredit> Credits { get; set; }
+        public ResetCredit Next(DateTime now)
+        {
+            double seconds=(now.ToUniversalTime()-new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc)).TotalSeconds;
+            return Credits==null?null:Credits.Where(c=>!String.IsNullOrWhiteSpace(c.Id) && c.ResetType=="codexRateLimits" && c.Status=="available" && (!c.ExpiresAt.HasValue || c.ExpiresAt.Value>seconds)).OrderBy(c=>c.ExpiresAt ?? Int64.MaxValue).FirstOrDefault();
+        }
+        public bool CanConsume(DateTime now) { return AvailableCount>0 && (Credits==null || Next(now)!=null); }
+    }
+    public sealed class ResetAttempt
+    {
+        public string IdempotencyKey { get; set; }
+        public string CreditId { get; set; }
+        public string State { get; set; }
+        public string StartedUtc { get; set; }
+        public string LastSentUtc { get; set; }
+        public int SendCount { get; set; }
+        public int? BeforeCount { get; set; }
+        public string TriggerFingerprint { get; set; }
+    }
+    internal sealed class UsageSnapshot
+    {
+        public List<QuotaBucket> Buckets;
+        public ResetCredits ResetCredits;
+        public static UsageSnapshot Parse(object result)
+        {
+            object reset=Json.Get(result,"rateLimitResetCredits");
+            ResetCredits credits=null;
+            if(reset!=null)
+            {
+                double? count=Json.Number(Json.Get(reset,"availableCount"));
+                credits=new ResetCredits {AvailableCount=count.HasValue && count>=0 && count<=Int32.MaxValue && count==Math.Truncate(count.Value)?(int?)count.Value:null};
+                var rows=Json.Get(reset,"credits") as System.Collections.IEnumerable;
+                if(Json.Get(reset,"credits")!=null) credits.Credits=new List<ResetCredit>();
+                if(rows!=null && !(rows is string) && !(rows is System.Collections.IDictionary))
+                {
+                    foreach(object row in rows)
+                    {
+                        double? expires=Json.Number(Json.Get(row,"expiresAt"));
+                        // An invalid non-null expiry is treated as expired, never as unlimited.
+                        long? expiration=Json.Get(row,"expiresAt")==null?null:(expires.HasValue && expires>=0 && expires<=253402300799L?(long?)expires.Value:0L);
+                        credits.Credits.Add(new ResetCredit {Id=Json.Str(Json.Get(row,"id")),ResetType=Json.Str(Json.Get(row,"resetType")),Status=Json.Str(Json.Get(row,"status")),ExpiresAt=expiration});
+                    }
+                }
+            }
+            return new UsageSnapshot {Buckets=Quotas.Parse(result),ResetCredits=credits};
+        }
+        public void Apply(Profile profile, DateTime now)
+        {
+            profile.Quotas=Buckets; profile.ResetCredits=ResetCredits;
+            profile.QuotaTimeUtc=now.ToUniversalTime().ToString("o"); profile.Error=null;
+        }
+    }
     public sealed class Profile
     {
         public string Key { get; set; }
@@ -106,6 +169,9 @@ namespace Creezio.Switcher
         public List<QuotaBucket> Quotas { get; set; }
         public string QuotaTimeUtc { get; set; }
         public string Error { get; set; }
+        public ResetCredits ResetCredits { get; set; }
+        public ResetAttempt ResetAttempt { get; set; }
+        public string ResetMessage { get; set; }
         public Profile() { Quotas = new List<QuotaBucket>(); }
         public bool IsFresh
         {
@@ -135,7 +201,8 @@ namespace Creezio.Switcher
         public string CodexHome { get; set; }
         public bool AutoRefresh { get; set; }
         public bool Notifications { get; set; }
-        public Settings() { AutoRefresh = false; Notifications = true; }
+        public bool AutoResetCredits { get; set; }
+        public Settings() { AutoRefresh = false; Notifications = true; AutoResetCredits = true; }
     }
     internal static class Quotas
     {
@@ -152,7 +219,12 @@ namespace Creezio.Switcher
         public static List<QuotaBucket> Parse(object result)
         {
             var map = Json.Obj(Json.Get(result, "rateLimitsByLimitId"));
-            if (map.Count == 0 && Json.Get(result, "rateLimits") != null) map["codex"] = Json.Get(result, "rateLimits");
+            if (map.Count == 0 && Json.Get(result, "rateLimits") != null)
+            {
+                object legacy=Json.Get(result,"rateLimits");
+                string limitId=Json.Str(Json.Get(legacy,"limitId"));
+                map[String.IsNullOrEmpty(limitId)?"codex":limitId]=legacy;
+            }
             return map.Select(pair => new QuotaBucket { Name = pair.Key, Primary = Window(Json.Get(pair.Value, "primary")), Secondary = Window(Json.Get(pair.Value, "secondary")) }).ToList();
         }
     }

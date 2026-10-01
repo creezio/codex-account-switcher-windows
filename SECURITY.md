@@ -14,3 +14,10 @@ ouverts et les magasins d'identifiants non pris en charge.
 
 Le format de stockage est versionné. Une erreur de déchiffrement ne déclenche
 jamais la création d'un coffre vide par-dessus le fichier existant.
+
+Les resets automatiques utilisent uniquement les crédits de réinitialisation
+annoncés par Codex pour le compte local enregistré, à 1 % restant ou moins.
+L'intention et sa clé d'idempotence sont conservées dans le coffre avant l'envoi.
+Un résultat réseau incertain ne crée pas une nouvelle demande ; les répétitions
+réutilisent la même clé et sont bornées à trois envois. Après acceptation, les
+quotas doivent être relus et rétablis avant de permettre un nouvel incident.

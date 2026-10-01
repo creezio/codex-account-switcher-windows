@@ -3,10 +3,10 @@
 Une application native et légère pour retrouver les quotas de vos comptes Codex
 et choisir celui que vous souhaitez utiliser. Développée par **Creezio**.
 
-**Version 0.1.0 — première version expérimentale.** Windows 10/11, interface en
+**Version 0.2.0 — bêta avec reset automatique.** Windows 10/11, interface en
 français, exécutable portable sans droits administrateur ni dépendances NuGet.
 
-[Télécharger la version Windows](https://github.com/creezio/codex-account-switcher-windows/releases/tag/v0.1.0-beta.1)
+[Télécharger la version Windows](https://github.com/creezio/codex-account-switcher-windows/releases/tag/v0.2.0-beta.1)
 · [Versions et téléchargements](https://github.com/creezio/codex-account-switcher-windows/releases)
 · [Plan de réalisation](docs/PLAN.md)
 · [Validation](docs/VALIDATION.md)
@@ -26,6 +26,10 @@ français, exécutable portable sans droits administrateur ni dépendances NuGet
 - Icône près de l'horloge, actualisation automatique facultative toutes les
   cinq minutes et notifications lorsque les quotas deviennent faibles.
 - Noms personnalisés et retrait des comptes du coffre.
+- Affichage des crédits de reset disponibles et de la prochaine expiration connue.
+- **Reset automatique à 1 % restant ou moins**, activé par défaut sur le compte
+  local enregistré. Contrôle chaque minute, option désactivable dans la barre
+  latérale ou les paramètres.
 
 ## Installation
 
@@ -75,6 +79,42 @@ sauvegarde. Une seule sauvegarde est conservée, chiffrée dans le coffre.
 Fermer la fenêtre conserve l'icône de notification. Pour arrêter le programme,
 faites un clic droit sur cette icône puis **Quitter**.
 
+### Crédits et reset automatique
+
+L'application lit les **crédits de réinitialisation gagnés**, distincts du solde
+de crédits d'utilisation achetés. Si une fenêtre du quota `codex` du compte local
+atteint **1 % restant ou moins** et qu'un crédit compatible est disponible, elle
+demande automatiquement un reset via `account/rateLimitResetCredit/consume`.
+Cela fonctionne pendant que Codex est ouvert et ne nécessite aucun changement
+de compte ni redémarrage de Codex.
+
+- Importez d'abord le compte local pour l'enregistrer dans le coffre. Les autres
+  comptes ne consomment pas leurs crédits automatiquement.
+- Le contrôle démarre à l'ouverture du switcher et se répète toutes les **60
+  secondes**, y compris lorsque sa fenêtre est masquée. L'actualisation de tous
+  les comptes toutes les cinq minutes reste une option séparée. Il ne s'agit pas
+  d'un service Windows : quitter le switcher arrête le contrôle, et une connexion
+  réseau ou une authentification indisponible empêche un reset.
+- La mesure exacte est utilisée : 1,4 % ne déclenche pas un reset ; 1 % et 0 % oui.
+  Le serveur décide si la fenêtre est effectivement éligible.
+- Les crédits connus expirant le plus tôt sont prioritaires. Les crédits expirés,
+  déjà utilisés ou d'un type inconnu sont exclus. Lorsque seul le nombre est
+  fourni, Codex choisit le crédit. Un nombre inconnu ne vaut jamais un crédit disponible.
+- Chaque demande possède un identifiant enregistré **avant** son envoi dans le
+  coffre. En cas de coupure réseau ou de redémarrage, au plus trois tentatives
+  espacées d'une minute réutilisent exactement cet identifiant et le même crédit.
+  Elles représentent une seule consommation idempotente, pas trois resets.
+- Après acceptation, les quotas et crédits sont relus. Aucune nouvelle demande
+  n'est créée tant que le rétablissement des fenêtres Codex n'a pas été observé.
+  Un délai minimal de cinq minutes après le début du reset évite les enchaînements
+  dus à un retard de propagation. Une réponse inconnue suspend les resets du compte.
+- Si Codex répond `nothingToReset`, l'application attend que le quota change ;
+  s'il répond `noCredit`, elle attend une nouvelle disponibilité.
+
+L'option est activée par défaut, y compris à la mise à jour depuis la version
+0.1.0. Une désactivation explicite est conservée entre les démarrages. Aucune
+confirmation supplémentaire n'est demandée pour chaque reset automatique.
+
 ## Compatibilité et limites
 
 - La bascule cible le stockage **fichier** de Codex : `CODEX_HOME/auth.json`, ou
@@ -92,8 +132,10 @@ faites un clic droit sur cette icône puis **Quitter**.
 - La bascule entre deux comptes réels dans l'application de bureau et le parcours
   OAuth complet demandent encore une recette interactive. Les tests automatisés
   couvrent les opérations locales avec des comptes fictifs.
-- Pas de bascule automatique, de reprise automatique des conversations ni de
-  consommation de crédits de réinitialisation dans cette première version.
+- Pas de bascule automatique ni de reprise automatique des conversations.
+- La consommation réelle d'un crédit n'a pas été effectuée comme test : le
+  déclenchement et les cas d'échec sont validés avec un serveur simulé. La lecture
+  réelle des crédits et des quotas est validée sur le compte local.
 
 ## Données et protection
 
@@ -136,8 +178,8 @@ Avec Codex CLI installé, vérifiez aussi le protocole isolé :
 ```
 
 Le contrôle réel facultatif suivant lit les quotas du compte local, sans changer
-de compte ni renouveler ses jetons ; il ne publie aucune identité ni valeur de
-quota dans les journaux :
+de compte, renouveler ses jetons ni consommer de crédit de reset ; il ne publie
+aucune identité ni valeur de quota dans les journaux :
 
 ```powershell
 .\scripts\test.ps1 -LiveReadOnly

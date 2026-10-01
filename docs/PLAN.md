@@ -22,7 +22,11 @@ Dépôt public : `creezio/codex-account-switcher-windows`.
    tâches ni modification des conversations ou de la configuration Codex.
 6. **Interface** : tableau de bord, compte recommandé parmi les quotas frais,
    actualisation manuelle/périodique et notifications facultatives.
-7. **Livraison** : tests de sécurité et de bascule avec comptes fictifs, essai du
+7. **Crédits de reset (0.2.0)** : afficher la disponibilité et l'expiration ;
+   contrôler le compte local chaque minute, consommer un crédit à 1 % ou moins,
+   conserver une intention idempotente dans le coffre, vérifier les quotas après
+   acceptation et offrir une désactivation immédiate.
+8. **Livraison** : tests de sécurité et de bascule avec comptes fictifs, essai du
    protocole local sans connexion, vérification visuelle, ZIP portable, somme SHA-256
    et pipeline GitHub Actions pour reproduire la compilation et les tests.
 
@@ -36,7 +40,7 @@ sera pas présentée comme effectuée pendant cette conversation active.
 
 - Intégration au coffre natif Codex (`keyring`/`auto`) après validation dédiée.
 - Bascule automatique et reprise de tâches, après validation des interruptions.
-- Crédits de réinitialisation, signature Authenticode et installateur.
+- Signature Authenticode et installateur.
 
 ## Sources techniques
 

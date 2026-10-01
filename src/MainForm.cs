@@ -24,6 +24,9 @@ namespace Creezio.Switcher
         private readonly HashSet<string> notified=new HashSet<string>();
         private NotifyIcon tray;
         private System.Windows.Forms.Timer timer;
+        private readonly CheckBox resetToggle=new CheckBox();
+        private DateTime lastFullRefreshUtc=DateTime.MinValue;
+        private readonly HashSet<string> resetNotified=new HashSet<string>();
         private bool busy, exiting;
         private CancellationTokenSource operation;
         private List<Profile> demoProfiles;
@@ -41,7 +44,15 @@ namespace Creezio.Switcher
             var nav=MakeButton("Comptes",null,true); nav.AutoSize=false; nav.SetBounds(20,229,190,44); nav.BackColor=Color.FromArgb(50,83,68); nav.ForeColor=Color.White; sidebar.Controls.Add(nav);
             var prefs=SideButton("Paramètres",296,async delegate { ShowSettings(); await Task.FromResult(0); }); sidebar.Controls.Add(prefs);
             var help=SideButton("Guide d'utilisation",345,async delegate { Process.Start(new ProcessStartInfo("https://github.com/creezio/codex-account-switcher-windows#readme") {UseShellExecute=true}); await Task.FromResult(0); }); sidebar.Controls.Add(help);
-            var footer=new Label {Text="PROTECTION LOCALE\n\nConnexions chiffrées pour\nvotre utilisateur Windows.\n\nCreezio · v0.1.0",Dock=DockStyle.Bottom,Height=144,ForeColor=Color.FromArgb(171,201,183),Font=new Font("Segoe UI",9)}; sidebar.Controls.Add(footer);
+            resetToggle.SetBounds(26,414,178,68);resetToggle.Text="Reset automatique\nà 1 % restant";resetToggle.ForeColor=Color.White;resetToggle.Checked=demo || service.Settings.AutoResetCredits;
+            resetToggle.CheckedChanged+=delegate {
+                if(demo || resetToggle.Checked==service.Settings.AutoResetCredits) return;
+                bool previous=service.Settings.AutoResetCredits;service.Settings.AutoResetCredits=resetToggle.Checked;
+                try {service.Vault.SaveSettings(service.Settings);status.Text=resetToggle.Checked?"Reset automatique activé : contrôle du compte local chaque minute.":"Reset automatique désactivé. Aucun nouveau crédit ne sera consommé automatiquement.";}
+                catch(Exception error) {service.Settings.AutoResetCredits=previous;resetToggle.Checked=previous;MessageBox.Show(this,Program.SafeError(error),"Creezio");}
+            };
+            sidebar.Controls.Add(resetToggle);actions.Add(resetToggle);
+            var footer=new Label {Text="PROTECTION LOCALE\n\nConnexions chiffrées pour\nvotre utilisateur Windows.\n\nCreezio · v0.2.0",Dock=DockStyle.Bottom,Height=144,ForeColor=Color.FromArgb(171,201,183),Font=new Font("Segoe UI",9)}; sidebar.Controls.Add(footer);
             var content=new Panel {Dock=DockStyle.Fill,Padding=new Padding(30,0,30,0)}; Controls.Add(content); content.BringToFront();
             var header=new Panel {Dock=DockStyle.Top,Height=181}; content.Controls.Add(header);
             header.Controls.Add(LabelAt("VOS COMPTES CODEX",0,25,410,22,9,FontStyle.Bold,Green));
@@ -53,7 +64,7 @@ namespace Creezio.Switcher
             buttons.Controls.Add(MakeButton("Actualiser",async delegate { await RefreshAll(); },false));
             cancel.Text="Annuler"; cancel.AutoSize=true; cancel.Height=34; cancel.FlatStyle=FlatStyle.Flat; cancel.Visible=false; cancel.Click+=delegate {if(operation!=null) operation.Cancel();}; buttons.Controls.Add(cancel);
             var bottom=new Panel {Dock=DockStyle.Bottom,Height=89,Padding=new Padding(0,14,0,0)}; content.Controls.Add(bottom);
-            status.Dock=DockStyle.Fill; status.ForeColor=Muted; status.Font=new Font("Segoe UI",9); status.Text="Prêt. Les quotas sont lus uniquement sur demande, sauf actualisation automatique activée."; bottom.Controls.Add(status);
+            status.Dock=DockStyle.Fill; status.ForeColor=Muted; status.Font=new Font("Segoe UI",9); status.Text=demo || service.Settings.AutoResetCredits?"Reset automatique à 1 % : contrôle du compte local enregistré chaque minute tant que l'application reste ouverte.":"Reset automatique désactivé. Actualisez les quotas à la demande ou activez l'option dans la barre latérale."; bottom.Controls.Add(status);
             cards.Dock=DockStyle.Fill; cards.FlowDirection=FlowDirection.TopDown; cards.WrapContents=false; cards.AutoScroll=true; cards.Padding=new Padding(0,7,0,10); content.Controls.Add(cards); cards.BringToFront();
             cards.Resize+=delegate { foreach(Control card in cards.Controls) card.Width=Math.Max(520,cards.ClientSize.Width-23); };
             if(demo) demoProfiles=DemoData();
@@ -64,9 +75,11 @@ namespace Creezio.Switcher
                 menu.Items.Add("Actualiser les quotas",null,async delegate { await RunOperation(RefreshAll); });
                 menu.Items.Add(new ToolStripSeparator()); menu.Items.Add("Quitter",null,delegate { exiting=true; Close(); });
                 tray=new NotifyIcon {Icon=SystemIcons.Application,Text="Creezio · Codex Account Switcher",Visible=true,ContextMenuStrip=menu};
+                foreach(var profile in service.Data.Profiles) if(profile.ResetAttempt!=null && profile.ResetAttempt.State=="recovered") resetNotified.Add(profile.ResetAttempt.IdempotencyKey);
                 tray.DoubleClick+=delegate { Show(); WindowState=FormWindowState.Normal; Activate(); };
-                timer=new System.Windows.Forms.Timer {Interval=300000};
-                timer.Tick+=async delegate {if(service.Settings.AutoRefresh && !busy) await RunOperation(RefreshAll);}; timer.Start();
+                timer=new System.Windows.Forms.Timer {Interval=60000};
+                timer.Tick+=async delegate {if(!busy) await Poll();}; timer.Start();
+                Shown+=async delegate {await Poll();};
             }
             FormClosing+=OnClosing;
             Redraw();
@@ -84,19 +97,36 @@ namespace Creezio.Switcher
         }
         internal static Label LabelAt(string text,int x,int y,int w,int h,float size,FontStyle style,Color color)
         { return new Label {Text=text,Left=x,Top=y,Width=w,Height=h,Font=new Font("Segoe UI",size,style),ForeColor=color,BackColor=Color.Transparent,AutoEllipsis=true}; }
-        private async Task RunOperation(Func<Task> action)
+        private async Task RunOperation(Func<Task> action,bool quiet=false)
         {
             if(busy || demo) return;
             busy=true; operation=new CancellationTokenSource(); cancel.Visible=true;
             foreach(var control in actions) if(!control.IsDisposed) control.Enabled=false;
             try { await action(); }
-            catch(Exception error) { status.Text=Program.SafeError(error); if(!exiting) MessageBox.Show(this,Program.SafeError(error),"Creezio",MessageBoxButtons.OK,MessageBoxIcon.Information); }
+            catch(Exception error) { status.Text=Program.SafeError(error); if(!exiting && !quiet) MessageBox.Show(this,Program.SafeError(error),"Creezio",MessageBoxButtons.OK,MessageBoxIcon.Information); }
             finally
             {
                 operation.Dispose(); operation=null; busy=false; cancel.Visible=false;
                 foreach(var control in actions) if(!control.IsDisposed) control.Enabled=true;
                 Redraw(); if(exiting) Close();
             }
+        }
+        private async Task Poll()
+        {
+            if(service.Settings.AutoRefresh && DateTime.UtcNow-lastFullRefreshUtc>=TimeSpan.FromMinutes(5)) await RunOperation(RefreshAll,true);
+            else if(service.Settings.AutoResetCredits) await RunOperation(async delegate {
+                var profile=service.Data.Profiles.FirstOrDefault(p=>p.Key==service.ActiveKey());
+                if(profile==null) {status.Text="Pour activer le reset automatique, importez le compte local utilisé par Codex.";return;}
+                await service.Refresh(profile,operation.Token,true);
+                NotifyReset(profile);
+                status.Text=profile.Error ?? profile.ResetMessage ?? "Compte local vérifié à "+DateTime.Now.ToString("HH:mm")+" · reset automatique à 1 % activé.";
+            },true);
+        }
+        private void NotifyReset(Profile profile)
+        {
+            var attempt=profile.ResetAttempt;
+            if(service.Settings.Notifications && attempt!=null && attempt.State=="recovered" && resetNotified.Add(attempt.IdempotencyKey))
+                tray.ShowBalloonTip(6000,"Reset Codex",profile.Label+" : "+profile.ResetMessage,ToolTipIcon.Info);
         }
         private async Task AddAccount()
         {
@@ -111,12 +141,14 @@ namespace Creezio.Switcher
             foreach(var profile in service.Data.Profiles.ToArray())
             {
                 operation.Token.ThrowIfCancellationRequested(); status.Text="Actualisation de « "+profile.Label+" »…";
-                await service.Refresh(profile,operation.Token);
+                await service.Refresh(profile,operation.Token,true);
+                NotifyReset(profile);
                 if(service.Settings.Notifications && profile.IsFresh && profile.Score.HasValue && profile.Score<=10 && notified.Add(profile.Key))
                     tray.ShowBalloonTip(6000,"Quota Codex faible",profile.Label+" : moins de 10 % sur une fenêtre de quota.",ToolTipIcon.Info);
                 if(profile.Score>10) notified.Remove(profile.Key);
             }
             int failed=service.Data.Profiles.Count(p=>!String.IsNullOrEmpty(p.Error));
+            lastFullRefreshUtc=DateTime.UtcNow;
             status.Text=failed>0?failed+" compte(s) non actualisé(s). Les dernières valeurs sont conservées et signalées comme anciennes.":"Quotas actualisés à "+DateTime.Now.ToString("HH:mm")+". Aucune connexion active n'a été modifiée.";
         }
         private void Redraw()
@@ -165,7 +197,7 @@ namespace Creezio.Switcher
         {
             using(var dialog=new SettingsForm(service.Settings))
             {
-                if(dialog.ShowDialog(this)==DialogResult.OK) {service.Settings=dialog.Result; service.Vault.SaveSettings(service.Settings); status.Text="Paramètres enregistrés. L'actualisation automatique, si activée, se fait toutes les 5 minutes.";}
+                if(dialog.ShowDialog(this)==DialogResult.OK) {service.Settings=dialog.Result; service.Vault.SaveSettings(service.Settings);resetToggle.Checked=service.Settings.AutoResetCredits; status.Text="Paramètres enregistrés. Reset automatique : compte local chaque minute. Actualisation globale : toutes les 5 minutes si activée.";}
                 if(dialog.RestoreRequested) {service.RestorePrevious();status.Text="Connexion précédente restaurée. Vous pouvez rouvrir Codex.";}
             }
         }
@@ -188,8 +220,8 @@ namespace Creezio.Switcher
         {
             long reset=(long)(DateTimeOffset.UtcNow-new DateTimeOffset(1970,1,1,0,0,0,TimeSpan.Zero)).TotalSeconds;
             return new List<Profile> {
-                new Profile {Key="demo-one",Label="Compte principal",Email="principal@example.com",Plan="plus",QuotaTimeUtc=DateTime.UtcNow.ToString("o"),Quotas=new List<QuotaBucket>{new QuotaBucket {Name="codex",Primary=new QuotaWindow{Remaining=24,Minutes=300,ResetsAt=reset+8200},Secondary=new QuotaWindow{Remaining=61,Minutes=10080,ResetsAt=reset+150000}}}},
-                new Profile {Key="demo-two",Label="Compte de travail",Email="travail@example.com",Plan="pro",QuotaTimeUtc=DateTime.UtcNow.ToString("o"),Quotas=new List<QuotaBucket>{new QuotaBucket {Name="codex",Primary=new QuotaWindow{Remaining=92,Minutes=300,ResetsAt=reset+17000},Secondary=new QuotaWindow{Remaining=84,Minutes=10080,ResetsAt=reset+450000}}}}
+                new Profile {Key="demo-one",Label="Compte principal",Email="principal@example.com",Plan="plus",QuotaTimeUtc=DateTime.UtcNow.ToString("o"),ResetCredits=new ResetCredits{AvailableCount=2,Credits=new List<ResetCredit>{new ResetCredit{Id="demo-credit",ResetType="codexRateLimits",Status="available",ExpiresAt=reset+86400}}},ResetMessage="Reset automatique activé · déclenchement à 1 % restant.",Quotas=new List<QuotaBucket>{new QuotaBucket {Name="codex",Primary=new QuotaWindow{Remaining=24,Minutes=300,ResetsAt=reset+8200},Secondary=new QuotaWindow{Remaining=61,Minutes=10080,ResetsAt=reset+150000}}}},
+                new Profile {Key="demo-two",Label="Compte de travail",Email="travail@example.com",Plan="pro",QuotaTimeUtc=DateTime.UtcNow.ToString("o"),ResetCredits=new ResetCredits{AvailableCount=0,Credits=new List<ResetCredit>()},Quotas=new List<QuotaBucket>{new QuotaBucket {Name="codex",Primary=new QuotaWindow{Remaining=92,Minutes=300,ResetsAt=reset+17000},Secondary=new QuotaWindow{Remaining=84,Minutes=10080,ResetsAt=reset+450000}}}}
             };
         }
     }
@@ -199,7 +231,7 @@ namespace Creezio.Switcher
         public AccountCard(Profile value,bool isActive,bool isBest)
         {
             profile=value; active=isActive; best=isBest;
-            Height=247+Math.Max(0,profile.Quotas.Count-1)*86; BackColor=Color.White; Margin=new Padding(0,0,0,16);
+            Height=302+Math.Max(0,profile.Quotas.Count-1)*86; BackColor=Color.White; Margin=new Padding(0,0,0,16);
             DoubleBuffered=true; ResizeRedraw=true;
         }
         protected override void OnPaint(PaintEventArgs e)
@@ -223,6 +255,12 @@ namespace Creezio.Switcher
                 DrawQuota(g,bucket.Secondary,Width/2+5,y+offset,(Width-64)/2,fresh);
                 y+=86;
             }
+            int resetY=193+Math.Max(0,profile.Quotas.Count-1)*86;
+            string resetText="CRÉDITS DE RESET · "+(profile.ResetCredits!=null&&profile.ResetCredits.AvailableCount.HasValue?profile.ResetCredits.AvailableCount.Value+" disponible(s)":"non renseignés");
+            var next=profile.ResetCredits==null?null:profile.ResetCredits.Next(DateTime.UtcNow);
+            if(next!=null && next.ExpiresAt.HasValue) resetText+=" · prochain expirant le "+new DateTimeOffset(1970,1,1,0,0,0,TimeSpan.Zero).AddSeconds(next.ExpiresAt.Value).ToLocalTime().ToString("dd/MM à HH:mm");
+            Draw(g,resetText,22,resetY,Width-44,22,9,FontStyle.Bold,MainForm.Green);
+            if(!String.IsNullOrEmpty(profile.ResetMessage)) Draw(g,profile.ResetMessage,22,resetY+26,Width-44,27,9,FontStyle.Regular,MainForm.Muted);
         }
         private static void Draw(Graphics g,string text,int x,int y,int w,int h,float size,FontStyle weight,Color color)
         {using(var font=new Font("Segoe UI",size,weight)) TextRenderer.DrawText(g,text,font,new Rectangle(x,y,w,h),color,TextFormatFlags.EndEllipsis|TextFormatFlags.NoPadding);}
@@ -241,7 +279,7 @@ namespace Creezio.Switcher
         public Settings Result; public bool RestoreRequested;
         public SettingsForm(Settings current)
         {
-            Text="Paramètres · Creezio";ClientSize=new Size(640,397);Font=new Font("Segoe UI",10);StartPosition=FormStartPosition.CenterParent;FormBorderStyle=FormBorderStyle.FixedDialog;MaximizeBox=false;MinimizeBox=false;
+            Text="Paramètres · Creezio";ClientSize=new Size(640,480);Font=new Font("Segoe UI",10);StartPosition=FormStartPosition.CenterParent;FormBorderStyle=FormBorderStyle.FixedDialog;MaximizeBox=false;MinimizeBox=false;
             Controls.Add(MainForm.LabelAt("Exécutable Codex CLI (codex.exe)",22,22,580,25,10,FontStyle.Bold,MainForm.Ink));
             var exe=new TextBox {Left=25,Top=54,Width=490,Text=current.CodexExecutable};Controls.Add(exe);
             var browse=new Button {Text="Choisir…",Left=525,Top=52,Width=90};Controls.Add(browse);
@@ -252,12 +290,14 @@ namespace Creezio.Switcher
             folder.Click+=delegate {using(var picker=new FolderBrowserDialog {SelectedPath=home.Text}) if(picker.ShowDialog(this)==DialogResult.OK) home.Text=picker.SelectedPath;};
             var automatic=new CheckBox {Text="Actualiser les quotas toutes les 5 minutes",Left=25,Top=188,Width=580,Checked=current.AutoRefresh};Controls.Add(automatic);
             var notify=new CheckBox {Text="Notifier quand un quota passe sous 10 %",Left=25,Top=225,Width=580,Checked=current.Notifications};Controls.Add(notify);
-            var restore=new Button {Text="Restaurer la connexion précédente",Left=25,Top=275,Width=285,Height=32};Controls.Add(restore);
+            var autoReset=new CheckBox {Text="Utiliser automatiquement un crédit de reset à 1 % restant",Left=25,Top=263,Width=590,Checked=current.AutoResetCredits};Controls.Add(autoReset);
+            Controls.Add(MainForm.LabelAt("Compte local uniquement · vérification chaque minute.\nL'application doit rester ouverte, y compris dans la zone de notification.",25,301,590,50,9,FontStyle.Regular,MainForm.Muted));
+            var restore=new Button {Text="Restaurer la connexion précédente",Left=25,Top=361,Width=285,Height=32};Controls.Add(restore);
             restore.Click+=delegate {if(MessageBox.Show(this,"Restaurer la sauvegarde précédente ? Codex doit être fermé.","Restauration",MessageBoxButtons.YesNo)==DialogResult.Yes) {RestoreRequested=true;DialogResult=DialogResult.Cancel;Close();}};
-            var save=new Button {Text="Enregistrer",Left=475,Top=341,Width=140,Height=34};Controls.Add(save);AcceptButton=save;
+            var save=new Button {Text="Enregistrer",Left=475,Top=425,Width=140,Height=34};Controls.Add(save);AcceptButton=save;
             save.Click+=delegate {
                 if(!Path.IsPathRooted(home.Text) || !Directory.Exists(home.Text) || !File.Exists(exe.Text) || !String.Equals(Path.GetExtension(exe.Text),".exe",StringComparison.OrdinalIgnoreCase)) {MessageBox.Show(this,"Choisissez un dossier Codex existant et un exécutable .exe valide.");return;}
-                Result=new Settings {CodexExecutable=Path.GetFullPath(exe.Text),CodexHome=Path.GetFullPath(home.Text),AutoRefresh=automatic.Checked,Notifications=notify.Checked};DialogResult=DialogResult.OK;Close();
+                Result=new Settings {CodexExecutable=Path.GetFullPath(exe.Text),CodexHome=Path.GetFullPath(home.Text),AutoRefresh=automatic.Checked,Notifications=notify.Checked,AutoResetCredits=autoReset.Checked};DialogResult=DialogResult.OK;Close();
             };
         }
     }

@@ -25,10 +25,11 @@ internal static class ProtocolSmoke
                 string auth=SafeFiles.ReadText(Path.Combine(home,"auth.json"));
                 byte[] before=File.ReadAllBytes(Path.Combine(home,"auth.json"));
                 var service=new AccountService(root);
-                var quotas=service.FetchQuotas(auth,CancellationToken.None).GetAwaiter().GetResult();
+                var usage=service.FetchUsage(auth,CancellationToken.None).GetAwaiter().GetResult();
                 byte[] after=File.ReadAllBytes(Path.Combine(home,"auth.json"));
                 if(!System.Linq.Enumerable.SequenceEqual(before,after)) throw new Exception("Active auth file changed during the test (possibly by the running client).");
-                Console.WriteLine("PASS live quota read through external-token mode ("+quotas.Count+" buckets); active auth unchanged");
+                Console.WriteLine("PASS live quota read through external-token mode ("+usage.Buckets.Count+" buckets); active auth unchanged");
+                Console.WriteLine("PASS reset-credit metadata parsed (provided="+(usage.ResetCredits!=null)+"); no consume endpoint called");
             }
             if(Directory.Exists(Path.Combine(root,"runtime")) && Directory.GetDirectories(Path.Combine(root,"runtime")).Length!=0) throw new Exception("Runtime directories were not cleaned.");
             Console.WriteLine("PASS helper processes disposed and runtime directories removed");

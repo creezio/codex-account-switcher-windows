@@ -122,6 +122,7 @@ namespace Creezio.Switcher
         public readonly Vault Vault;
         public VaultData Data;
         public Settings Settings;
+        private readonly ResetController resets=new ResetController();
         public AccountService(string root)
         {
             Vault=new Vault(root); Data=Vault.Load(); Settings=Vault.LoadSettings();
@@ -172,29 +173,59 @@ namespace Creezio.Switcher
                 return Import(auth,null);
             }
         }
-        public async Task<List<QuotaBucket>> FetchQuotas(string auth, CancellationToken token)
+        private async Task<RpcClient> OpenUsageSession(string auth,CancellationToken token)
         {
             RequireExecutable(); var identity=AuthIdentity.Parse(auth);
-            using(var rpc=new RpcClient(Settings.CodexExecutable,Vault.Root))
+            var rpc=new RpcClient(Settings.CodexExecutable,Vault.Root);
+            try
             {
                 await rpc.Initialize(token);
                 // External-token mode avoids rotating the refresh token copied from a running client.
                 await rpc.Call("account/login/start",new { type="chatgptAuthTokens",accessToken=identity.AccessToken,chatgptAccountId=identity.AccountId,chatgptPlanType=String.IsNullOrEmpty(identity.Plan)?null:identity.Plan },token);
+                return rpc;
+            }
+            catch {rpc.Dispose();throw;}
+        }
+        private sealed class ResetGateway : IResetGateway
+        {
+            private readonly RpcClient rpc;
+            public ResetGateway(RpcClient connection) {rpc=connection;}
+            public async Task<UsageSnapshot> Read(CancellationToken token)
+            {
                 var result=await rpc.Call("account/rateLimits/read",null,token);
-                var quotas=Quotas.Parse(result);
-                if(quotas.Count==0) throw new InvalidOperationException("Les quotas ne sont pas disponibles pour ce compte.");
-                return quotas;
+                var snapshot=UsageSnapshot.Parse(result);
+                if(snapshot.Buckets.Count==0) throw new InvalidOperationException("Les quotas ne sont pas disponibles pour ce compte.");
+                return snapshot;
+            }
+            public async Task<string> Consume(string key,string credit,CancellationToken token)
+            {
+                var parameters=new Dictionary<string,object>{{"idempotencyKey",key}};
+                if(!String.IsNullOrEmpty(credit)) parameters["creditId"]=credit;
+                var result=await rpc.Call("account/rateLimitResetCredit/consume",parameters,token);
+                return Json.Str(Json.Get(result,"outcome"));
             }
         }
-        public async Task Refresh(Profile profile, CancellationToken token)
+        public async Task<UsageSnapshot> FetchUsage(string auth,CancellationToken token)
+        {
+            using(var rpc=await OpenUsageSession(auth,token)) return await new ResetGateway(rpc).Read(token);
+        }
+        public async Task<List<QuotaBucket>> FetchQuotas(string auth, CancellationToken token)
+        { return (await FetchUsage(auth,token)).Buckets; }
+
+        public async Task Refresh(Profile profile, CancellationToken token,bool allowAutoReset=false)
         {
             try
             {
                 // Reuse newly refreshed local tokens without touching the active auth file.
                 string path=Path.Combine(Settings.CodexHome,"auth.json");
                 if(ActiveKey()==profile.Key) profile.AuthJson=SafeFiles.ReadText(path);
-                profile.Quotas=await FetchQuotas(profile.AuthJson,token);
-                profile.QuotaTimeUtc=DateTime.UtcNow.ToString("o"); profile.Error=null;
+                using(var rpc=await OpenUsageSession(profile.AuthJson,token))
+                {
+                    var gateway=new ResetGateway(rpc);
+                    (await gateway.Read(token)).Apply(profile,DateTime.UtcNow);
+                    Save();
+                    if(allowAutoReset) await resets.Run(profile,()=>Settings.AutoResetCredits && ActiveKey()==profile.Key,gateway,Save,token);
+                }
             }
             catch(OperationCanceledException) { throw; }
             catch { profile.Error="Connexion expirée, réseau indisponible ou version Codex incompatible. Reconnectez ce compte ou réessayez."; }
@@ -205,8 +236,7 @@ namespace Creezio.Switcher
             CodexEnvironment.CheckFileStorage(Settings.CodexHome);
             if(CodexEnvironment.ClientsRunning()) throw new InvalidOperationException("Fermez complètement Codex/ChatGPT et ses terminaux Codex, puis réessayez. La bascule ne ferme aucune application.");
             // The authenticated service must accept the selected account before any local change.
-            profile.Quotas=await FetchQuotas(profile.AuthJson,token);
-            profile.QuotaTimeUtc=DateTime.UtcNow.ToString("o"); profile.Error=null;
+            (await FetchUsage(profile.AuthJson,token)).Apply(profile,DateTime.UtcNow);
             token.ThrowIfCancellationRequested();
             var transaction=new SwitchTransaction(Settings.CodexHome,CodexEnvironment.ClientsRunning);
             transaction.Execute(profile.AuthJson, previous => {
