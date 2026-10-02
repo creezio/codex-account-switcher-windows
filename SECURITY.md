@@ -34,3 +34,24 @@ transmises à une nouvelle instance.
 Les associations ne constituent pas une frontière de sécurité entre utilisateurs
 Windows. Les fichiers actifs des profils restent lisibles par leur propriétaire.
 Une instance archivée conserve volontairement ses connexions et conversations.
+
+Le relais v0.4 transmet les prompts et réponses explicitement demandés entre les
+comptes de l'utilisateur. Ces contenus deviennent visibles dans les conversations
+des comptes correspondants. Ses fichiers locaux sont chiffrés avec DPAPI. Aucun
+jeton d'authentification n'est transmis dans un message. Les canaux sont épinglés au
+compte, au profil, au dossier, au PID et à l'heure de démarrage du processus Codex.
+Un redémarrage exige une reconnexion. Il n'existe aucun serveur HTTP de relais.
+
+L'option Exiger Accès complet vérifie le contexte de permissions enregistré avant
+la connexion et les envois. Une lecture inconnue échoue de façon restrictive. Le
+relais ne modifie ni config.toml, ni sélection de permissions, ni demandes
+d'approbation. Les outils Sites s'exécutent dans l'instance propriétaire, sous les
+contrôles natifs de ce compte. Les utilisateurs Windows et programmes capables de
+modifier les fichiers de ce même utilisateur ne sont pas isolés entre eux par DPAPI.
+
+Les intentions sont enregistrées avant envoi et verrouillées entre processus. Une
+coupure après un envoi peut laisser un état incertain, conservé pour vérification
+humaine sans renvoi automatique. La sérialisation par canal ne remplace pas un
+verrou de dépôt. Les agents doivent vérifier le commit ou l'empreinte avant toute
+publication. Le résultat textuel d'une tâche n'est pas une preuve indépendante de
+déploiement ; le test réel utilise aussi le statut natif Sites.

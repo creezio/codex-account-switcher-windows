@@ -45,7 +45,7 @@ namespace Creezio.Switcher
         }
         public async Task Initialize(CancellationToken token)
         {
-            await Call("initialize", new { clientInfo = new { name="creezio_account_switcher", title="Creezio Account Switcher", version="0.3.0" }, capabilities=new { experimentalApi=true } }, token);
+            await Call("initialize", new { clientInfo = new { name="creezio_account_switcher", title="Creezio Account Switcher", version="0.4.0" }, capabilities=new { experimentalApi=true } }, token);
             Send(new { method="initialized" });
         }
         private void Send(object value)

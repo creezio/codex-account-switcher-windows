@@ -1,3 +1,49 @@
+# Validation de la version 0.4.0
+
+Vérifications du 2 octobre 2026, Windows et OpenAI.Codex 26.924.2738.0.
+
+- Compilation des exécutables GUI et console sans téléchargement de dépendances,
+  avec tous les avertissements C# traités comme erreurs.
+- **100 tests hors ligne réussis** : les 68 existants et 32 tests du relais.
+  Couverture : DPAPI, identité, chemins, version du dossier, idempotence, concurrence,
+  arrêt après envoi ambigu, résultats finaux, coupure du retour, reprise sans renvoi,
+  conversations initiales et continuations natives, troncature et permissions.
+- Rendu visuel de l'écran Relais en taille normale et minimale, avec données fictives.
+- **Test réel entre deux comptes distincts**, session habituelle et instance gérée,
+  utilisant les véritables outils Codex et Sites :
+  1. Compte A : création et publication v1 d'un Site privé de test.
+  2. Compte B : `get_site` renvoie effectivement NOT_FOUND ; édition de la v2 dans
+     le même dossier physique puis demande envoyée par CreezioRelay.
+  3. Compte A : nouvelle conversation, contrôle SHA256, publication v2 sur le même
+     `project_id` et la même URL. Statut de déploiement relu indépendamment : succeeded.
+     Audience relue : custom, propriétaire seul, aucun groupe.
+  4. Réponse remise à la conversation B, puis accusé envoyé par B et confirmé dans
+     la même conversation A. L'état du relais est completed pour les deux demandes.
+- Le test a révélé que Codex représente les prompts relayés comme une sortie
+  `functionCallOutput`, non comme un `userMessage`. Corrigé et couvert par un test.
+- **Permissions** : un ancien chat B conservait read-only/on-request malgré la
+  sélection générale Accès complet. Reconnexion depuis un chat dont le contexte
+  effectif était danger-full-access/never, puis création réelle d'un nouveau chat B :
+  calcul du SHA256 réussi sans élévation ni approbation. Le relais vérifie ces
+  permissions avant les envois qui exigent Accès complet et ne modifie aucune policy.
+- Le compte B disposait réellement de 0 % de quota Codex et d'un reset disponible.
+  Le mécanisme déjà autorisé a consommé un reset ; relecture après les tâches :
+  quota hebdomadaire Codex 99 %, resets disponibles 0. Aucun achat de crédits.
+- Aucune installation de runtime supplémentaire ; réutilisation du profil géré,
+  du checkout et des dépendances déjà présents. La session de coordination initiale
+  est restée ouverte. Les données et historiques du test sont conservés localement.
+
+Limites : adaptation à un protocole local interne, test sur une seule version
+Codex/Windows ; la lecture des permissions est conservatrice et peut demander une
+reconnexion. Aucun compte ni Site de production n'a été migré. Les autres comptes
+propriétaires doivent connecter leur propre canal. Une réponse remise ne prouve
+pas qu'un nouvel agent a fini son travail ; ce test inclut explicitement l'accusé.
+
+Les preuves personnelles restent locales ; aucun jeton ni identité réelle dans le
+rapport public. Les vérifications historiques suivantes concernent la v0.3.
+
+---
+
 # Validation de la version 0.3.0
 
 Vérifications effectuées le 1er octobre 2026 sur l'hôte Windows de développement.

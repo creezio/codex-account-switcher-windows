@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 
 namespace Creezio.Switcher
@@ -15,12 +16,17 @@ namespace Creezio.Switcher
         private sealed class Health
         {
             public volatile bool Mounted, BootstrapFailed, NetworkWarning;
+            public string AppToolsPipe;
             public void Observe(object sender,DataReceivedEventArgs line)
             {
                 string text=line.Data;if(text==null) return;
                 if(text.Contains("app routes mounted")) Mounted=true;
                 if(text.Contains("Desktop bootstrap failed")) BootstrapFailed=true;
                 if(text.Contains("Desktop network policy does not allow")) NetworkWarning=true;
+                if(text.Contains("dynamic_app_tools_listening")) {
+                    var name=Regex.Match(text,"codex-browser-use-[a-fA-F0-9-]{36}");
+                    if(name.Success) AppToolsPipe="\\\\.\\pipe\\"+name.Value;
+                }
                 // Raw Codex output is discarded; it may contain private account details.
             }
         }
@@ -77,6 +83,7 @@ namespace Creezio.Switcher
                     if(closeRequested && DateTime.UtcNow>=closeDeadline) break;
                     state.WindowReady=health.Mounted && child.MainWindowHandle!=IntPtr.Zero;
                     state.NetworkWarning=health.NetworkWarning;
+                    state.AppToolsPipe=health.AppToolsPipe;
                     if(!closeRequested) state.Phase=state.WindowReady?"running":"starting";
                     if(child.MainWindowHandle!=IntPtr.Zero && !String.IsNullOrWhiteSpace(request.Name)) {
                         string suffix=" · "+request.Name;

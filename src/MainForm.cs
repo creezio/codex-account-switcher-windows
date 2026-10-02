@@ -37,6 +37,10 @@ namespace Creezio.Switcher
         private System.Windows.Forms.Timer instanceTimer;
         private string instanceFingerprint;
         private Button instanceNav,accountNav;
+        private RelayStore relayStore;
+        private System.Windows.Forms.Timer relayTimer;
+        private readonly CancellationTokenSource relayLifetime=new CancellationTokenSource();
+        private bool relayBusy;
         public MainForm(AccountService accounts,bool isDemo)
         {
             service=accounts; demo=isDemo;
@@ -50,9 +54,10 @@ namespace Creezio.Switcher
             var intro=LabelAt("Vos comptes.\nVotre espace.",27,148,179,63,10,FontStyle.Regular,Color.FromArgb(216,231,220)); intro.AutoEllipsis=false; sidebar.Controls.Add(intro);
             instanceNav=SideButton("Instances",229,async delegate {instancesView=true;BuildToolbar();await Task.FromResult(0);});sidebar.Controls.Add(instanceNav);
             accountNav=SideButton("Comptes",277,async delegate {instancesView=false;BuildToolbar();await Task.FromResult(0);});sidebar.Controls.Add(accountNav);
-            var prefs=SideButton("Paramètres",337,async delegate { ShowSettings(); await Task.FromResult(0); }); sidebar.Controls.Add(prefs);
-            var help=SideButton("Guide d'utilisation",385,async delegate { Process.Start(new ProcessStartInfo("https://github.com/creezio/codex-account-switcher-windows#readme") {UseShellExecute=true}); await Task.FromResult(0); }); sidebar.Controls.Add(help);
-            resetToggle.SetBounds(26,450,178,68);resetToggle.Text="Reset des limites\nà 1 % restant";resetToggle.ForeColor=Color.White;resetToggle.Checked=demo || service.Settings.AutoResetCredits;
+            sidebar.Controls.Add(SideButton("Relais",325,delegate {using(var f=new RelayForm(relayStore))f.ShowDialog(this);return Task.FromResult(0);}));
+            var prefs=SideButton("Paramètres",383,async delegate { ShowSettings(); await Task.FromResult(0); }); sidebar.Controls.Add(prefs);
+            var help=SideButton("Guide d'utilisation",431,async delegate { Process.Start(new ProcessStartInfo("https://github.com/creezio/codex-account-switcher-windows#readme") {UseShellExecute=true}); await Task.FromResult(0); }); sidebar.Controls.Add(help);
+            resetToggle.SetBounds(26,485,178,68);resetToggle.Text="Reset des limites\nà 1 % restant";resetToggle.ForeColor=Color.White;resetToggle.Checked=demo || service.Settings.AutoResetCredits;
             resetToggle.CheckedChanged+=delegate {
                 if(demo || resetToggle.Checked==service.Settings.AutoResetCredits) return;
                 bool previous=service.Settings.AutoResetCredits;service.Settings.AutoResetCredits=resetToggle.Checked;
@@ -60,7 +65,7 @@ namespace Creezio.Switcher
                 catch(Exception error) {service.Settings.AutoResetCredits=previous;resetToggle.Checked=previous;MessageBox.Show(this,Program.SafeError(error),"Creezio");}
             };
             sidebar.Controls.Add(resetToggle);actions.Add(resetToggle);
-            var footer=new Label {Text="PROFILS INDÉPENDANTS\n\nUn compte par instance.\nDes limites par compte.\n\nCreezio · v0.3.0",Dock=DockStyle.Bottom,Height=144,ForeColor=Color.FromArgb(171,201,183),Font=new Font("Segoe UI",9)}; sidebar.Controls.Add(footer);
+            var footer=new Label {Text="PROFILS INDÉPENDANTS\nMessages entre instances.\n\nCreezio · v0.4.0",Dock=DockStyle.Bottom,Height=105,ForeColor=Color.FromArgb(171,201,183),Font=new Font("Segoe UI",9)}; sidebar.Controls.Add(footer);
             var content=new Panel {Dock=DockStyle.Fill,Padding=new Padding(30,0,30,0)}; Controls.Add(content); content.BringToFront();
             var header=new Panel {Dock=DockStyle.Top,Height=181}; content.Controls.Add(header);
             eyebrow.SetBounds(0,25,850,22);eyebrow.Font=new Font("Segoe UI",9,FontStyle.Bold);eyebrow.ForeColor=Green;header.Controls.Add(eyebrow);
@@ -79,6 +84,9 @@ namespace Creezio.Switcher
             }
             else
             {
+                relayStore=new RelayStore(RelayStore.DefaultRoot);var relayEngine=new RelayEngine(relayStore);
+                relayTimer=new System.Windows.Forms.Timer{Interval=4000};
+                relayTimer.Tick+=async delegate {if(relayBusy)return;relayBusy=true;try{await relayEngine.Pump(relayLifetime.Token);}catch(OperationCanceledException){}catch(Exception e){status.Text="Relais : "+Program.SafeError(e);}finally{relayBusy=false;if(exiting)Close();}};relayTimer.Start();
                 var menu=new ContextMenuStrip();
                 menu.Items.Add("Ouvrir",null,delegate { Show(); WindowState=FormWindowState.Normal; Activate(); });
                 menu.Items.Add("Actualiser les quotas",null,async delegate { await RunOperation(RefreshAll); });
@@ -297,9 +305,11 @@ namespace Creezio.Switcher
         {
             if(demo) return;
             if(!exiting && e.CloseReason==CloseReason.UserClosing) {e.Cancel=true;Hide();tray.ShowBalloonTip(3000,"Creezio reste accessible","Cliquez sur l'icône près de l'horloge pour rouvrir l'application. Menu Quitter pour l'arrêter.",ToolTipIcon.Info);return;}
+            if(relayBusy){exiting=true;e.Cancel=true;relayLifetime.Cancel();return;}
             if(busy) {exiting=true;e.Cancel=true;operation.Cancel();return;}
             if(timer!=null) timer.Dispose();
             if(instanceTimer!=null) instanceTimer.Dispose();
+            if(relayTimer!=null)relayTimer.Dispose();relayLifetime.Dispose();
             if(tray!=null) {tray.Visible=false;tray.Dispose();}
         }
         public void RenderDemo(string path)

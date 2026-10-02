@@ -1,20 +1,29 @@
 # Codex Account Switcher pour Windows
 
 Une application native pour gérer plusieurs instances Codex en parallèle,
-associer vos comptes à vos espaces et suivre leurs limites. Développée par **Creezio**.
+associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.3.0 — bêta multi-instance.** Windows 10/11, interface en
+**Version 0.4.0 — bêta relais entre comptes.** Windows 10/11, interface en
 français, exécutable portable sans droits administrateur ni dépendances NuGet.
 
-[Télécharger la version Windows](https://github.com/creezio/codex-account-switcher-windows/releases/tag/v0.3.0-beta.1)
+[Télécharger la version Windows](https://github.com/creezio/codex-account-switcher-windows/releases/tag/v0.4.0-beta.1)
 · [Versions et téléchargements](https://github.com/creezio/codex-account-switcher-windows/releases)
 · [Plan de réalisation](docs/PLAN.md)
 · [Validation](docs/VALIDATION.md)
 
 ![Gestion des instances, avec des comptes fictifs](assets/screenshot.png)
 
+## Relais entre comptes
+
+Un compte prépare les fichiers, le compte propriétaire publie le Site existant,
+puis le résultat revient au développeur. [Guide du relais](docs/RELAY.md).
+
+![Relais avec des données fictives](assets/relay.png)
+
 ## Fonctionnalités
 
+- Relais local : nouvelles conversations, réponses automatiques et poursuite dans le même chat.
+- Contrôle des comptes, dossiers et permissions effectives ; historique chiffré et protection contre les envois répétés.
 - Création d'instances nommées, avec authentification, interface, réglages et bases séparés.
 - Comptes disponibles pour **toutes les instances, présentes et futures**, ou uniquement une sélection.
 - Ouverture simultanée, nom de l'instance dans le titre de sa fenêtre et fermeture ciblée.
@@ -40,7 +49,7 @@ français, exécutable portable sans droits administrateur ni dépendances NuGet
 
 1. Téléchargez le ZIP depuis [Releases](https://github.com/creezio/codex-account-switcher-windows/releases).
 2. Décompressez-le dans un dossier de votre choix.
-3. Lancez **CodexAccountSwitcher.exe**. Conservez le fichier `.exe.config` à côté.
+3. Lancez **CodexAccountSwitcher.exe**. Conservez les deux exécutables et leurs fichiers `.exe.config` ensemble.
 
 Windows 10/11 avec **.NET Framework 4.8** est requis. Le programme utilise
 **Codex CLI** : la version fournie par l'application Codex est recherchée dans le

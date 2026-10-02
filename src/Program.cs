@@ -5,7 +5,7 @@ using System.Threading;
 using System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("Creezio Codex Account Switcher")]
-[assembly: System.Reflection.AssemblyVersion("0.3.0.0")]
+[assembly: System.Reflection.AssemblyVersion("0.4.0.0")]
 [assembly: System.Reflection.AssemblyCompany("Creezio")]
 
 namespace Creezio.Switcher
@@ -16,6 +16,7 @@ namespace Creezio.Switcher
         [STAThread] private static int Main(string[] args)
         {
             if(args.Length==2 && args[0]=="--instance-host") return InstanceHost.Run(args[1]);
+            if(args.Length==1 && args[0]=="--relay") return RelayCommand.Run();
             SetProcessDPIAware();
             Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
             if(args.Length==2 && (args[0]=="--render-demo" || args[0]=="--render-accounts-demo"))

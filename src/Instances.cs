@@ -54,6 +54,7 @@ namespace Creezio.Switcher
         public bool WindowReady { get; set; }
         public bool NetworkWarning { get; set; }
         public bool Running { get; set; }
+        public string AppToolsPipe { get; set; }
     }
     public sealed class DesktopPackage
     {
