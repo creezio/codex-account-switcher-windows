@@ -5,6 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Collections.Concurrent;
 
 namespace Creezio.Switcher
 {
@@ -23,6 +24,9 @@ namespace Creezio.Switcher
         public bool Enabled {get;set;}
         public string ConnectedUtc {get;set;}
         public bool RequireFullAccess {get;set;}
+        public string InstanceId {get;set;}
+        public string CodexProjectId {get;set;}
+        public string Diagnostic {get;set;}
     }
     public sealed class RelayMessage
     {
@@ -49,16 +53,55 @@ namespace Creezio.Switcher
         public string UpdatedUtc {get;set;}
         public string SourceHome {get;set;}
         public string TargetHome {get;set;}
+        public int SchemaVersion {get;set;}
+        public RelayJobSpec Job {get;set;}
+        public string SubmissionHash {get;set;}
+        public string RootJobId {get;set;}
+        public int Depth {get;set;}
+        public bool OriginVerified {get;set;}
+        public string RoutingReason {get;set;}
+        public string Outcome {get;set;}
+        public string BlockReason {get;set;}
+        public string DeadlineUtc {get;set;}
+        public string LastPollUtc {get;set;}
+        public string TargetWorkspace {get;set;}
+        public string ResultPath {get;set;}
+        public bool CancellationRequested {get;set;}
+        public List<RelayEvent> Events {get;set;}
+        public int ReconcileAttempts {get;set;}
+        public string ReconcileAfterUtc {get;set;}
+        public string DispatchPhase {get;set;}
+        public string ExpectedPermission {get;set;}
+        public string ObservedPermission {get;set;}
+    }
+    public sealed class RelayEvent
+    {
+        public string At {get;set;}
+        public string State {get;set;}
+        public string Detail {get;set;}
+    }
+    public sealed class RelayResult
+    {
+        public string JobId {get;set;}
+        public string ThreadId {get;set;}
+        public string Status {get;set;}
+        public string Text {get;set;}
+        public Dictionary<string,string> Files {get;set;}
+        public string ReportedUtc {get;set;}
     }
     internal sealed class RelayStore
     {
         private static readonly byte[] Entropy=Encoding.UTF8.GetBytes("Creezio.Relay.v1");
         public readonly string Root;
+        private sealed class CachedMessage {public long Ticks,Length;public string Summary;}
+        private readonly ConcurrentDictionary<string,CachedMessage> summaries=new ConcurrentDictionary<string,CachedMessage>();
         public static string DefaultRoot {get{return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Creezio","CodexAccountSwitcher","relay");}}
         public RelayStore(string root)
         {
             Root=Path.GetFullPath(root);SafeFiles.PrivateDirectory(Root);
             SafeFiles.PrivateDirectory(Path.Combine(Root,"messages"));
+            // v0.4 scans only messages/. Keep new contracts out of reach of its legacy pump.
+            SafeFiles.PrivateDirectory(Path.Combine(Root,"jobs"));
         }
         public static void ChannelId(string id)
         {if(id==null || !Regex.IsMatch(id,"^[a-z0-9][a-z0-9-]{0,47}$"))throw new InvalidOperationException("Le nom du canal doit contenir 1 à 48 lettres minuscules, chiffres ou tirets.");}
@@ -82,13 +125,23 @@ namespace Creezio.Switcher
         {
             if(!File.Exists(path))return new T();SafeFiles.RejectLinks(path);
             if(new FileInfo(path).Length>4194304)throw new IOException("Relay record too large.");
-            byte[] clear=ProtectedData.Unprotect(File.ReadAllBytes(path),Entropy,DataProtectionScope.CurrentUser);
+            byte[] encrypted;
+            using(var stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))using(var output=new MemoryStream()){
+                if(stream.Length>4194304)throw new IOException("Relay record too large.");stream.CopyTo(output);encrypted=output.ToArray();
+            }
+            byte[] clear=ProtectedData.Unprotect(encrypted,Entropy,DataProtectionScope.CurrentUser);
             try{return Json.Read<T>(Encoding.UTF8.GetString(clear));}finally{Array.Clear(clear,0,clear.Length);}
         }
+        internal T ReadRecord<T>(string name) where T:new(){if(Path.GetFileName(name)!=name)throw new InvalidOperationException("Nom de fichier invalide.");return Read<T>(Path.Combine(Root,name));}
+        internal void WriteRecord(string name,object data){if(Path.GetFileName(name)!=name)throw new InvalidOperationException("Nom de fichier invalide.");Write(Path.Combine(Root,name),data);}
         private void Write(string path,object data)
         {
             byte[] clear=Encoding.UTF8.GetBytes(Json.Write(data));
-            try{SafeFiles.AtomicWrite(path,ProtectedData.Protect(clear,Entropy,DataProtectionScope.CurrentUser));}finally{Array.Clear(clear,0,clear.Length);}
+            try{
+                byte[] encrypted=ProtectedData.Protect(clear,Entropy,DataProtectionScope.CurrentUser);
+                for(int attempt=0;;attempt++)try{SafeFiles.AtomicWrite(path,encrypted);break;}
+                catch(IOException e){int code=e.HResult&65535;if(attempt>=4||!new[]{32,33,1175}.Contains(code)||File.Exists(path+".switcher-tmp"))throw;System.Threading.Thread.Sleep(25*(1<<attempt));}
+            }finally{Array.Clear(clear,0,clear.Length);}
         }
         public List<RelayChannel> Channels(){return Read<List<RelayChannel>>(Path.Combine(Root,"channels.dpapi"));}
         public RelayChannel Channel(string id)
@@ -108,14 +161,43 @@ namespace Creezio.Switcher
             using(Lease("registry")) {var list=Channels();var c=list.Single(x=>x.Id==id);c.Enabled=enabled;Write(Path.Combine(Root,"channels.dpapi"),list);}
         }
         public RelayMessage Message(string id)
-        {MessageId(id);string path=Path.Combine(Root,"messages",id+".dpapi");if(!File.Exists(path))throw new InvalidOperationException("Demande introuvable.");return Read<RelayMessage>(path);}
+        {MessageId(id);string path=Path.Combine(Root,"jobs",id+".dpapi");if(!File.Exists(path))path=Path.Combine(Root,"messages",id+".dpapi");if(!File.Exists(path))throw new InvalidOperationException("Demande introuvable.");return Read<RelayMessage>(path);}
         public List<RelayMessage> Messages()
         {
-            return Directory.GetFiles(Path.Combine(Root,"messages"),"*.dpapi").Select(p=>Read<RelayMessage>(p)).OrderByDescending(m=>m.CreatedUtc,StringComparer.Ordinal).ToList();
+            var result=new List<RelayMessage>();
+            var paths=Directory.GetFiles(Path.Combine(Root,"jobs"),"*.dpapi").Concat(Directory.GetFiles(Path.Combine(Root,"messages"),"*.dpapi")).GroupBy(Path.GetFileName).Select(g=>g.First());
+            foreach(string path in paths){
+                SafeFiles.RejectLinks(path);var info=new FileInfo(path);CachedMessage cached;
+                if(!summaries.TryGetValue(path,out cached)||cached.Ticks!=info.LastWriteTimeUtc.Ticks||cached.Length!=info.Length){
+                    var m=Read<RelayMessage>(path);m.Prompt=null;m.Result=null;m.Events=null;
+                    if(m.Job!=null){m.Job.Prompt=null;m.Job.Files=null;}
+                    cached=new CachedMessage{Ticks=info.LastWriteTimeUtc.Ticks,Length=info.Length,Summary=Json.Write(m)};summaries[path]=cached;
+                }
+                // Callers receive independent objects; cached metadata is never mutable shared state.
+                result.Add(Json.Read<RelayMessage>(cached.Summary));
+            }
+            return result.OrderByDescending(m=>m.CreatedUtc,StringComparer.Ordinal).ToList();
         }
+        public void Report(RelayMessage message,RelaySession session,string status,string text,Dictionary<string,string> files)
+        {
+            if(message.TargetChannelId!=session.Channel||message.TargetThreadId!=session.Thread||message.State!="waiting"||message.DispatchPhase=="preflight")throw new InvalidOperationException("Seule la conversation destinataire active, après réception du travail, peut préparer son résultat.");
+            if(!new[]{"succeeded","failed","blocked","cancelled"}.Contains(status)||String.IsNullOrWhiteSpace(text)||text.Length>250000)throw new InvalidOperationException("Résultat invalide ou supérieur à 250 000 caractères.");
+            RelayPolicies.VerifyFiles(message.TargetWorkspace??message.Workspace,files);
+            using(Lease("report-"+message.Id))WriteRecord("result-"+message.Id+".dpapi",new RelayResult{JobId=message.Id,ThreadId=session.Thread,Status=status,Text=text,Files=files,ReportedUtc=DateTime.UtcNow.ToString("o")});
+        }
+        public RelayResult Reported(RelayMessage message){var r=ReadRecord<RelayResult>("result-"+message.Id+".dpapi");return r.JobId==message.Id&&r.ThreadId==message.TargetThreadId?r:null;}
         public void Save(RelayMessage message)
-        {MessageId(message.Id);message.UpdatedUtc=DateTime.UtcNow.ToString("o");Write(Path.Combine(Root,"messages",message.Id+".dpapi"),message);}
-        public RelayMessage Enqueue(string sourceId,string sourceThread,string targetId,string title,string prompt,string revision,bool returnToSource,string replyTo,string requestedId=null)
+        {
+            MessageId(message.Id);message.UpdatedUtc=DateTime.UtcNow.ToString("o");
+            if(message.Events==null)message.Events=new List<RelayEvent>();
+            string state=message.State+"/"+message.ReturnState+"/"+message.Outcome;
+            string detail=message.Error??message.RoutingReason;
+            var last=message.Events.LastOrDefault();
+            if(last==null||last.State!=state||last.Detail!=detail){message.Events.Add(new RelayEvent{At=message.UpdatedUtc,State=state,Detail=detail});if(message.Events.Count>200)message.Events.RemoveAt(0);}
+            Write(Path.Combine(Root,message.SchemaVersion>=2?"jobs":"messages",message.Id+".dpapi"),message);
+        }
+        public bool Exists(string id){MessageId(id);return File.Exists(Path.Combine(Root,"messages",id+".dpapi"))||File.Exists(Path.Combine(Root,"jobs",id+".dpapi"));}
+        public RelayMessage Enqueue(string sourceId,string sourceThread,string targetId,string title,string prompt,string revision,bool returnToSource,string replyTo,string requestedId=null,Action<RelayMessage> prepare=null)
         {
             replyTo=String.IsNullOrWhiteSpace(replyTo)?null:replyTo;
             if(String.IsNullOrWhiteSpace(prompt) || prompt.Length>24000)throw new InvalidOperationException("Le message doit contenir entre 1 et 24 000 caractères.");
@@ -133,9 +215,9 @@ namespace Creezio.Switcher
                 if(previous.SourceChannelId!=sourceId || previous.TargetChannelId!=targetId || previous.SourceAccountKey!=source.AccountKey || previous.TargetAccountKey!=target.AccountKey || !SamePath(previous.Workspace,message.Workspace) || String.IsNullOrEmpty(previous.TargetThreadId) || previous.State!="completed")throw new InvalidOperationException("La conversation précédente n'est pas terminée ou appartient à un autre canal ou dossier.");
                 message.TargetThreadId=previous.TargetThreadId;
             }
+            if(prepare!=null)prepare(message);
             using(Lease("registry")) {
-                string file=Path.Combine(Root,"messages",message.Id+".dpapi");
-                if(File.Exists(file)) {
+                if(Exists(message.Id)) {
                     var old=Message(message.Id);
                     if(old.SourceChannelId!=sourceId || old.SourceThreadId!=sourceThread || old.TargetChannelId!=targetId || old.Prompt!=prompt || old.Title!=title || old.Revision!=message.Revision || old.ReturnToSource!=returnToSource || old.ReplyTo!=replyTo)throw new InvalidOperationException("Cet identifiant existe avec un contenu différent.");
                     return old;
@@ -149,6 +231,16 @@ namespace Creezio.Switcher
             MessageId(id);
             using(Lease("message-"+id)) {var m=Message(id);if(m.State!="queued")throw new InvalidOperationException("Une demande déjà envoyée ne peut pas être annulée depuis le relais.");m.State="cancelled";Save(m);}
         }
+        public void RequestCancel(string id)
+        {
+            MessageId(id);using(Lease("message-"+id)){
+                var m=Message(id);
+                if(m.State=="queued"){m.State="cancelled";m.Outcome="cancelled";m.Result="Demande annulée avant exécution.";m.ReturnState=m.ReturnToSource?"pending":"none";}
+                else if(m.State=="waiting"){m.CancellationRequested=true;m.Error="Interruption demandée. Cette interface Codex n'expose pas encore d'arrêt ciblé confirmé ; utilisez Arrêter dans la conversation destinataire.";}
+                else throw new InvalidOperationException("Cette tâche ne peut pas être annulée dans son état actuel.");
+                Save(m);
+            }
+        }
         public void CloseReviewed(string id)
         {
             MessageId(id);
@@ -159,7 +251,8 @@ namespace Creezio.Switcher
             MessageId(id);
             using(Lease("message-"+id)) {
                 var m=Message(id);
-                if(String.IsNullOrEmpty(m.TargetThreadId) || !new[]{"attention","failed","uncertain","waiting"}.Contains(m.State))throw new InvalidOperationException("Aucune conversation connue à relire. Aucun nouvel envoi ne sera effectué.");
+                if(m.State=="uncertain"||m.ReturnState=="uncertain"){m.ReconcileAttempts=0;m.ReconcileAfterUtc=null;Save(m);return;}
+                if(String.IsNullOrEmpty(m.TargetThreadId) || !new[]{"attention","failed","waiting"}.Contains(m.State))throw new InvalidOperationException("Aucune conversation connue à relire. Aucun nouvel envoi ne sera effectué.");
                 m.State="waiting";m.Error=null;Save(m);
             }
         }

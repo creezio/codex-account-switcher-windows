@@ -3,10 +3,10 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.4.0 — bêta relais entre comptes.** Windows 10/11, interface en
+**Version 0.5.0 — bêta de délégation configurable.** Windows 10/11, interface en
 français, exécutable portable sans droits administrateur ni dépendances NuGet.
 
-[Télécharger la version Windows](https://github.com/creezio/codex-account-switcher-windows/releases/tag/v0.4.0-beta.1)
+[Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
 · [Versions et téléchargements](https://github.com/creezio/codex-account-switcher-windows/releases)
 · [Plan de réalisation](docs/PLAN.md)
 · [Validation](docs/VALIDATION.md)
@@ -15,14 +15,23 @@ français, exécutable portable sans droits administrateur ni dépendances NuGet
 
 ## Relais entre comptes
 
-Un compte prépare les fichiers, le compte propriétaire publie le Site existant,
-puis le résultat revient au développeur. [Guide du relais](docs/RELAY.md).
+Configurez vos rôles, projets, capacités, ressources et règles de délégation.
+Un agent peut demander une revue, des tests, une analyse ou une action avec les
+outils d'un autre compte, puis recevoir le résultat dans son chat. Aucun compte,
+fournisseur ou workflow de publication n'est imposé. [Guide du relais](docs/RELAY.md)
+et [état détaillé de l'implémentation](docs/IMPLEMENTATION.md).
 
 ![Relais avec des données fictives](assets/relay.png)
 
 ## Fonctionnalités
 
 - Relais local : nouvelles conversations, réponses automatiques et poursuite dans le même chat.
+- Moteur séparé de la fenêtre, file persistante et arrêt manuel conservé.
+- Plugin intégré : deux skills et dix outils MCP, installation par profil et mise à jour idempotente.
+- Délégation explicite par défaut ; routage selon les règles de chaque utilisateur.
+- Ressources liées à leurs canaux autorisés, limites par compte, dépendances et concurrence bornée.
+- Contrôle des permissions du nouveau chat avant transmission du travail ; réutilisation de chats terminés configurable.
+- Réponses longues paginées, résultat déclaré distinct de la livraison, reprise sans renvoi aveugle.
 - Contrôle des comptes, dossiers et permissions effectives ; historique chiffré et protection contre les envois répétés.
 - Création d'instances nommées, avec authentification, interface, réglages et bases séparés.
 - Comptes disponibles pour **toutes les instances, présentes et futures**, ou uniquement une sélection.
@@ -49,7 +58,10 @@ puis le résultat revient au développeur. [Guide du relais](docs/RELAY.md).
 
 1. Téléchargez le ZIP depuis [Releases](https://github.com/creezio/codex-account-switcher-windows/releases).
 2. Décompressez-le dans un dossier de votre choix.
-3. Lancez **CodexAccountSwitcher.exe**. Conservez les deux exécutables et leurs fichiers `.exe.config` ensemble.
+3. Lancez **CodexAccountSwitcher.exe**. Conservez les deux exécutables, leurs fichiers `.exe.config` et le dossier `plugins` ensemble.
+4. Pour une mise à jour, quittez d'abord l'ancien switcher via son icône près de
+   l'horloge : fermer sa fenêtre le réduit seulement. Réinstallez l'intégration
+   depuis le nouveau dossier sur les profils souhaités.
 
 Windows 10/11 avec **.NET Framework 4.8** est requis. Le programme utilise
 **Codex CLI** : la version fournie par l'application Codex est recherchée dans le

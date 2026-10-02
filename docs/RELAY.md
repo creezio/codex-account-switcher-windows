@@ -1,114 +1,80 @@
-# Relais entre comptes — v0.4
+# Relais configurable — v0.5 beta
 
-Un compte prépare les fichiers dans un dossier local partagé. Le relais demande au
-compte propriétaire de les publier dans une nouvelle conversation, puis remet sa
-réponse dans la conversation qui a envoyé la demande. Une suite peut rejoindre la
-même conversation destinataire. Chaque compte conserve ses propres connexions Sites.
+Le relais transmet des travaux entre des chats de comptes Codex différents sur le même PC Windows. Chaque utilisateur définit ses rôles, projets, ressources et règles. Revue, tests, recherche, accès à un plugin privé et publication sont des usages possibles ; aucun n'est imposé.
 
-## Connecter les comptes
+## Installation et mise à jour
 
-1. Ouvrir les instances souhaitées dans le switcher. Garder les deux exécutables
-   `CodexAccountSwitcher.exe` et `CreezioRelay.exe`, avec leurs `.config`, ensemble.
-2. Dans chaque instance, ouvrir une conversation de connexion pour le projet et
-   sélectionner **Accès complet dans cette conversation** si le relais doit travailler
-   sans demande d'approbation de commandes.
-3. Dans **Relais → Canaux connectés → Connecter**, choisir un nom
-   distinct (par exemple `dev-creezio` ou `publication-creezio`) et le même chemin
-   absolu du projet. Copier la consigne dans la conversation correspondante.
-4. Vérifier le compte, le dossier et les permissions retournés. L'option **Exiger
-   Accès complet** est cochée par défaut. Décocher permet de conserver un canal
-   soumis aux approbations normales de Codex.
-5. Reconnecter le même canal après un redémarrage de son instance. Un changement
-   de compte exige un nouveau nom de canal ; une demande en attente reste liée au
-   compte et au dossier d'origine.
+1. Conserver les deux exécutables, leurs `.exe.config` et `plugins/` ensemble.
+2. Quitter l'ancien switcher par son icône près de l'horloge → **Quitter**. La croix réduit seulement la fenêtre. Ne pas faire fonctionner deux versions du moteur.
+3. Lancer le nouveau `CodexAccountSwitcher.exe`. Les comptes, instances et conversations restent dans leurs dossiers existants.
+4. **Travaux → Canaux connectés → Installer les skills** : sélectionner les profils souhaités. Le plugin `creezio-relay` est installé par le CLI officiel dans une marketplace locale propre au profil. Il fournit deux skills et dix outils MCP.
+5. Après mise à jour, ouvrir un nouveau chat pour charger la nouvelle intégration. Les chats existants peuvent conserver leur ancien serveur MCP jusqu'à leur rechargement. Ne pas écraser un exécutable chargé ; utiliser le dossier de livraison, puis réinstaller l'intégration pour mettre ses chemins à jour.
 
-**Accès complet affiché dans une autre fenêtre ne prouve pas les permissions d'un
-chat déjà créé.** Le test réel a montré un ancien chat en `read-only/on-request`
-alors que le sélecteur général affichait Accès complet. Le contrôle lit les
-permissions enregistrées de la conversation ; il ne change aucun réglage Codex et
-ne clique jamais sur Approve. Après changement, envoyer un message dans le chat de
-connexion puis reconnecter le canal. Une configuration inconnue bloque l'envoi
-exigeant Accès complet. La nouvelle tâche doit aussi vérifier son propre contexte
-avant tout outil ; les approbations propres aux plugins restent celles de Codex.
+L'installation automatique dans les instances gérées est facultative dans **Rôles, projets et règles → Général**. La session habituelle nécessite une installation manuelle. Une intégration désactivée ou retirée dans Codex n'est pas réactivée par l'installation automatique. Le bouton d'installation explicite permet de la remettre.
 
-## Envoyer depuis l'interface
+## Connexion et permissions
 
-**Nouvelle demande** choisit deux canaux, l'objet, la version prête et les instructions.
-La source est la conversation utilisée pour connecter son canal. Pour recevoir la
-réponse dans la conversation de développement réelle, utiliser la commande ci-dessous
-depuis cette conversation. **Continuer l'échange** réutilise le chat destinataire.
+Connecter un canal par profil et dossier de projet dans **Canaux connectés → Connecter**. Coller la consigne générée dans le chat voulu. Le registre contrôle le compte, le profil, le processus, le dossier et la conversation réelle. Les profils gérés se reconnectent après redémarrage si leur identité reste identique. Une instance externe nécessite une nouvelle connexion explicite.
 
-Le switcher doit rester ouvert ou réduit près de l'horloge pour relever les réponses
-toutes les quatre secondes. Quitter suspend le relais, sans arrêter Codex. Au retour,
-les demandes reprennent ; les envois dont l'issue est inconnue ne sont pas répétés.
+**Le mode Accès complet est propre au chat.** Approuver une commande, même pour la session, ne transforme pas un chat `workspace-write / on-request` en `danger-full-access / never`. Une fenêtre ou un autre chat affichant Accès complet ne prouve pas le mode du nouveau chat créé par l'API.
 
-## Commandes pour un agent
+Pour chaque nouvelle tâche, le moteur crée d'abord un chat avec une consigne de préparation **sans outil et sans mandat de travail**. Il lit ensuite son contexte de permissions enregistré par Codex. Si le mode requis n'est pas confirmé, la tâche reste « Permissions à régler » et le travail n'est pas transmis. Dans ce chat précis, sélectionner le mode souhaité puis envoyer : « Permissions confirmées, réponds sans outil ». Le moteur relit le contexte avant de continuer. Il ne change pas les permissions, ne répond pas aux approbations et ne contourne pas un refus.
 
-Exécuter dans la conversation de l'instance source, avec le chemin réel de
-`CreezioRelay.exe`. Les variables de contexte fournies par Codex identifient cette
-conversation ; ne pas les fabriquer ni copier celles d'un autre compte.
+L'exigence `full-access` peut être définie par agent ou canal. Avec `inherit`, un chat déjà utilisé conserve son mode ; pour un nouveau chat, Accès complet reste exigé si le chat de connexion l'avait. Un mode inconnu bloque la préparation. Si un mode soumis aux approbations est accepté, Codex peut légitimement demander des confirmations. Les validations propres aux plugins restent indépendantes des permissions de commandes locales.
 
-```powershell
-$relay = 'C:\Outils\Creezio\CreezioRelay.exe'
-@{
-  operation = 'send'
-  from = 'dev-creezio'
-  to = 'publication-creezio'
-  title = 'Publier la page prête'
-  revision = 'SHA du commit ou SHA256 du fichier'
-  prompt = 'Vérifie la version préparée et publie les fichiers du dossier partagé. Réutilise .openai/hosting.json et son project_id. Conserve la visibilité du Site. Rapporte le résultat et l’URL.'
-  returnToSource = $true
-} | ConvertTo-Json -Compress | & $relay
-```
+Une approbation en cours apparaît « Approbation Codex » dans Travaux. Elle se traite dans le chat destinataire. **Arrêter le moteur ne stoppe pas un tour Codex déjà lancé.** Utiliser le bouton Arrêter de ce chat pour interrompre son exécution.
 
-Conserver l'`Id` retourné. `returnToSource = $true` autorise la relance de la
-conversation source avec la réponse finale. Sans cette option, la réponse reste
-consultable dans le switcher. Le message reçu commence par `[CREEZIO_RESULT:Id]`.
+## Configurer ses usages
 
-```powershell
-@{operation='get'; id='ID_RETOURNE'} | ConvertTo-Json -Compress | & $relay
-@{operation='wait'; id='ID_RETOURNE'; seconds=50} | ConvertTo-Json -Compress | & $relay
-```
+Dans **Rôles, projets et règles**, les descriptions sous chaque champ expliquent les valeurs. Les identifiants utilisent des minuscules, chiffres et tirets ; les listes sont séparées par des virgules ; `*` accepte toutes les valeurs dans le périmètre du projet.
 
-Pour poursuivre le même échange, envoyer une autre demande `send` avec les mêmes
-canaux et `replyTo = 'ID_RETOURNE'`. Pour accuser réception sans boucle, utiliser
-`returnToSource = $false`. Une clé `id` optionnelle (32 caractères hexadécimaux)
-rend la soumission idempotente : même clé et même contenu ne recréent pas la demande.
+| Onglet | À configurer |
+|---|---|
+| Agents | Canal, rôle, capacités déclarées, types de tâches et projets acceptés, modèle facultatif, concurrence, seuil de quota et permissions. `AutoRoute` rend l'agent candidat au routage. `ReuseConversation` permet de réutiliser un chat terminé du même projet et son historique. |
+| Projets | Dossier local exact, canaux source et cible autorisés, instructions, délégation `explicit` ou `rules`, limites de concurrence, de profondeur, de tâches par groupe et de délai de démarrage. |
+| Ressources | Projet, identifiant externe, canaux autorisés, capacités et instructions propres à la ressource. Aucun transfert de connexion. |
+| Règles | Projet, type de tâche, source, destinations, capacités, priorité et explication de la situation où déléguer. |
 
-`channels`, `list`, `get`, `pump`, `wait`, `cancel`, `recheck` et `close-reviewed`
-complètent le protocole JSON sur entrée/sortie standard. `register` est normalement
-généré par l'interface ; il accepte `channel`, `workspace`, `name` et
-`requireFullAccess` (vrai par défaut). Ne transmettre aucun jeton dans les demandes.
+La délégation est **explicite par défaut**. Un projet `rules` autorise seulement les règles correspondantes dans le mandat de l'utilisateur. Les règles ne sont pas un analyseur sémantique : le skill utilise leur description, le moteur contrôle les champs structurés et les périmètres. Un destinataire explicite ne dispense jamais des restrictions de projet, de ressource et de capacité.
 
-## Fichiers et propriété
+Exemple générique : un canal `developpement`, un canal `revue` doté de la capacité déclarée `review`, un projet `mon-projet` associé à leur dossier, puis une règle `relecture` qui route le type `review` vers `revue`. Pour un outil privé, ajouter sa capacité au compte qui le possède et créer une ressource limitée à ce canal. Le destinataire vérifie lui-même que l'outil et la ressource sont réellement accessibles.
 
-Le même chemin Windows désigne les mêmes fichiers physiques pour les deux instances.
-Leurs conversations, connexions et permissions Sites restent séparées. Le relais
-ne copie pas le projet : terminer les modifications, fournir une empreinte ou un
-commit, puis laisser le propriétaire vérifier cette version avant publication.
-Les demandes sont sérialisées par canal, mais le relais ne verrouille pas l'éditeur
-ni les autres canaux. Éviter deux auteurs simultanés dans le même checkout.
+Le routage considère le périmètre, les règles, la disponibilité, les limites récentes et la charge. Il conserve sa destination après acceptation. Si le seul propriétaire autorisé manque de quota, le travail attend ; un autre compte n'obtient aucun droit supplémentaire. Un même compte dans plusieurs instances partage ses limites.
 
-## Reprise et limites
+## Utiliser depuis un agent
 
-- **En attente** : compte, permissions, instance ou demande précédente à vérifier.
-- **À vérifier** : envoi potentiellement effectué, réponse absente ou tronquée.
-  Consulter Codex. **Relire le résultat** ne renvoie jamais le prompt.
-- **Classer après vérification** conserve l'historique et libère le canal. Ne
-  recréer une demande qu'après avoir vérifié qu'elle n'a pas déjà été exécutée.
-- **Remis à Codex** confirme l'acceptation du message de retour par Codex, pas
-  l'exécution d'une action ultérieure. Le résultat peut lui-même signaler un échec.
-- Les demandes/réponses et canaux sont chiffrés avec DPAPI sous
-  `%LOCALAPPDATA%\Creezio\CodexAccountSwitcher\relay` ; ils restent également dans
-  les conversations Codex où ils ont été transmis.
-- Le relais utilise un canal local interne de Codex, sensible aux versions. Il
-  exige le même utilisateur Windows, une instance ouverte, un stockage de connexion
-  fichier et des outils de conversation compatibles. Pas de service réseau.
-- Les chats créés sont locaux et sans projet enregistré ; le prompt contient le
-  dossier partagé explicite. Les plugins disponibles dépendent du destinataire.
-  Aucun accès Sites n'est accordé au compte développeur par le relais.
+Le skill `creezio-relay:delegate-task` appelle `get_setup`, puis connecte le chat avec `scripts/bind-chat.ps1` fourni par le plugin. Une commande initiale est nécessaire : l'interface MCP examinée ne fournit pas d'identifiant de chat appelant vérifiable à chaque appel. Le script utilise les variables réelles de Codex, vérifie la conversation et produit une session temporaire chiffrée. Ne jamais fabriquer ces variables ou réutiliser la session d'un autre chat.
 
-Le test réel du 2 octobre 2026 a validé : Site privé créé par A, refus d'accès Sites
-pour B, modification locale par B, publication v2 par A sur le même projet et URL,
-retour à B puis accusé reçu par A. La correction des permissions a aussi été testée
-dans une nouvelle conversation B, avec une commande réussie sans approbation.
+Le skill lit ensuite `list_agents`, soumet avec `submit_job` et suit avec `get_job` ou `wait_job`. Les appels MCP suivants remplacent les commandes shell répétées. Une tâche contient un titre, un mandat, un type libre, un projet, un accès `read`, `write` ou `external`, les capacités/ressources nécessaires et, au besoin, une révision et des empreintes SHA256 relatives au dossier.
+
+- `ReturnToSource` remet le résultat au chat émetteur et relance l'agent : cela consomme de l'utilisation.
+- `ReplyTo` poursuit un travail terminé dans son chat destinataire.
+- `DependsOn` attend une réussite déclarée des travaux précédents du même chat et projet.
+- `Parent` lie une sous-tâche au mandat réellement reçu dans ce chat. Les limites de profondeur et de nombre sont appliquées. Terminer le tour parent après soumission : un parent qui attend en boucle peut conserver la place ou le dossier dont son enfant a besoin.
+- Une clé `Id` stable évite une deuxième soumission après perte de réponse. Un contenu différent avec la même clé est refusé.
+
+Le skill destinataire termine avec `CREEZIO_OUTCOME {"status":"succeeded"}`, ou `failed`, `blocked`, `cancelled`. Pour un résultat long, `report_result` stocke jusqu'à 250 000 caractères et des empreintes ; le retour attend la fin effective du tour. `read_result` lit des pages. Le message envoyé au chat source contient au maximum un extrait de 12 000 caractères.
+
+Une réussite déclarée ne prouve pas un effet externe : vérifier le reçu du fournisseur lorsqu'il existe. Une fin de tour sans résultat structuré est `unverified`. Aucun accusé automatique ne doit repartir en boucle.
+
+## Moteur, reprise et fichiers
+
+Le processus caché `CreezioRelay.exe --worker` travaille indépendamment de la fenêtre. Un verrou empêche deux moteurs de prendre le même travail. **Arrêter le moteur** persiste jusqu'à **Démarrer le moteur**, même si un agent soumet un travail. Sans travail, le moteur s'arrête après un court délai, sauf option de maintien actif. Aucun démarrage à l'ouverture de Windows n'est installé.
+
+L'historique chiffré distingue l'envoi, la réponse observée, le résultat déclaré et la remise au chat source. Après un envoi incertain, le moteur recherche les marqueurs dans Codex, au plus trois fois, sans renvoyer la demande. Si aucune preuve ne permet de trancher, « À vérifier » reste affiché. **Relire le résultat** relance cette vérification ; **Classer après vérification** libère la place après contrôle manuel, sans répéter l'action.
+
+La source peut fermer après acceptation : le destinataire travaille, puis le retour attend sa réouverture. Un destinataire fermé n'empêche pas la remise d'un résultat déjà conservé. Une instance lente n'occupe pas de verrou global pendant ses appels réseau/IPC.
+
+Les mêmes chemins désignent les mêmes fichiers pour toutes les instances. Le moteur sérialise les travaux susceptibles d'écrire dans un même dossier et les accès à une même ressource configurée. Ces verrous concernent les tâches du relais ; un éditeur externe peut toujours changer le fichier. Les empreintes sont vérifiées avant dispatch. Le système ne crée ni ne fusionne automatiquement des worktrees ; pour plusieurs auteurs, préparer des espaces distincts et les enregistrer comme projets/canaux dédiés.
+
+`Annuler / interrompre` annule une demande encore en file. Pour un tour Codex actif, elle consigne une demande : l'interface native examinée n'expose pas d'arrêt ciblé confirmé. Utiliser **Arrêter** dans le chat. Le relais ne prétend jamais que le tour est arrêté avant de l'observer.
+
+## Stockage et limites
+
+Les données sont dans `%LOCALAPPDATA%\Creezio\CodexAccountSwitcher\relay`, chiffrées par Windows DPAPI. Les nouveaux travaux résident dans `jobs/`, à l'abri du moteur v0.4 qui ne connaît que `messages/`. L'historique v0.4 reste lisible. L'ancienne version ne sait pas reprendre les nouveaux contrats : terminer ou annuler les travaux v0.5 avant de revenir en arrière.
+
+Les capacités sont déclarées et l'inventaire des plugins confirme leur installation/activation, pas l'accès à toutes leurs ressources. Le MCP utilise un protocole stdio JSON-RPC minimal vérifié avec Codex, sans serveur réseau. La liaison bureau s'appuie sur l'interface locale des outils de l'application, dont la compatibilité peut évoluer. Les permissions sont lues dans les fichiers de contexte locaux ; si leur format devient inconnu, la préparation reste bloquée.
+
+Le switcher ne modifie pas les droits du fournisseur, ne copie pas les connexions entre agents et ne partage pas les secrets de plugins. Les profils sous un même utilisateur Windows ne constituent toutefois pas une frontière de sécurité système. Les réglages `read/write/external` sont un mandat appliqué au destinataire, pas un nouveau bac à sable OS.
+
+Le suivi et les resets automatiques des limites existants restent dans le switcher. Le moteur de relais lit les quotas et attend leur rétablissement ; il n'achète aucun crédit et ne consomme aucun reset lui-même. Le binaire est une bêta non signée ; les tests et limites de qualification sont détaillés dans [IMPLEMENTATION.md](IMPLEMENTATION.md).

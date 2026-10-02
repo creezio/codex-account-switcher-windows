@@ -1,0 +1,19 @@
+{
+  "name": "creezio-relay",
+  "version": "0.5.0",
+  "description": "Delegate tasks between locally connected Codex accounts using your own project rules.",
+  "author": {
+    "name": "Creezio"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Creezio Relay",
+    "shortDescription": "Use Creezio Relay in Codex.",
+    "longDescription": "Configurable local delegation, agent roles, resource routing and durable task results for Codex Account Switcher.",
+    "developerName": "Creezio",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Show my configured agents and project delegation rules."
+  },
+  "mcpServers": "./.mcp.json"
+}

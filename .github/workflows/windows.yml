@@ -16,6 +16,9 @@ jobs:
       - name: Run offline safety and storage tests
         shell: powershell
         run: ./scripts/test.ps1
+      - name: Verify detached worker lifecycle
+        shell: powershell
+        run: ./scripts/worker-smoke.ps1
       - name: Package
         shell: powershell
         run: ./scripts/package.ps1 -SkipBuild

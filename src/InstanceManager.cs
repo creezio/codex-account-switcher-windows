@@ -130,6 +130,8 @@ namespace Creezio.Switcher
                 SyncFreshAuth(profile);
                 if(SafeFiles.ReadText(Path.Combine(Home(instance),"auth.json"))!=profile.AuthJson) Configure(instance,profile);
             } else if(File.Exists(Path.Combine(Home(instance),"auth.json"))) throw new InvalidOperationException("La connexion de cette instance n'est pas reconnue. Choisissez un compte valide avant de l'ouvrir.");
+            var relay=new RelayStore(Path.Combine(service.Vault.Root,"relay"));
+            if(RelayPolicies.Load(relay).AutoInstallManaged)await RelayIntegration.Install(relay,Home(instance),service.Settings.CodexExecutable,false,token);
             await Runtime.Start(instance,token);
         }
         public void Forget(Profile profile)
