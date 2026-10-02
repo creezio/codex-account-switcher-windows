@@ -52,7 +52,9 @@ depuis ce dossier pour mettre a jour ses chemins. Les donnees restent conservees
 Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination (Join-Path $packageRoot 'LICENSE.txt') -Force
 $zip = Join-Path $output 'CodexAccountSwitcher-0.5.0-beta.1-windows.zip'
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\RELAY.md') -Destination (Join-Path $packageRoot 'RELAIS.md') -Force
-Compress-Archive -LiteralPath @((Join-Path $packageRoot 'CodexAccountSwitcher.exe'),(Join-Path $packageRoot 'CodexAccountSwitcher.exe.config'),(Join-Path $packageRoot 'CreezioRelay.exe'),(Join-Path $packageRoot 'CreezioRelay.exe.config'),(Join-Path $packageRoot 'plugins'),(Join-Path $packageRoot 'RELAIS.md'),(Join-Path $packageRoot 'LIRE-MOI.txt'),(Join-Path $packageRoot 'LICENSE.txt')) -DestinationPath $zip -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\IMPLEMENTATION.md') -Destination $packageRoot -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\EVOLUTION-PLAN.md') -Destination $packageRoot -Force
+Compress-Archive -LiteralPath @((Join-Path $packageRoot 'CodexAccountSwitcher.exe'),(Join-Path $packageRoot 'CodexAccountSwitcher.exe.config'),(Join-Path $packageRoot 'CreezioRelay.exe'),(Join-Path $packageRoot 'CreezioRelay.exe.config'),(Join-Path $packageRoot 'plugins'),(Join-Path $packageRoot 'RELAIS.md'),(Join-Path $packageRoot 'IMPLEMENTATION.md'),(Join-Path $packageRoot 'EVOLUTION-PLAN.md'),(Join-Path $packageRoot 'LIRE-MOI.txt'),(Join-Path $packageRoot 'LICENSE.txt')) -DestinationPath $zip -Force
 $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText((Join-Path $output 'SHA256SUMS-0.5.0-beta.1.txt'),($hash + '  ' + [IO.Path]::GetFileName($zip) + "`n"))
 Get-Item -LiteralPath $zip | Select-Object Name,Length
