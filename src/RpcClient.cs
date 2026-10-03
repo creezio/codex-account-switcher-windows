@@ -39,13 +39,14 @@ namespace Creezio.Switcher
                 process.Exited += delegate { FailPending(new IOException("Le serveur Codex s'est arrêté.")); };
                 process.Start();
                 job = new ProcessJob(process);
+                CacheMaintenance.Mark(Home,process.Id,process.StartTime.ToUniversalTime().Ticks);
                 process.BeginOutputReadLine(); process.BeginErrorReadLine();
             }
             catch { Dispose(); throw new InvalidOperationException("Le serveur Codex n'a pas pu démarrer. Vérifiez le chemin de codex.exe dans les paramètres."); }
         }
         public async Task Initialize(CancellationToken token)
         {
-            await Call("initialize", new { clientInfo = new { name="creezio_account_switcher", title="Creezio Account Switcher", version="0.4.0" }, capabilities=new { experimentalApi=true } }, token);
+            await Call("initialize", new { clientInfo = new { name="creezio_account_switcher", title="Creezio Account Switcher", version=RelayWorker.Version }, capabilities=new { experimentalApi=true } }, token);
             Send(new { method="initialized" });
         }
         private void Send(object value)

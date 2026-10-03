@@ -27,7 +27,11 @@ namespace Creezio.Switcher
             security.SetAccessRuleProtection(true, false);
             security.AddAccessRule(new FileSystemAccessRule(WindowsIdentity.GetCurrent().User, FileSystemRights.FullControl, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
             security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), FileSystemRights.FullControl, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+#if NETCOREAPP
+            new DirectoryInfo(path).SetAccessControl(security);
+#else
             Directory.SetAccessControl(path, security);
+#endif
         }
         public static void AtomicWrite(string path, byte[] data)
         {
@@ -60,7 +64,7 @@ namespace Creezio.Switcher
             foreach (string item in Directory.GetFileSystemEntries(target))
             {
                 RejectLinks(item);
-                if (Directory.Exists(item)) DeleteOwnedTree(root, item); else File.Delete(item);
+                if (Directory.Exists(item)) DeleteOwnedTree(root, item); else {var attributes=File.GetAttributes(item);if((attributes&FileAttributes.ReadOnly)!=0)File.SetAttributes(item,attributes&~FileAttributes.ReadOnly);File.Delete(item);}
             }
             Directory.Delete(target);
         }
@@ -105,7 +109,7 @@ namespace Creezio.Switcher
         public Settings LoadSettings()
         {
             string path = Path.Combine(Root, "settings.json");
-            if (!File.Exists(path)) return new Settings();
+            if (!File.Exists(path)) return new Settings{AutoResetCredits=false};
             try { return Json.Read<Settings>(SafeFiles.ReadText(path)) ?? new Settings(); }
             catch { throw new InvalidOperationException("Les paramètres ne peuvent pas être lus. Le fichier existant est conservé."); }
         }

@@ -12,7 +12,7 @@ internal static class TestRunner
     private static int passed;
     private static string sandbox;
     private static void Assert(bool condition,string message) {if(!condition) throw new Exception(message);}
-    private static void Check(string name,Action test) {test();passed++;Console.WriteLine("PASS " + name);}
+    private static void Check(string name,Action test) {try{test();}catch(Exception e){throw new Exception(name+": "+e.Message,e);}passed++;Console.WriteLine("PASS " + name);}
     private static void Throws(Action action) {try {action();} catch {return;} throw new Exception("Expected failure");}
     private static string Encode(object value) {return Convert.ToBase64String(Encoding.UTF8.GetBytes(Json.Write(value))).TrimEnd('=').Replace('+','-').Replace('/','_');}
     private static string FakeAuth(string user,string account)
@@ -52,6 +52,11 @@ internal static class TestRunner
             ResetTests.RunAll(Check);
             InstanceTests.RunAll(Check,sandbox,a,b);
             RelayTests.RunAll(Check,sandbox);
+            GeneralRelayTests.RunAll(Check,sandbox);
+            ProductTests.RunAll(Check,sandbox);
+            ConsoleTests.RunAll(Check,sandbox);
+            RemoteTests.RunAll(Check,sandbox);
+            AssistanceTests.RunAll(Check,sandbox);
             Console.WriteLine(passed+" tests passed.");
             return 0;
         }

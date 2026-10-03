@@ -216,6 +216,10 @@ namespace Creezio.Switcher
 
         public async Task Refresh(Profile profile, CancellationToken token,bool allowAutoReset=false)
         {
+            await RefreshUsage(profile,()=>allowAutoReset&&Settings.AutoResetCredits&&Instances.IsResetActive(profile),Save,token);
+        }
+        internal async Task RefreshUsage(Profile profile,Func<bool> authorizeReset,Action persist,CancellationToken token,bool manual=false)
+        {
             try
             {
                 // Reuse newly refreshed local tokens without touching the active auth file.
@@ -224,13 +228,13 @@ namespace Creezio.Switcher
                 {
                     var gateway=new ResetGateway(rpc);
                     (await gateway.Read(token)).Apply(profile,DateTime.UtcNow);
-                    Save();
-                    if(allowAutoReset) await resets.Run(profile,()=>Settings.AutoResetCredits && Instances.IsResetActive(profile),gateway,Save,token);
+                    persist();
+                    await resets.Run(profile,authorizeReset,gateway,persist,token,manual);
                 }
             }
             catch(OperationCanceledException) { throw; }
             catch { profile.Error="Connexion expirée, réseau indisponible ou version Codex incompatible. Reconnectez ce compte ou réessayez."; }
-            Save();
+            persist();
         }
         public async Task Switch(Profile profile, CancellationToken token)
         {

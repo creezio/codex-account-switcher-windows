@@ -20,4 +20,6 @@ if ($LASTEXITCODE -ne 0) { throw 'Relay compilation failed.' }
 $config = '<?xml version="1.0"?><configuration><startup><supportedRuntime version="v4.0" sku=".NETFramework,Version=v4.8" /></startup></configuration>'
 [IO.File]::WriteAllText((Join-Path $destination 'CodexAccountSwitcher.exe.config'), $config)
 [IO.File]::WriteAllText((Join-Path $destination 'CreezioRelay.exe.config'), $config)
+$pluginSource = Join-Path $projectRoot 'plugins'
+Copy-Item -LiteralPath $pluginSource -Destination $destination -Recurse -Force
 Get-Item -LiteralPath (Join-Path $destination 'CodexAccountSwitcher.exe') | Select-Object Name,Length

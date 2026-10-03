@@ -1,0 +1,19 @@
+{
+  "name": "creezio-relay",
+  "version": "0.6.0-beta.1+codex.20261003043051",
+  "description": "Delegate tasks to configured Codex agents and request assistance through Account Switcher.",
+  "author": {
+    "name": "Creezio"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Creezio Relay",
+    "shortDescription": "Use Creezio Relay in Codex.",
+    "longDescription": "Configurable delegation to local or shared Windows Codex agents, assistance requests and durable task results for Account Switcher.",
+    "developerName": "Creezio",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Show my configured agents and project delegation rules."
+  },
+  "mcpServers": "./.mcp.json"
+}

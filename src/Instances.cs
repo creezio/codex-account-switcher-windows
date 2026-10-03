@@ -173,6 +173,10 @@ namespace Creezio.Switcher
                 SafeFiles.AtomicWrite(Path.Combine(folder,"launch.json"),Encoding.UTF8.GetBytes(Json.Write(request)));
             }
             string host=System.Reflection.Assembly.GetExecutingAssembly().Location;
+#if NETCOREAPP
+            // The assembly is a DLL on modern .NET; activation requires its executable apphost.
+            host=Path.ChangeExtension(host,".exe");
+#endif
             string hostArgs="--instance-host \""+Path.Combine(folder,"launch.json")+"\"";
             string command="$ErrorActionPreference='Stop'; Invoke-CommandInDesktopPackage -PackageFamilyName "+QuotePS(package.Family)+" -AppId "+QuotePS(package.AppId)+" -Command "+QuotePS(host)+" -Args "+QuotePS(hostArgs)+" -PreventBreakaway";
             try {
