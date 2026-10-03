@@ -1,4 +1,4 @@
-# Relais configurable — v0.5 beta
+﻿# Relais configurable — v0.5 beta
 
 Le relais transmet des travaux entre des chats de comptes Codex différents sur le même PC Windows. Chaque utilisateur définit ses rôles, projets, ressources et règles. Revue, tests, recherche, accès à un plugin privé et publication sont des usages possibles ; aucun n'est imposé.
 
@@ -39,7 +39,7 @@ La délégation est **explicite par défaut**. Un projet `rules` autorise seulem
 
 Exemple générique : un canal `developpement`, un canal `revue` doté de la capacité déclarée `review`, un projet `mon-projet` associé à leur dossier, puis une règle `relecture` qui route le type `review` vers `revue`. Pour un outil privé, ajouter sa capacité au compte qui le possède et créer une ressource limitée à ce canal. Le destinataire vérifie lui-même que l'outil et la ressource sont réellement accessibles.
 
-Le routage considère le périmètre, les règles, la disponibilité, les limites récentes et la charge. Il conserve sa destination après acceptation. Si le seul propriétaire autorisé manque de quota, le travail attend ; un autre compte n'obtient aucun droit supplémentaire. Un même compte dans plusieurs instances partage ses limites.
+Le routage considère le périmètre, les règles, la disponibilité, les limites récentes et la charge. Il conserve sa destination après acceptation, sauf réaffectation explicite des demandes automatiques non démarrées autorisée dans le projet. Une cible explicitement choisie ne change pas. Si le seul propriétaire autorisé manque de quota, le travail attend ; un autre compte n'obtient aucun droit supplémentaire. Un même compte dans plusieurs instances partage ses limites.
 
 ## Utiliser depuis un agent
 
@@ -65,16 +65,41 @@ L'historique chiffré distingue l'envoi, la réponse observée, le résultat dé
 
 La source peut fermer après acceptation : le destinataire travaille, puis le retour attend sa réouverture. Un destinataire fermé n'empêche pas la remise d'un résultat déjà conservé. Une instance lente n'occupe pas de verrou global pendant ses appels réseau/IPC.
 
-Les mêmes chemins désignent les mêmes fichiers pour toutes les instances. Le moteur sérialise les travaux susceptibles d'écrire dans un même dossier et les accès à une même ressource configurée. Ces verrous concernent les tâches du relais ; un éditeur externe peut toujours changer le fichier. Les empreintes sont vérifiées avant dispatch. Le système ne crée ni ne fusionne automatiquement des worktrees ; pour plusieurs auteurs, préparer des espaces distincts et les enregistrer comme projets/canaux dédiés.
+Les mêmes chemins désignent les mêmes fichiers pour toutes les instances. Le moteur sérialise les travaux susceptibles d'écrire dans un même dossier et les accès à une même ressource configurée. Ces verrous concernent les tâches du relais ; un éditeur externe peut toujours changer le fichier. Les empreintes sont vérifiées avant dispatch. Dans Diagnostics → Espaces Git, créez ou réutilisez un worktree, puis autorisez son chemin dans le projet (un chemin par ligne). Aucune fusion ni installation de dépendances automatique.
 
-`Annuler / interrompre` annule une demande encore en file. Pour un tour Codex actif, elle consigne une demande : l'interface native examinée n'expose pas d'arrêt ciblé confirmé. Utiliser **Arrêter** dans le chat. Le relais ne prétend jamais que le tour est arrêté avant de l'observer.
+`Annuler la demande en attente` annule une demande encore en file. Pour un tour Codex actif, elle consigne une demande : l'interface native examinée n'expose pas d'arrêt ciblé confirmé. Utiliser **Arrêter** dans le chat. Le relais ne prétend jamais que le tour est arrêté avant de l'observer.
 
 ## Stockage et limites
 
-Les données sont dans `%LOCALAPPDATA%\Creezio\CodexAccountSwitcher\relay`, chiffrées par Windows DPAPI. Les nouveaux travaux résident dans `jobs/`, à l'abri du moteur v0.4 qui ne connaît que `messages/`. L'historique v0.4 reste lisible. L'ancienne version ne sait pas reprendre les nouveaux contrats : terminer ou annuler les travaux v0.5 avant de revenir en arrière.
+Les données sont dans `%LOCALAPPDATA%\Creezio\CodexAccountSwitcher\relay`, chiffrées par Windows DPAPI. Les nouveaux travaux résident dans `jobs-v3/`, à l'abri des moteurs v0.4 et v0.5. Leurs historiques restent lisibles ; leurs demandes actives doivent être terminées avant la migration, car elles ne sont pas exécutées par le nouveau moteur. L'ancienne version ne sait pas reprendre les nouveaux contrats : terminer ou annuler les travaux v0.6 avant de revenir en arrière.
 
 Les capacités sont déclarées et l'inventaire des plugins confirme leur installation/activation, pas l'accès à toutes leurs ressources. Le MCP utilise un protocole stdio JSON-RPC minimal vérifié avec Codex, sans serveur réseau. La liaison bureau s'appuie sur l'interface locale des outils de l'application, dont la compatibilité peut évoluer. Les permissions sont lues dans les fichiers de contexte locaux ; si leur format devient inconnu, la préparation reste bloquée.
 
 Le switcher ne modifie pas les droits du fournisseur, ne copie pas les connexions entre agents et ne partage pas les secrets de plugins. Les profils sous un même utilisateur Windows ne constituent toutefois pas une frontière de sécurité système. Les réglages `read/write/external` sont un mandat appliqué au destinataire, pas un nouveau bac à sable OS.
 
-Le suivi et les resets automatiques des limites existants restent dans le switcher. Le moteur de relais lit les quotas et attend leur rétablissement ; il n'achète aucun crédit et ne consomme aucun reset lui-même. Le binaire est une bêta non signée ; les tests et limites de qualification sont détaillés dans [IMPLEMENTATION.md](IMPLEMENTATION.md).
+Le suivi et les resets suivent les politiques choisies dans Limites. Une supervision indépendante de la fenêtre peut être activée. Le moteur de relais lit les quotas et attend leur rétablissement ; il n'achète aucun crédit et ne consomme aucun reset lui-même. Le binaire est une bêta non signée ; les tests et limites de qualification sont détaillés dans [IMPLEMENTATION.md](IMPLEMENTATION.md).
+
+
+## Attendre des sous-tâches
+
+Le destinataire peut soumettre des enfants avec `Parent` et `ReturnToSource=false`,
+puis appeler `await_children` et terminer son tour sans `report_result`. Le moteur
+attend la fin réelle du tour avant de libérer sa capacité et son dossier. Quand les
+enfants sont terminés, le parent repasse par la file et ses contrôles de portée,
+quota et concurrence, puis reprend avec les résultats. Une tâche bloquée ou un
+envoi incertain reste à traiter ; il n'est jamais considéré comme réussi.
+
+## Piloter les départs et les retours
+
+- **Suspendre les départs** conserve les demandes et poursuit le suivi des résultats.
+- **Terminer puis arrêter** accepte uniquement les groupes déjà admis et leurs descendants.
+- **Arrêter le suivi du relais** arrête le moteur, pas les agents Codex déjà lancés.
+- Le projet choisit le retour immédiat, groupé (au plus dix résultats du même chat
+  et de la même identité) ou manuel, consultable dans Travaux sans relancer l'agent.
+- **Tester le routage** simule la sélection sur le brouillon sans créer de tâche.
+  Les décisions et raisons sont conservées lors de la vraie soumission.
+
+La configuration exportée contient des noms, chemins et instructions choisis par
+l'utilisateur : la relire avant partage. Les identifiants de connexion et les
+sessions de chats n'en font pas partie. Pour demander de l'aide, préférer l'export
+expurgé de Diagnostics.

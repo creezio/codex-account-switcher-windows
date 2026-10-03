@@ -53,6 +53,7 @@ internal static class TestRunner
             InstanceTests.RunAll(Check,sandbox,a,b);
             RelayTests.RunAll(Check,sandbox);
             GeneralRelayTests.RunAll(Check,sandbox);
+            ProductTests.RunAll(Check,sandbox);
             Console.WriteLine(passed+" tests passed.");
             return 0;
         }

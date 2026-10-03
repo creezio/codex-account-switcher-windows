@@ -1,9 +1,9 @@
-# Codex Account Switcher pour Windows
+﻿# Codex Account Switcher pour Windows
 
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.5.0 — bêta de délégation configurable.** Windows 10/11, interface en
+**Version 0.6.0 — bêta de configuration et supervision.** Windows 10/11, interface en
 français, exécutable portable sans droits administrateur ni dépendances NuGet.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
@@ -21,13 +21,27 @@ outils d'un autre compte, puis recevoir le résultat dans son chat. Aucun compte
 fournisseur ou workflow de publication n'est imposé. [Guide du relais](docs/RELAY.md)
 et [état détaillé de l'implémentation](docs/IMPLEMENTATION.md).
 
+![Vue d’ensemble avec des données fictives](assets/overview.png)
+
 ![Relais avec des données fictives](assets/relay.png)
+
+## Nouveautés 0.6
+
+Vue d'ensemble, premiers pas, configuration guidée, modèles facultatifs et
+simulation sans envoi. Recherche et filtres des travaux, pause des départs,
+arrêt progressif, concurrence par compte, retours groupés ou manuels et attente
+explicite des sous-tâches. Supervision des limites indépendante de la fenêtre,
+politique par compte, historique des resets et réinitialisation manuelle.
+Espaces Git autorisés, empreintes de fichiers, index de l'historique, diagnostic
+expurgé et vérification des versions publiées.
+
+[Parcours et qualification de la version](docs/PRODUCT-VALIDATION.md).
 
 ## Fonctionnalités
 
 - Relais local : nouvelles conversations, réponses automatiques et poursuite dans le même chat.
 - Moteur séparé de la fenêtre, file persistante et arrêt manuel conservé.
-- Plugin intégré : deux skills et dix outils MCP, installation par profil et mise à jour idempotente.
+- Plugin intégré : deux skills et onze outils MCP, installation par profil et mise à jour idempotente.
 - Délégation explicite par défaut ; routage selon les règles de chaque utilisateur.
 - Ressources liées à leurs canaux autorisés, limites par compte, dépendances et concurrence bornée.
 - Contrôle des permissions du nouveau chat avant transmission du travail ; réutilisation de chats terminés configurable.
@@ -50,7 +64,7 @@ et [état détaillé de l'implémentation](docs/IMPLEMENTATION.md).
   cinq minutes et notifications lorsque les quotas deviennent faibles.
 - Noms personnalisés et retrait des comptes du coffre.
 - Affichage des crédits de reset disponibles et de la prochaine expiration connue.
-- **Reset automatique des limites à 1 % restant ou moins**, activé par défaut sur les
+- **Reset automatique facultatif des limites**, avec seuil et fenêtre configurables par compte (1 % proposé). Les réglages existants sont conservés ; une nouvelle installation exige une activation. Il concerne les
   comptes utilisés : session habituelle et instances gérées ouvertes. Un même compte
   est contrôlé une seule fois par minute, même lorsqu'il est partagé entre plusieurs instances.
 

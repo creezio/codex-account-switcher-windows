@@ -1,6 +1,6 @@
 {
   "name": "creezio-relay",
-  "version": "0.5.0",
+  "version": "0.6.0-beta.1+codex.20261003011006",
   "description": "Delegate tasks between locally connected Codex accounts using your own project rules.",
   "author": {
     "name": "Creezio"

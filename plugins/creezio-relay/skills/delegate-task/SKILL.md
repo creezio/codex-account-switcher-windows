@@ -41,10 +41,13 @@ writers, use distinct configured workspaces; the same folder contains the same
 files for every instance. Do not create copies or install dependencies just to
 increase parallelism.
 
-A parent still executing may hold the workspace or a concurrency slot needed by
-its child. Submit children, finish the current turn with an explicit pending-work
-summary, and consume their later returned results. Do not poll indefinitely from
-inside a parent turn. A final answer must distinguish queued work from success.
+When delegating from a running parent task, submit children with `Parent` set to
+that task ID and `ReturnToSource=false`. Call `await_children` for the parent,
+then finish this turn without `report_result`. Do not keep shell writers running.
+The relay waits for Codex to confirm the turn ended before releasing capacity;
+it resumes the same parent chat after all children finish. Failed or uncertain
+children never count as success. Do not poll indefinitely while holding a parent
+turn. Source results follow the project's immediate, batch or manual return mode.
 
 Do not resend an action whose outcome is uncertain. Inspect the stored result and
 destination conversation. A received `CREEZIO_RESULT` is a task result, not an

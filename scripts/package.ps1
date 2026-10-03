@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param([switch]$SkipBuild,[string]$BinaryDirectory)
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -8,7 +8,7 @@ $output = Join-Path $projectRoot 'outputs'
 New-Item -ItemType Directory -Path $output -Force | Out-Null
 $readme = @'
 CODEX ACCOUNT SWITCHER POUR WINDOWS - CREEZIO
-Version 0.5.0-beta.1 (delegation configurable)
+Version 0.6.0-beta.1 (espace de travail et delegation configurable)
 
 1. Extraire le ZIP et ouvrir CodexAccountSwitcher.exe.
 2. Dans Comptes, importer ou ajouter les comptes souhaites.
@@ -19,7 +19,7 @@ Version 0.5.0-beta.1 (delegation configurable)
    Fermer ne cible que cette instance et interrompt ses taches apres confirmation.
    La session habituelle n'est jamais fermee par le switcher.
 6. Les limites restent partagees lorsqu'un compte sert a plusieurs instances.
-   Le reset automatique a 1 % utilise une reinitialisation disponible,
+   Le reset automatique, si active, utilise le seuil choisi par compte et une reinitialisation disponible,
    avec une seule demande par compte utilise. Aucun achat de credits.
 7. Travaux > Canaux connectes : connecter une conversation par compte et projet.
    Regler les permissions dans CE chat ; elles ne sont pas heritees d'un autre.
@@ -28,7 +28,11 @@ Version 0.5.0-beta.1 (delegation configurable)
 9. Garder CreezioRelay.exe, ses configurations et le dossier plugins ensemble.
    Le moteur suit les travaux meme quand la fenetre du switcher est fermee.
    Arreter le moteur reste effectif jusqu'a Demarrer le moteur.
-10. Lire RELAIS.md pour les permissions, la mise a jour et les limites de la beta.
+10. Vue d ensemble > Premiers pas : configurer les usages et tester le routage.
+11. Limites : politique par compte et supervision independante facultative.
+12. Diagnostics : verification des mises a jour et export sans identifiants.
+13. Lire PRODUCT-VALIDATION.md pour la qualification de cette beta.
+14. Lire RELAIS.md pour les permissions, la mise a jour et les limites de la beta.
 
 Windows 10/11 et .NET Framework 4.8. Codex installe via Microsoft Store requis
 pour ouvrir des instances. Codex CLI (codex.exe) requis pour les comptes/quotas.
@@ -50,11 +54,12 @@ depuis ce dossier pour mettre a jour ses chemins. Les donnees restent conservees
 '@
 [IO.File]::WriteAllText((Join-Path $packageRoot 'LIRE-MOI.txt'), $readme)
 Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination (Join-Path $packageRoot 'LICENSE.txt') -Force
-$zip = Join-Path $output 'CodexAccountSwitcher-0.5.0-beta.1-windows.zip'
+$zip = Join-Path $output 'CodexAccountSwitcher-0.6.0-beta.1-windows.zip'
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\RELAY.md') -Destination (Join-Path $packageRoot 'RELAIS.md') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\IMPLEMENTATION.md') -Destination $packageRoot -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\PRODUCT-VALIDATION.md') -Destination $packageRoot -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\EVOLUTION-PLAN.md') -Destination $packageRoot -Force
-Compress-Archive -LiteralPath @((Join-Path $packageRoot 'CodexAccountSwitcher.exe'),(Join-Path $packageRoot 'CodexAccountSwitcher.exe.config'),(Join-Path $packageRoot 'CreezioRelay.exe'),(Join-Path $packageRoot 'CreezioRelay.exe.config'),(Join-Path $packageRoot 'plugins'),(Join-Path $packageRoot 'RELAIS.md'),(Join-Path $packageRoot 'IMPLEMENTATION.md'),(Join-Path $packageRoot 'EVOLUTION-PLAN.md'),(Join-Path $packageRoot 'LIRE-MOI.txt'),(Join-Path $packageRoot 'LICENSE.txt')) -DestinationPath $zip -Force
+Compress-Archive -LiteralPath @((Join-Path $packageRoot 'CodexAccountSwitcher.exe'),(Join-Path $packageRoot 'CodexAccountSwitcher.exe.config'),(Join-Path $packageRoot 'CreezioRelay.exe'),(Join-Path $packageRoot 'CreezioRelay.exe.config'),(Join-Path $packageRoot 'plugins'),(Join-Path $packageRoot 'RELAIS.md'),(Join-Path $packageRoot 'IMPLEMENTATION.md'),(Join-Path $packageRoot 'EVOLUTION-PLAN.md'),(Join-Path $packageRoot 'PRODUCT-VALIDATION.md'),(Join-Path $packageRoot 'LIRE-MOI.txt'),(Join-Path $packageRoot 'LICENSE.txt')) -DestinationPath $zip -Force
 $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-[IO.File]::WriteAllText((Join-Path $output 'SHA256SUMS-0.5.0-beta.1.txt'),($hash + '  ' + [IO.Path]::GetFileName($zip) + "`n"))
+[IO.File]::WriteAllText((Join-Path $output 'SHA256SUMS-0.6.0-beta.1.txt'),($hash + '  ' + [IO.Path]::GetFileName($zip) + "`n"))
 Get-Item -LiteralPath $zip | Select-Object Name,Length

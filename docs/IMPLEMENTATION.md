@@ -1,3 +1,6 @@
+﻿> Version 0.6 : consulter [la qualification produit](PRODUCT-VALIDATION.md).
+> Le document ci-dessous conserve les preuves de la version 0.5.
+
 # Relais configurable : livraison et qualification
 
 État au 3 octobre 2026, v0.5.0-beta.1. Ce document complète l'[audit initial](EVOLUTION-PLAN.md) et décrit ce qui existe réellement. Les comptes, ressources et règles de la recette ne sont pas inclus dans l'application distribuée.

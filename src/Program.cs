@@ -5,8 +5,8 @@ using System.Threading;
 using System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("Creezio Codex Account Switcher")]
-[assembly: System.Reflection.AssemblyVersion("0.5.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersion("0.5.0-beta.1")]
+[assembly: System.Reflection.AssemblyVersion("0.6.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersion("0.6.0-beta.1")]
 [assembly: System.Reflection.AssemblyCompany("Creezio")]
 
 namespace Creezio.Switcher
@@ -28,7 +28,7 @@ namespace Creezio.Switcher
             bool first;
             using(var instance=new Mutex(true,"Local\\Creezio.CodexAccountSwitcher",out first))
             {
-                if(!first) { MessageBox.Show("L'application est déjà ouverte. Cliquez sur son icône près de l'horloge.","Creezio"); return 0; }
+                if(!first) { SingleWindow.ActivateExisting(); return 0; }
                 try
                 {
                     string root=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Creezio","CodexAccountSwitcher");

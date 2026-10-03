@@ -7,6 +7,7 @@ using Creezio.Switcher;
 // Explicit live acceptance harness. No account identities or resource IDs are built in.
 internal static class LiveRelaySmoke
 {
+    public sealed class Hold {public bool Active {get;set;} public bool Previous {get;set;} public string Revision {get;set;}}
     public static int Main(string[] args)
     {
         if(args.Length==2&&args[0]=="--instance-host")return InstanceHost.Run(args[1]);
@@ -14,7 +15,15 @@ internal static class LiveRelaySmoke
             var input=Json.Read<object>(Console.In.ReadToEnd());string op=Json.Str(Json.Get(input,"operation"));
             var service=new AccountService(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Creezio","CodexAccountSwitcher"));
             var store=new RelayStore(RelayStore.DefaultRoot);var token=CancellationToken.None;
-            if(op=="prepare"){
+            if(op=="hold-worker"){
+                var policy=RelayPolicies.Load(store);var hold=store.ReadRecord<Hold>("acceptance-worker-hold.dpapi");if(!hold.Active){hold.Active=true;hold.Previous=policy.KeepWorkerRunning;policy.KeepWorkerRunning=true;RelayPolicies.Save(store,policy);hold.Revision=policy.Revision;store.WriteRecord("acceptance-worker-hold.dpapi",hold);}RelayWorker.Resume(store);Console.WriteLine("{\"workerHeldForAcceptance\":true}");
+            }else if(op=="release-worker"){
+                var policy=RelayPolicies.Load(store);var hold=store.ReadRecord<Hold>("acceptance-worker-hold.dpapi");if(hold.Active&&policy.Revision==hold.Revision){policy.KeepWorkerRunning=hold.Previous;RelayPolicies.Save(store,policy);hold.Active=false;store.WriteRecord("acceptance-worker-hold.dpapi",hold);Console.WriteLine("{\"restored\":true}");}else Console.WriteLine("{\"restored\":false,\"note\":\"Policy changed; preserved for review\"}");
+            }else if(op=="status"){
+                Console.WriteLine(Json.Write(new{version=RelayWorker.Version,worker=RelayWorker.Status(store),channels=store.Channels().Select(c=>new{c.Id,c.Email,c.InstanceId,c.AnchorThreadId,online=DesktopRuntime.SameProcess(c.ServerPid,c.ServerStartTicks)}),active=store.ActiveMessages().Select(m=>new{m.Id,m.SchemaVersion,m.State,m.ReturnState,m.BlockReason,m.Title}),instances=service.Data.Instances.Select(i=>new{i.Id,i.Name,i.IsLocal})}));
+            }else if(op=="process-job"){
+                string id=Json.Str(Json.Get(input,"id"));new RelayEngine(store).Process(id,token).GetAwaiter().GetResult();Console.WriteLine(Json.Write(RelayCommand.MessageSummary(store.Message(id),true)));
+            }else if(op=="prepare"){
                 var instance=service.Data.Instances.Single(i=>i.Id==Json.Str(Json.Get(input,"instance"))&&!i.IsLocal);
                 string workspace=RelayStore.WorkspacePath(Json.Str(Json.Get(input,"workspace")));
                 RelayIntegration.Install(store,service.Instances.Home(instance),service.Settings.CodexExecutable,true,token).GetAwaiter().GetResult();
@@ -35,10 +44,12 @@ internal static class LiveRelaySmoke
             }else if(op=="create-source"){
                 var channel=store.Channel(Json.Str(Json.Get(input,"anchorChannel")));new DesktopRelayTransport().Verify(channel);
                 using(var client=new AppToolsClient(channel.PipePath,channel.ServerPid,channel.ServerStartTicks)){
-                    var result=client.Call(channel.AnchorThreadId,"create_thread",new{title="Relay acceptance · configurable delegation",prompt=Json.Str(Json.Get(input,"prompt")),target=new{type="projectless"}},token).GetAwaiter().GetResult();Console.WriteLine(Json.Write(result));
+                    var result=client.Call(channel.AnchorThreadId,"create_thread",new{title="Relay acceptance · v0.6",prompt=Json.Str(Json.Get(input,"prompt")),target=new{type="projectless"}},token).GetAwaiter().GetResult();Console.WriteLine(Json.Write(result));
                 }
             }else if(op=="read"){
-                var channel=store.Channel(Json.Str(Json.Get(input,"channel")));var result=new DesktopRelayTransport().Call(channel,"read_thread",new{threadId=Json.Str(Json.Get(input,"thread")),turnLimit=6,includeOutputs=false,maxOutputCharsPerItem=5000},token).GetAwaiter().GetResult();Console.WriteLine(Json.Write(result));
+                var channel=store.Channel(Json.Str(Json.Get(input,"channel")));var result=new DesktopRelayTransport().Call(channel,"read_thread",new{threadId=Json.Str(Json.Get(input,"thread")),turnLimit=6,includeOutputs=false,maxOutputCharsPerItem=5000},token).GetAwaiter().GetResult();
+                // Native snapshots can include MCP arguments even with includeOutputs=false.
+                Console.WriteLine(Json.Write(new{thread=Json.Get(result,"thread"),turns=RelayEngine.Rows(Json.Get(result,"turns")).Select(t=>new{id=Json.Str(Json.Get(t,"id")),status=Json.Str(Json.Get(t,"status")),messages=RelayEngine.Rows(Json.Get(t,"items")).Where(i=>Json.Str(Json.Get(i,"type"))=="agentMessage").Select(i=>new{phase=Json.Str(Json.Get(i,"phase")),text=Json.Str(Json.Get(i,"text"))})})}));
             }else if(op=="permission-context"){
                 var c=store.Channel(Json.Str(Json.Get(input,"channel")));Console.WriteLine(Json.Write(new{permissions=RelayPermissions.Read(c.Home,Json.Str(Json.Get(input,"thread")))}));
             }else if(op=="install-integration"){

@@ -172,9 +172,11 @@ namespace Creezio.Switcher
         public ResetCredits ResetCredits { get; set; }
         public ResetAttempt ResetAttempt { get; set; }
         public string ResetMessage { get; set; }
+        public double ResetThreshold {get;set;}
+        public string ResetWindow {get;set;}
         public bool AllInstances { get; set; }
         public List<string> InstanceIds { get; set; }
-        public Profile() { Quotas = new List<QuotaBucket>(); AllInstances = true; InstanceIds = new List<string>(); }
+        public Profile() { Quotas = new List<QuotaBucket>(); AllInstances = true; InstanceIds = new List<string>();ResetThreshold=1;ResetWindow="all"; }
         public bool Allows(string instanceId) { return AllInstances || (InstanceIds != null && InstanceIds.Contains(instanceId)); }
         public bool IsFresh
         {

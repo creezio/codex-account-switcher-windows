@@ -39,6 +39,7 @@ namespace Creezio.Switcher
                 process.Exited += delegate { FailPending(new IOException("Le serveur Codex s'est arrêté.")); };
                 process.Start();
                 job = new ProcessJob(process);
+                CacheMaintenance.Mark(Home,process.Id,process.StartTime.ToUniversalTime().Ticks);
                 process.BeginOutputReadLine(); process.BeginErrorReadLine();
             }
             catch { Dispose(); throw new InvalidOperationException("Le serveur Codex n'a pas pu démarrer. Vérifiez le chemin de codex.exe dans les paramètres."); }

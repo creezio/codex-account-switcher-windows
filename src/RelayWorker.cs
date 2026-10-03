@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -20,7 +20,7 @@ namespace Creezio.Switcher
     }
     internal static class RelayWorker
     {
-        internal const string Version="0.5.0-beta.1";
+        internal const string Version="0.6.0-beta.1";
         public static RelayWorkerState Status(RelayStore store){var state=store.ReadRecord<RelayWorkerState>("worker.dpapi");state.Paused=Paused(store);return state;}
         public static bool Running(RelayStore store){var s=Status(store);return DesktopRuntime.SameProcess(s.Pid,s.Started);}
         public static bool Paused(RelayStore store){return store.ReadRecord<RelayWorkerState>("worker-stop.dpapi").Paused;}
@@ -64,9 +64,12 @@ namespace Creezio.Switcher
                     }
                     await engine.Pump(token);state.Error=null;
                 }catch(OperationCanceledException){throw;}catch(Exception e){state.Error=Program.SafeError(e);}
-                bool active=store.Messages().Any(m=>m.State=="queued"||m.State=="waiting"||m.State=="sending"||m.ReturnState=="sending"||RelayEngine.PendingReturn(m)||((m.State=="uncertain"||m.ReturnState=="uncertain")&&m.ReconcileAttempts<3));
+                try{
+                bool active=store.ActiveMessages().Any(m=>m.SchemaVersion>=3&&((m.State=="queued"&&RelayDispatch.AllowsStart(store,m))||m.State=="children"||m.State=="waiting"||m.State=="sending"||m.ReturnState=="sending"||RelayEngine.PendingReturn(m)||((m.State=="uncertain"||m.ReturnState=="uncertain")&&m.ReconcileAttempts<3)));
                 if(active)idle=DateTime.UtcNow;
+                if(!active&&RelayDispatch.Read(store).Mode=="drain"){RelayDispatch.Set(store,"paused");Stop(store);return;}
                 if(!active&&!RelayPolicies.Load(store).KeepWorkerRunning&&DateTime.UtcNow-idle>TimeSpan.FromSeconds(12))return;
+                }catch(IOException e){idle=DateTime.UtcNow;state.Error=Program.SafeError(e);}
                 await Task.Delay(1500,token);
             }
             }finally{maintenanceToken.Cancel();try{maintenance.GetAwaiter().GetResult();}catch(OperationCanceledException){}try{engine.Drain().GetAwaiter().GetResult();}catch(OperationCanceledException){}}

@@ -25,18 +25,23 @@ namespace Creezio.Switcher
         }
         public static async Task RefreshWaiting(RelayStore store,CancellationToken token)
         {
-            var waiting=store.Messages().Where(m=>m.State=="queued").Select(m=>m.TargetChannelId).Distinct().ToArray();
+            var waiting=store.ActiveMessages().Where(m=>m.SchemaVersion>=3&&m.State=="queued").Select(m=>m.TargetChannelId).Distinct().ToArray();
             if(waiting.Length==0)return;
             var service=new AccountService(Path.GetDirectoryName(store.Root));
             foreach(var channel in store.Channels().Where(c=>waiting.Contains(c.Id)&&c.Enabled).GroupBy(c=>c.AccountKey).Select(g=>g.First())){
                 var old=store.ReadRecord<Profile>(Name(channel.AccountKey));DateTime last;if(DateTime.TryParse(old.QuotaTimeUtc,out last)&&DateTime.UtcNow-last.ToUniversalTime()<TimeSpan.FromMinutes(1))continue;
                 try{
+                    if(service.Data.Profiles.Any(profile=>profile.Key==channel.AccountKey)){await UsageCoordinator.Refresh(store,channel.AccountKey,false,token);continue;}
                     new DesktopRelayTransport().Verify(channel);string auth=SafeFiles.ReadText(Path.Combine(channel.Home,"auth.json"));
                     if(AuthIdentity.Parse(auth).Key!=channel.AccountKey)continue;
-                    var snapshot=await service.FetchUsage(auth,token);var p=new Profile{Key=channel.AccountKey};snapshot.Apply(p,DateTime.UtcNow);
+                    using(store.Lease("usage-"+RelayReturns.Key(channel.AccountKey))){
+                    var snapshot=await service.FetchUsage(auth,token);var p=store.ReadRecord<Profile>(Name(channel.AccountKey));p.Key=channel.AccountKey;snapshot.Apply(p,DateTime.UtcNow);
                     // Store usage only. Never rewrite the shared account vault or any live auth file.
-                    p.AuthJson=null;store.WriteRecord(Name(channel.AccountKey),p);
-                }catch(OperationCanceledException){throw;}catch(Exception){store.WriteRecord(Name(channel.AccountKey),new Profile{Key=channel.AccountKey,QuotaTimeUtc=DateTime.UtcNow.ToString("o"),Error="Usage unavailable"});}
+                    p.AuthJson=null;store.WriteRecord(Name(channel.AccountKey),p);}
+                }catch(OperationCanceledException){throw;}catch(Exception){
+                    // A failed refresh must never erase a durable, potentially sent reset intent.
+                    try{using(store.Lease("usage-"+RelayReturns.Key(channel.AccountKey))){var preserved=store.ReadRecord<Profile>(Name(channel.AccountKey));preserved.Key=channel.AccountKey;preserved.AuthJson=null;preserved.QuotaTimeUtc=DateTime.UtcNow.ToString("o");preserved.Error="Usage unavailable";store.WriteRecord(Name(channel.AccountKey),preserved);}}catch(IOException){}
+                }
             }
         }
     }

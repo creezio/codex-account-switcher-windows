@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -41,14 +41,14 @@ internal static class IntegrationSmoke
             using(var process=Process.Start(start)){
                 process.ErrorDataReceived+=delegate{};process.BeginErrorReadLine();
                 try{
-                    Rpc(process,1,"initialize",new{clientInfo=new{name="creezio_integration_test",version="0.5.0"},capabilities=new{experimentalApi=true}});
+                    Rpc(process,1,"initialize",new{clientInfo=new{name="creezio_integration_test",version=RelayWorker.Version},capabilities=new{experimentalApi=true}});
                     process.StandardInput.WriteLine(Json.Write(new{method="initialized"}));process.StandardInput.Flush();
                     var skills=Rpc(process,2,"skills/list",new{cwds=new[]{root},forceReload=true});
                     var names=RelayIntegration.Objects(skills).Select(x=>Json.Str(Json.Get(x,"name"))).Where(x=>x.EndsWith("delegate-task")||x.EndsWith("execute-relay-task")).Distinct().ToArray();
                     Console.WriteLine(Json.Write(new{skills=names}));if(names.Length!=2)throw new Exception("Both relay skills must load in Codex");
                     var servers=Rpc(process,3,"mcpServerStatus/list",new{detail="toolsAndAuthOnly"});
-                    var tools=RelayIntegration.Objects(servers).Select(x=>Json.Str(Json.Get(x,"name"))).Where(x=>x=="submit_job"||x=="get_setup"||x=="list_agents").Distinct().ToArray();
-                    Console.WriteLine(Json.Write(new{loadedTools=tools}));if(tools.Length!=3)throw new Exception("Relay MCP tools must load in Codex");
+                    var tools=RelayIntegration.Objects(servers).Select(x=>Json.Str(Json.Get(x,"name"))).Where(x=>new[]{"get_setup","list_agents","submit_job","get_job","read_result","report_result","await_children","reconcile_job","wait_job","list_jobs","cancel_job"}.Contains(x)).Distinct().ToArray();
+                    Console.WriteLine(Json.Write(new{loadedTools=tools}));if(tools.Length!=11)throw new Exception("Relay MCP tools must load in Codex");
                 }finally{try{process.StandardInput.Close();if(!process.WaitForExit(3000))process.Kill();}catch{}}
             }
             return 0;

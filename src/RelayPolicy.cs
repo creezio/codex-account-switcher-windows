@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
@@ -14,11 +14,13 @@ namespace Creezio.Switcher
         public bool AutoInstallManaged {get;set;}
         public bool KeepWorkerRunning {get;set;}
         public int MaxParallel {get;set;}
+        public int MaxPerAccount {get;set;}
+        public string Revision {get;set;}
         public List<RelayAgent> Agents {get;set;}
         public List<RelayProject> Projects {get;set;}
         public List<RelayResource> Resources {get;set;}
         public List<RelayRule> Rules {get;set;}
-        public RelayPolicy(){Version=1;MaxParallel=4;Agents=new List<RelayAgent>();Projects=new List<RelayProject>();Resources=new List<RelayResource>();Rules=new List<RelayRule>();}
+        public RelayPolicy(){Version=1;MaxParallel=4;MaxPerAccount=2;Agents=new List<RelayAgent>();Projects=new List<RelayProject>();Resources=new List<RelayResource>();Rules=new List<RelayRule>();}
     }
     public sealed class RelayAgent
     {
@@ -52,7 +54,14 @@ namespace Creezio.Switcher
         public int MaxJobs {get;set;}
         public int MaxDepth {get;set;}
         public int MaxMinutes {get;set;}
-        public RelayProject(){Delegation="explicit";SourceChannels="*";TargetChannels="*";MaxConcurrent=4;MaxJobs=32;MaxDepth=3;MaxMinutes=120;}
+        public string RoutingStrategy {get;set;}
+        public string PreferredAgent {get;set;}
+        public bool ReassignQueued {get;set;}
+        public string ReturnMode {get;set;}
+        public int ReturnDelaySeconds {get;set;}
+        public string WorkspaceMode {get;set;}
+        public string AllowedWorkspaces {get;set;}
+        public RelayProject(){Delegation="explicit";SourceChannels="*";TargetChannels="*";MaxConcurrent=4;MaxJobs=32;MaxDepth=3;MaxMinutes=120;RoutingStrategy="available";ReturnMode="immediate";ReturnDelaySeconds=30;WorkspaceMode="shared";}
         public override string ToString(){return Name??Id??"Nouveau projet";}
     }
     public sealed class RelayResource
@@ -103,28 +112,50 @@ namespace Creezio.Switcher
     internal static class RelayPolicies
     {
         internal static string[] Tags(string value){return (value??"").Split(',').Select(x=>x.Trim()).Where(x=>x.Length>0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();}
+        internal static string[] Paths(string value){return (value??"").Split(new[]{'\r','\n'},StringSplitOptions.RemoveEmptyEntries).Select(x=>x.Trim()).Where(x=>x.Length>0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();}
         internal static bool Allows(string list,string value){return Tags(list).Any(x=>x=="*"||String.Equals(x,value,StringComparison.OrdinalIgnoreCase));}
         internal static bool Has(string available,string required){return Tags(required).All(x=>Tags(available).Contains(x,StringComparer.OrdinalIgnoreCase));}
         public static RelayPolicy Load(RelayStore store)
         {
-            var p=store.ReadRecord<RelayPolicy>("policy.dpapi");Validate(p,false);return p;
+            var p=store.ReadRecord<RelayPolicy>(File.Exists(Path.Combine(store.Root,"policy-v2.dpapi"))?"policy-v2.dpapi":"policy.dpapi");Validate(p,false);return p;
         }
         public static void Save(RelayStore store,RelayPolicy policy)
         {
-            Validate(policy,true);using(store.Lease("policy")){store.WriteRecord("policy.dpapi",policy);}
+            Validate(policy,true);using(store.Lease("policy")){
+                var previous=Load(store);store.WriteRecord("policy-previous.dpapi",previous);
+                policy.Revision=Guid.NewGuid().ToString("N");store.WriteRecord("policy-v2.dpapi",policy);
+            }
         }
         public static void Validate(RelayPolicy p,bool paths)
         {
             if(p==null||p.Version!=1||p.Agents==null||p.Projects==null||p.Resources==null||p.Rules==null)throw new InvalidOperationException("Version de configuration du relais non reconnue ; données conservées.");
             if(p.MaxParallel<1||p.MaxParallel>16)throw new InvalidOperationException("Parallélisme global : 1 à 16.");
+            if(p.MaxPerAccount<1||p.MaxPerAccount>16)throw new InvalidOperationException("Parallélisme par compte : 1 à 16.");
             foreach(var list in new[]{p.Agents.Select(x=>x.Channel),p.Projects.Select(x=>x.Id),p.Resources.Select(x=>x.Id),p.Rules.Select(x=>x.Id)}){
                 var ids=list.ToArray();foreach(string id in ids)RelayStore.ChannelId(id);if(ids.Distinct().Count()!=ids.Length)throw new InvalidOperationException("Identifiant de configuration en double.");
             }
-            foreach(var a in p.Agents)if(a.MaxConcurrent<1||a.MaxConcurrent>8||a.MinRemaining<0||a.MinRemaining>100||!new[]{"inherit","full-access"}.Contains(a.Permission))throw new InvalidOperationException("Paramètres d'agent invalides.");
+            foreach(var a in p.Agents)if(a.MaxConcurrent<1||a.MaxConcurrent>8||a.MinRemaining<0||a.MinRemaining>100||Double.IsNaN(a.MinRemaining)||Double.IsInfinity(a.MinRemaining)||!new[]{"inherit","full-access"}.Contains(a.Permission))throw new InvalidOperationException("Paramètres d'agent invalides.");
             foreach(var project in p.Projects){if(!new[]{"explicit","rules"}.Contains(project.Delegation)||project.MaxConcurrent<1||project.MaxConcurrent>16||project.MaxJobs<1||project.MaxJobs>256||project.MaxDepth<0||project.MaxDepth>8||project.MaxMinutes<1||project.MaxMinutes>10080)throw new InvalidOperationException("Limites de projet invalides.");if(paths)project.Workspace=RelayStore.WorkspacePath(project.Workspace);}
             foreach(var r in p.Resources)if(!p.Projects.Any(x=>x.Id==r.Project)||Tags(r.Channels).Length==0)throw new InvalidOperationException("Une ressource doit référencer un projet et ses canaux autorisés.");
             foreach(var r in p.Rules)if(r.Project!="*"&&!p.Projects.Any(x=>x.Id==r.Project))throw new InvalidOperationException("Projet de règle introuvable.");
+            foreach(var project in p.Projects){
+                if(!new[]{"available","balanced","quota","preferred"}.Contains(project.RoutingStrategy)||!new[]{"immediate","batch","manual"}.Contains(project.ReturnMode)||!new[]{"shared","isolated"}.Contains(project.WorkspaceMode)||project.ReturnDelaySeconds<5||project.ReturnDelaySeconds>3600)throw new InvalidOperationException("Stratégie de projet invalide.");
+                if(!String.IsNullOrEmpty(project.PreferredAgent)&&!p.Agents.Any(a=>a.Channel==project.PreferredAgent))throw new InvalidOperationException("Agent préféré introuvable : "+project.PreferredAgent);
+                if(paths)foreach(string workspace in Paths(project.AllowedWorkspaces))RelayStore.WorkspacePath(workspace);
+            }
         }
+        public static void ValidateReferences(RelayPolicy p,RelayStore store)
+        {
+            Validate(p,true);var channels=store.Channels().Select(c=>c.Id).ToArray();var projects=p.Projects.Select(x=>x.Id).ToArray();
+            Action<string,string[],string> check=(list,known,label)=>{foreach(string id in Tags(list))if(id!="*"&&!known.Contains(id))throw new InvalidOperationException(label+" : référence inconnue « "+id+" ».");};
+            foreach(var a in p.Agents){check(a.Channel,channels,"Agent");check(a.Projects,projects,"Projets de l'agent");}
+            foreach(var pjt in p.Projects){check(pjt.SourceChannels,channels,"Sources");check(pjt.TargetChannels,channels,"Destinataires");}
+            foreach(var r in p.Resources)check(r.Channels,channels,"Ressource");
+            foreach(var r in p.Rules){check(r.Sources,channels,"Sources de règle");check(r.Targets,channels,"Destinataires de règle");}
+        }
+        public static void Restore(RelayStore store){var old=store.ReadRecord<RelayPolicy>("policy-previous.dpapi");ValidateReferences(old,store);Save(store,old);}
+        public static string Export(RelayPolicy p){return Json.Write(p);}
+        public static RelayPolicy Import(string json){var p=Json.Read<RelayPolicy>(json);Validate(p,false);return p;}
         public static string Fingerprint(RelayJobSpec spec){using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(Json.Write(spec)))).Replace("-","");}
         public static void VerifyFiles(string workspace,Dictionary<string,string> files)
         {

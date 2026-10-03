@@ -12,13 +12,14 @@ internal static class GeneralRelayTests
     private static void Assert(bool v,string error){if(!v)throw new Exception(error);}
     private static void Throws(Action f){try{f();}catch(InvalidOperationException){return;}throw new Exception("Expected policy rejection");}
     private static object Obj(object value){return Json.Read<object>(Json.Write(value));}
-    private sealed class Adapter : IRelayTransport
+    internal sealed class Adapter : IRelayTransport
     {
         public bool SourceOffline,TargetOffline;
         public int Created,Returned;
         public int WorkSent;
         public string ActiveFlag;
         public bool InProgress;
+        public Action SourceReadHook;
         private readonly Dictionary<string,string> markers=new Dictionary<string,string>();
         public string Final="Checked.\nCREEZIO_OUTCOME {\"status\":\"succeeded\"}";
         public string HoldChannel;
@@ -30,11 +31,12 @@ internal static class GeneralRelayTests
             if(tool=="create_thread"){Interlocked.Increment(ref Created);markers[c.Id]=Json.Str(Json.Get(a,"prompt")).Split('\n')[0];if(c.Id==HoldChannel)await Release.Task;return Obj(new{threadId=c.Id+"-chat"});}
             if(tool=="send_message_to_thread"){if(c.Id.StartsWith("source"))Interlocked.Increment(ref Returned);else{WorkSent++;markers[c.Id]=Json.Str(Json.Get(a,"prompt")).Split('\n')[0];}return Obj(new{ok=true});}
             string id=Json.Str(Json.Get(a,"threadId"));
+            if(c.Id.StartsWith("source")&&SourceReadHook!=null)SourceReadHook();
             string marker;markers.TryGetValue(c.Id,out marker);
             return Obj(new{thread=new{id=id,status=new{activeFlags=ActiveFlag==null?new string[0]:new[]{ActiveFlag}}},page=new{hasMore=false},turns=c.Id.StartsWith("source")?new object[0]:new object[]{new{id="turn-1",status=InProgress?"inProgress":"completed",items=new object[]{new{type="userMessage",content=new[]{new{type="text",text=marker??""}}},new{type="agentMessage",phase="final",text=Final}}}}});
         }
     }
-    private sealed class Fixture
+    internal sealed class Fixture
     {
         public RelayStore Store;public RelayPolicy Policy;public Adapter Adapter=new Adapter();public string Folder;
         public Fixture(string root){Folder=Path.Combine(root,"general-"+(++seq));Directory.CreateDirectory(Folder);Store=new RelayStore(Path.Combine(Folder,"store"));foreach(string id in new[]{"source","target","other"})Store.Register(new RelayChannel{Id=id,Name=id,Home=Folder,AccountKey=id,AnchorThreadId=id+"-chat",Workspace=Folder,Enabled=true});Policy=new RelayPolicy();Policy.Projects.Add(new RelayProject{Id="sample",Workspace=Folder});Policy.Agents.Add(new RelayAgent{Channel="target",AutoRoute=true,Capabilities="review,private-db"});Policy.Agents.Add(new RelayAgent{Channel="other",AutoRoute=true,Capabilities="review"});Save();}
@@ -45,12 +47,12 @@ internal static class GeneralRelayTests
     }
     public static void RunAll(Action<string,Action> check,string root)
     {
-        check("new contracts cannot be consumed by a v0.4 directory scan",()=>{var f=new Fixture(root);var m=f.Submit();Assert(File.Exists(Path.Combine(f.Store.Root,"jobs",m.Id+".dpapi"))&&!File.Exists(Path.Combine(f.Store.Root,"messages",m.Id+".dpapi")),"legacy pump can consume new jobs");Assert(new RelayStore(f.Store.Root).Message(m.Id).Job!=null,"new contract not persistent");});
+        check("new contracts cannot be consumed by a v0.4 directory scan",()=>{var f=new Fixture(root);var m=f.Submit();Assert(File.Exists(Path.Combine(f.Store.Root,"jobs-v3",m.Id+".dpapi"))&&!File.Exists(Path.Combine(f.Store.Root,"messages",m.Id+".dpapi")),"legacy pump can consume new jobs");Assert(new RelayStore(f.Store.Root).Message(m.Id).Job!=null,"new contract not persistent");});
         check("manual worker stop survives automatic ensure",()=>{var f=new Fixture(root);RelayWorker.Stop(f.Store);RelayWorker.Ensure(f.Store);Assert(RelayWorker.Paused(new RelayStore(f.Store.Root))&&!RelayWorker.Running(f.Store),"automatic restart ignored manual stop");});
         check("configured chat reuse preserves destination and avoids a second creation",()=>{var f=new Fixture(root);f.Policy.Agents[0].ReuseConversation=true;f.Save();var s=f.Spec();s.To="target";var first=f.Run(f.Submit(s));var next=f.Spec();next.To="target";var second=f.Run(f.Submit(next));Assert(first.TargetThreadId==second.TargetThreadId&&f.Adapter.Created==1&&f.Adapter.WorkSent==2&&second.Outcome=="succeeded","ready chat not reused");});
         check("automatic explicit target still respects configured rule destinations",()=>{var f=new Fixture(root);f.Policy.Projects[0].Delegation="rules";f.Policy.Rules.Add(new RelayRule{Id="only-other",Project="sample",Targets="other"});f.Save();var s=f.Spec();s.ExplicitDelegation=false;s.To="target";Throws(()=>f.Submit(s));});
         check("metadata cache invalidates after another store writes and is not mutable shared state",()=>{var f=new Fixture(root);var m=f.Submit();var summary=f.Store.Messages()[0];summary.State="forged";Assert(f.Store.Messages()[0].State=="queued","cache mutated");m.State="cancelled";new RelayStore(f.Store.Root).Save(m);Assert(f.Store.Messages()[0].State=="cancelled","stale cached state");});
-        check("relay metadata tolerates a transient Windows replacement lock",()=>{var f=new Fixture(root);var m=f.Submit();Task writing;using(var held=new FileStream(Path.Combine(f.Store.Root,"jobs",m.Id+".dpapi"),FileMode.Open,FileAccess.Read,FileShare.ReadWrite)){m.Error="updated";writing=Task.Run(()=>f.Store.Save(m));Thread.Sleep(80);}writing.GetAwaiter().GetResult();Assert(f.Store.Message(m.Id).Error=="updated","metadata update lost");});
+        check("relay metadata tolerates a transient Windows replacement lock",()=>{var f=new Fixture(root);var m=f.Submit();Task writing;using(var held=new FileStream(Path.Combine(f.Store.Root,"jobs-v3",m.Id+".dpapi"),FileMode.Open,FileAccess.Read,FileShare.ReadWrite)){m.Error="updated";writing=Task.Run(()=>f.Store.Save(m));Thread.Sleep(80);}writing.GetAwaiter().GetResult();Assert(f.Store.Message(m.Id).Error=="updated","metadata update lost");});
         check("uncertain reconciliation is bounded and spaced",()=>{var m=new RelayMessage{State="uncertain",ReconcileAttempts=1,ReconcileAfterUtc=DateTime.UtcNow.AddMinutes(1).ToString("o")};Assert(!RelayEngine.ReconcileDue(m),"busy reconciliation");m.ReconcileAfterUtc=null;Assert(RelayEngine.ReconcileDue(m),"due reconciliation missed");m.ReconcileAttempts=3;Assert(!RelayEngine.ReconcileDue(m),"unbounded reconciliation");});
         check("private owner low quota waits without redirecting to an unauthorized account",()=>{var f=new Fixture(root);f.Policy.Resources.Add(new RelayResource{Id="private",Project="sample",Channels="target",Capabilities="private-db"});f.Save();var s=f.Spec();s.Resource="private";var m=new RelayRouter(f.Store,f.Adapter,a=>a=="target"?0:100).Submit(s,"source-chat",CancellationToken.None).GetAwaiter().GetResult();Assert(m.TargetChannelId=="target"&&m.RoutingReason.Contains("quota"),"owner bypassed");f.Policy.Agents[0].AllowUnknownQuota=false;f.Save();m=f.Run(m);Assert(m.State=="queued"&&m.BlockReason=="quota"&&f.Adapter.Created==0,"missing quota dispatched");});
         check("rechecking a delivered failure never repeats the return",()=>{var f=new Fixture(root);var s=f.Spec();s.To="target";f.Adapter.Final="CREEZIO_OUTCOME {\"status\":\"failed\"}";var m=f.Run(f.Submit(s));m.State="failed";f.Store.Save(m);f.Store.Recheck(m.Id);m=f.Run(m);Assert(f.Adapter.Returned==1&&m.ReturnState=="delivered","duplicate failure return");});
@@ -67,8 +69,8 @@ internal static class GeneralRelayTests
         check("agent discovery excludes resources of projects unavailable to the source",()=>{var f=new Fixture(root);f.Policy.Projects[0].SourceChannels="other";f.Policy.Resources.Add(new RelayResource{Id="private",Project="sample",Channels="target"});f.Save();var view=Obj(new RelayRouter(f.Store,f.Adapter,a=>50).Describe("source"));Assert(!RelayEngine.Rows(Json.Get(view,"projects")).Any()&&!RelayEngine.Rows(Json.Get(view,"resources")).Any(),"out of scope resource metadata exposed");});
         check("queued cancellation is durable and returns its outcome",()=>{var f=new Fixture(root);var m=f.Submit();f.Store.RequestCancel(m.Id);m=f.Run(m);Assert(m.State=="cancelled"&&m.ReturnState=="delivered"&&f.Adapter.Created==0,"cancelled work ran");});
         check("running cancellation never falsely claims a stopped turn",()=>{var f=new Fixture(root);var m=f.Submit();m.State="waiting";f.Store.Save(m);f.Store.RequestCancel(m.Id);m=f.Store.Message(m.Id);Assert(m.State=="waiting"&&m.CancellationRequested,"cancellation falsely completed");});
-        check("configurable relay preserves encrypted policy and explicit default",()=>{var f=new Fixture(root);Assert(RelayPolicies.Load(f.Store).Projects[0].Delegation=="explicit","automatic delegation default");Assert(!System.Text.Encoding.UTF8.GetString(File.ReadAllBytes(Path.Combine(f.Store.Root,"policy.dpapi"))).Contains("private-db"),"policy leaked");});
-        check("unknown policy version is preserved and rejected",()=>{var f=new Fixture(root);f.Store.WriteRecord("policy.dpapi",new RelayPolicy{Version=999});Throws(()=>RelayPolicies.Load(f.Store));Assert(File.Exists(Path.Combine(f.Store.Root,"policy.dpapi")),"policy deleted");});
+        check("configurable relay preserves encrypted policy and explicit default",()=>{var f=new Fixture(root);Assert(RelayPolicies.Load(f.Store).Projects[0].Delegation=="explicit","automatic delegation default");Assert(!System.Text.Encoding.UTF8.GetString(File.ReadAllBytes(Path.Combine(f.Store.Root,"policy-v2.dpapi"))).Contains("private-db"),"policy leaked");});
+        check("unknown policy version is preserved and rejected",()=>{var f=new Fixture(root);f.Store.WriteRecord("policy-v2.dpapi",new RelayPolicy{Version=999});Throws(()=>RelayPolicies.Load(f.Store));Assert(File.Exists(Path.Combine(f.Store.Root,"policy-v2.dpapi")),"policy deleted");});
         check("generic task contains no provider-specific publishing instruction",()=>{var f=new Fixture(root);var m=f.Submit();string text=RelayEngine.Envelope(m,f.Store.Channel("source"));Assert(!text.Contains("Sites")&&!text.Contains("project_id"),"provider hardcoded");});
         check("automatic delegation requires a configured project rule",()=>{var f=new Fixture(root);var s=f.Spec();s.ExplicitDelegation=false;Throws(()=>f.Submit(s));f.Policy.Projects[0].Delegation="rules";f.Policy.Rules.Add(new RelayRule{Id="review",Project="sample",Task="general",Targets="target"});f.Save();Assert(f.Submit(s).TargetChannelId=="target","configured delegation failed");});
         check("private resource routes only to its configured owner",()=>{var f=new Fixture(root);f.Policy.Resources.Add(new RelayResource{Id="private",Project="sample",Channels="target",Capabilities="private-db"});f.Save();var s=f.Spec();s.Resource="private";Assert(f.Submit(s).TargetChannelId=="target","wrong owner");s.Id=null;s.To="other";Throws(()=>f.Submit(s));});

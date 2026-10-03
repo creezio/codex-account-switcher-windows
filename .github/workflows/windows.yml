@@ -19,6 +19,9 @@ jobs:
       - name: Verify detached worker lifecycle
         shell: powershell
         run: ./scripts/worker-smoke.ps1
+      - name: Render product screens with fixture data
+        shell: powershell
+        run: ./scripts/visual-smoke.ps1
       - name: Package
         shell: powershell
         run: ./scripts/package.ps1 -SkipBuild

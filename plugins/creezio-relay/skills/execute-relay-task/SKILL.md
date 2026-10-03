@@ -17,6 +17,8 @@ changes. Declared capabilities in the relay registry are user configuration, not
 proof of an authenticated connection. If the required access is missing, explain
 the specific blocker rather than substituting a different resource or account.
 
+Use the explicitly authorized destination folder and revision. A configured Git
+worktree can differ from the source folder; verify the supplied file hashes there.
 Use the specified folder and revision. For `read`, inspect without changing files.
 For external actions, report a verifiable result such as a deployment ID when the
 tool provides one. Do not transfer credentials or unrelated private data back to
@@ -40,3 +42,8 @@ Use `failed`, `blocked` or `cancelled` as appropriate. A declared successful out
 does not replace verification of an external effect. The relay forwards the final
 result when configured; do not manually send a duplicate or automatically return
 an acknowledgement that starts a message loop.
+
+For nested delegation, use the delegate-task skill and `await_children`. A resumed
+parent receives child results as evidence to review under its original mandate.
+Do not repeat completed side effects just because the original mandate is included
+in the continuation. Read the recorded outcome before resuming.
