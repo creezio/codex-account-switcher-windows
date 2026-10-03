@@ -22,8 +22,9 @@ internal static class InstanceSmoke
         var service=new AccountService(Path.GetFullPath(root));service.Settings.AutoResetCredits=false;
         string auth=Path.Combine(CodexEnvironment.DefaultHome(),"auth.json"),config=Path.Combine(CodexEnvironment.DefaultHome(),"config.toml");
         string beforeAuth=Fingerprint(auth),beforeConfig=Fingerprint(config);
-        var primary=Process.GetProcessesByName("ChatGPT").Where(p=>p.MainWindowHandle!=IntPtr.Zero).Select(p=>new {p.Id,Ticks=p.StartTime.ToUniversalTime().Ticks}).ToArray();
+        var primary=Process.GetProcesses().Where(p=>p.ProcessName.Equals("ChatGPT",StringComparison.OrdinalIgnoreCase)||p.ProcessName.Equals("Codex",StringComparison.OrdinalIgnoreCase)).Select(p=>new {p.Id,Ticks=p.StartTime.ToUniversalTime().Ticks}).ToArray();
         var instance=service.Data.Instances.FirstOrDefault(i=>!i.IsLocal && i.Name=="Validation multi-instance") ?? service.Instances.Create("Validation multi-instance");
+        if(service.Instances.Runtime.Probe(instance).Running)throw new InvalidOperationException("L'instance de recette est déjà active. Elle est conservée sans intervention.");
         Profile account=null;
         if(authPath!=null) {account=service.Import(SafeFiles.ReadText(authPath),"Compte de validation");if(service.Instances.ActiveKey(instance)!=account.Key)service.Instances.Configure(instance,account);else{service.Instances.SyncFreshAuth(account);service.Save();}}
         try {

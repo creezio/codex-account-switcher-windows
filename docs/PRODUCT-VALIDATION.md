@@ -1,4 +1,6 @@
-﻿# Version 0.6.0-beta.1 — parcours et qualification
+# Version 0.6.0-beta.1 — parcours et qualification
+
+Historique de qualification. Pour la nouvelle interface, voir [la recette 0.7](UI-VALIDATION.md).
 
 ## Parcours disponible
 

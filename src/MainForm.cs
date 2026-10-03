@@ -37,6 +37,8 @@ namespace Creezio.Switcher
         private System.Windows.Forms.Timer instanceTimer;
         private string instanceFingerprint;
         private Button instanceNav,accountNav;
+        private readonly Dictionary<string,Button> navigation=new Dictionary<string,Button>();
+        internal string CurrentSection {get;private set;}
         private RelayStore relayStore;
         private bool polling;
         private Panel contentHost;
@@ -48,7 +50,7 @@ namespace Creezio.Switcher
             if((uint)message.Msg==SingleWindow.ActivateMessage){Show();WindowState=FormWindowState.Normal;Activate();}
             base.WndProc(ref message);
         }
-        public MainForm(AccountService accounts,bool isDemo)
+        public MainForm(AccountService accounts,bool isDemo,RelayStore isolatedStore=null)
         {
             service=accounts; demo=isDemo;
             Text="Codex Account Switcher · Creezio"; ClientSize=new Size(1240,870); MinimumSize=new Size(900,640);
@@ -59,7 +61,7 @@ namespace Creezio.Switcher
             var brand=LabelAt("creezio",26,32,180,45,27,FontStyle.Bold,Color.White); sidebar.Controls.Add(brand);
             sidebar.Controls.Add(LabelAt("CODEX\nPOUR WINDOWS",27,88,182,42,8,FontStyle.Bold,Color.FromArgb(171,201,183)));
             var intro=LabelAt("Vos comptes.\nVotre espace.",27,148,179,63,10,FontStyle.Regular,Color.FromArgb(216,231,220)); intro.AutoEllipsis=false; sidebar.Controls.Add(intro);
-            sidebar.Controls.Add(SideButton("Vue d'ensemble",205,delegate{if(!demo)Embed(new OverviewForm(service,relayStore,OpenSection));return Task.FromResult(0);}));
+            sidebar.Controls.Add(SideButton("Vue d'ensemble",205,delegate{OpenSection("Vue d'ensemble");return Task.FromResult(0);}));
             instanceNav=SideButton("Instances",247,async delegate {if(!CloseEmbedded())return;instancesView=true;BuildToolbar();await Task.FromResult(0);});sidebar.Controls.Add(instanceNav);
             accountNav=SideButton("Comptes",289,async delegate {if(!CloseEmbedded())return;instancesView=false;BuildToolbar();await Task.FromResult(0);});sidebar.Controls.Add(accountNav);
             sidebar.Controls.Add(SideButton("Agents",331,delegate{OpenSection("Agents");return Task.FromResult(0);}));
@@ -95,7 +97,7 @@ namespace Creezio.Switcher
             }
             else
             {
-                relayStore=new RelayStore(RelayStore.DefaultRoot);
+                relayStore=isolatedStore??new RelayStore(RelayStore.DefaultRoot);
                 try{if(RelayPolicies.Load(relayStore).KeepWorkerRunning||relayStore.Messages().Any(m=>m.State=="queued"||m.State=="waiting"||RelayEngine.PendingReturn(m)))RelayWorker.Ensure(relayStore);}catch(Exception e){status.Text="Relais : "+Program.SafeError(e);}
                 var menu=new ContextMenuStrip();
                 menu.Items.Add("Ouvrir",null,delegate { Show(); WindowState=FormWindowState.Normal; Activate(); });
@@ -123,25 +125,29 @@ namespace Creezio.Switcher
             BuildToolbar();
             Redraw();
             listSearch.TextChanged+=delegate{Redraw();};compactView.CheckedChanged+=delegate{Redraw();};
-            if(!demo)Embed(new OverviewForm(service,relayStore,OpenSection));
+            SelectSection("Instances");
+            if(!demo)OpenSection("Vue d'ensemble");
             ProductUx.Accessible(this);
         }
         private bool CloseEmbedded(){if(embedded==null)return true;embedded.Close();if(!embedded.IsDisposed)return false;embedded=null;return true;}
-        private void Embed(Form form){if(!CloseEmbedded()){form.Dispose();return;}embedded=form;form.TopLevel=false;form.FormBorderStyle=FormBorderStyle.None;form.MinimumSize=Size.Empty;form.Dock=DockStyle.Fill;contentHost.Controls.Add(form);form.BringToFront();form.Show();}
+        private bool Embed(Form form){if(!CloseEmbedded()){form.Dispose();return false;}embedded=form;form.TopLevel=false;form.FormBorderStyle=FormBorderStyle.None;form.MinimumSize=Size.Empty;form.Dock=DockStyle.Fill;contentHost.Controls.Add(form);form.BringToFront();form.Show();return true;}
+        private void SelectSection(string page){CurrentSection=page;foreach(var item in navigation){item.Value.BackColor=item.Key==page?Color.FromArgb(50,83,68):Color.FromArgb(23,48,42);item.Value.AccessibleDescription=item.Key==page?"Page actuelle":"Ouvrir "+item.Key;}}
         private void OpenSection(string page)
         {
             if(demo)return;
-            if(page=="Travaux")Embed(new RelayForm(relayStore,service));
-            else if(page=="Agents"||page=="Projets")Embed(new RelaySettingsForm(relayStore,page));
-            else if(page=="Limites")Embed(new UsageSettingsForm(relayStore,service));
-            else if(page=="Assistant")Embed(new SetupForm(service,relayStore,OpenSection));
-            else if(page=="Diagnostics")Embed(new DiagnosticsForm(service,relayStore));
-            else if(page=="Instances"||page=="Comptes"){if(!CloseEmbedded())return;instancesView=page=="Instances";BuildToolbar();Redraw();}
+            bool opened=false;
+            if(page=="Vue d'ensemble")opened=Embed(new OverviewForm(service,relayStore,OpenSection));
+            else if(page=="Travaux")opened=Embed(new RelayForm(relayStore,service));
+            else if(page=="Agents"||page=="Projets")opened=Embed(new RelaySettingsForm(relayStore,page));
+            else if(page=="Limites")opened=Embed(new UsageSettingsForm(relayStore,service));
+            else if(page=="Assistant")opened=Embed(new SetupForm(service,relayStore,OpenSection));
+            else if(page=="Diagnostics")opened=Embed(new DiagnosticsForm(service,relayStore));
+            else if(page=="Instances"||page=="Comptes"){if(!CloseEmbedded())return;instancesView=page=="Instances";BuildToolbar();Redraw();opened=true;}
+            if(opened)SelectSection(page=="Limites"?"Limites et resets":page=="Assistant"?"Premiers pas":page);
         }
         private void BuildToolbar()
         {
-            instanceNav.BackColor=instancesView?Color.FromArgb(50,83,68):Color.FromArgb(23,48,42);
-            accountNav.BackColor=!instancesView?Color.FromArgb(50,83,68):Color.FromArgb(23,48,42);
+            if(embedded==null)SelectSection(instancesView?"Instances":"Comptes");
             toolbar.Controls.Remove(cancel);
             toolbar.Controls.Remove(listSearch);toolbar.Controls.Remove(compactView);
             foreach(Control control in toolbar.Controls.Cast<Control>().ToArray()) control.Dispose();toolbar.Controls.Clear();
@@ -161,7 +167,10 @@ namespace Creezio.Switcher
         }
         private Button SideButton(string text,int y,Func<Task> click)
         {
-            var button=MakeButton(text,click,false); button.AutoSize=false; button.SetBounds(22,y,183,37); button.BackColor=Color.FromArgb(23,48,42); button.ForeColor=Color.FromArgb(223,235,226); button.FlatAppearance.BorderSize=0; button.TextAlign=ContentAlignment.MiddleLeft; return button;
+            var button=MakeButton(text,null,false); button.AutoSize=false; button.SetBounds(22,y,183,37); button.BackColor=Color.FromArgb(23,48,42); button.ForeColor=Color.FromArgb(223,235,226); button.FlatAppearance.BorderSize=0; button.TextAlign=ContentAlignment.MiddleLeft;
+            navigation[text]=button;
+            button.Click+=async delegate {try{await click();if(embedded==null&&text!="Paramètres"){SelectSection(instancesView?"Instances":"Comptes");Redraw();}}catch(Exception error){status.Text=Program.SafeError(error);}};
+            return button;
         }
         private Button MakeButton(string text,Func<Task> action,bool primary)
         {

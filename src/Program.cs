@@ -5,8 +5,13 @@ using System.Threading;
 using System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("Creezio Codex Account Switcher")]
+#if NETCOREAPP
+[assembly: System.Reflection.AssemblyVersion("0.7.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersion("0.7.0-beta.1")]
+#else
 [assembly: System.Reflection.AssemblyVersion("0.6.0.0")]
 [assembly: System.Reflection.AssemblyInformationalVersion("0.6.0-beta.1")]
+#endif
 [assembly: System.Reflection.AssemblyCompany("Creezio")]
 
 namespace Creezio.Switcher

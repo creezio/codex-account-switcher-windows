@@ -10,6 +10,7 @@ internal static class LiveRelaySmoke
     public sealed class Hold {public bool Active {get;set;} public bool Previous {get;set;} public string Revision {get;set;}}
     public static int Main(string[] args)
     {
+        Console.InputEncoding=new System.Text.UTF8Encoding(false);Console.OutputEncoding=new System.Text.UTF8Encoding(false);
         if(args.Length==2&&args[0]=="--instance-host")return InstanceHost.Run(args[1]);
         try{
             var input=Json.Read<object>(Console.In.ReadToEnd());string op=Json.Str(Json.Get(input,"operation"));
@@ -63,6 +64,10 @@ internal static class LiveRelaySmoke
                 DateTime deadline=DateTime.UtcNow.AddSeconds(50);
                 do{engine.Process(message.Id,token).GetAwaiter().GetResult();message=store.Message(message.Id);if(message.State=="completed"||message.BlockReason=="permissions"||message.State=="uncertain")break;Thread.Sleep(1000);}while(DateTime.UtcNow<deadline);
                 Console.WriteLine(Json.Write(RelayCommand.MessageSummary(message,true)));
+            }else if(op=="submit"){
+                var spec=Json.Read<RelayJobSpec>(Json.Write(Json.Get(input,"job")));
+                var message=new RelayRouter(store).Submit(spec,Json.Str(Json.Get(input,"thread")),token).GetAwaiter().GetResult();
+                Console.WriteLine(Json.Write(RelayCommand.MessageSummary(message,false)));
             }else if(op=="send"){
                 var channel=store.Channel(Json.Str(Json.Get(input,"channel")));var result=new DesktopRelayTransport().Call(channel,"send_message_to_thread",new{threadId=Json.Str(Json.Get(input,"thread")),prompt=Json.Str(Json.Get(input,"prompt"))},token).GetAwaiter().GetResult();Console.WriteLine(Json.Write(result));
             }else if(op=="stop-managed"){

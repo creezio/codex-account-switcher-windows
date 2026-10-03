@@ -4,14 +4,21 @@ using System.Globalization;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+#if !NETCOREAPP
 using System.Web.Script.Serialization;
+#endif
 
 namespace Creezio.Switcher
 {
     internal static class Json
     {
+#if NETCOREAPP
+        public static string Write(object value) { return System.Text.Json.JsonSerializer.Serialize(value,Desktop.JsonCompatibility.Options); }
+        public static T Read<T>(string value) { if(value.Length>4194304)throw new InvalidOperationException("JSON trop volumineux.");return System.Text.Json.JsonSerializer.Deserialize<T>(value,Desktop.JsonCompatibility.Options); }
+#else
         public static string Write(object value) { return new JavaScriptSerializer { MaxJsonLength = 4194304 }.Serialize(value); }
         public static T Read<T>(string value) { return new JavaScriptSerializer { MaxJsonLength = 4194304 }.Deserialize<T>(value); }
+#endif
         public static Dictionary<string, object> Obj(object value) { return value as Dictionary<string, object> ?? new Dictionary<string, object>(); }
         public static object Get(object value, string key) { object result; return Obj(value).TryGetValue(key, out result) ? result : null; }
         public static string Str(object value) { return value as string ?? ""; }

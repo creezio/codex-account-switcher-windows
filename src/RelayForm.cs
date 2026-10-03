@@ -17,6 +17,9 @@ namespace Creezio.Switcher
         private readonly ComboBox filter=new ComboBox{Width=170,DropDownStyle=ComboBoxStyle.DropDownList};
         private Button cancelQueued,openStop,continueButton;
         private bool reloading;
+        private int requested;
+        private bool hasNext;
+        private Button nextPage,previousPage;
         private int page;
         private readonly System.Windows.Forms.Timer timer=new System.Windows.Forms.Timer{Interval=3000};
         public RelayForm(RelayStore data,AccountService accounts=null)
@@ -35,9 +38,9 @@ namespace Creezio.Switcher
             cancelQueued=Button(commands,"Annuler la demande en attente",delegate {var m=Selected();if(m!=null&&(m.State=="queued"||m.State=="children"))store.RequestCancel(m.Id);Reload();return System.Threading.Tasks.Task.FromResult(0);},false);
             openStop=Button(commands,"Arrêter dans Codex…",async delegate {var m=Selected();if(m==null||String.IsNullOrEmpty(m.TargetThreadId))return;store.RequestCancel(m.Id);await new DesktopRelayTransport().Call(store.Channel(m.TargetChannelId),"navigate_to_codex_page",new{threadId=m.TargetThreadId},CancellationToken.None);Reload();},false);
             Button(commands,"Classer après vérification",delegate {var m=Selected();if(m!=null && MessageBox.Show(this,"Vous avez vérifié dans Codex ce qui a réellement été exécuté ? Classer libère le canal sans renvoyer cette demande.","Résultat vérifié",MessageBoxButtons.YesNo,MessageBoxIcon.Question)==DialogResult.Yes)store.CloseReviewed(m.Id);Reload();return System.Threading.Tasks.Task.FromResult(0);},false);
-            Button(commands,"Précédents",delegate{page=Math.Max(0,page-1);Reload();return System.Threading.Tasks.Task.FromResult(0);},false);
+            previousPage=Button(commands,"Précédents",delegate{page=Math.Max(0,page-1);Reload();return System.Threading.Tasks.Task.FromResult(0);},false);
             Button(commands,"Actualiser l'historique",async delegate{await System.Threading.Tasks.Task.Run(()=>store.RebuildCatalog());Reload();},false);
-            Button(commands,"Suivants",delegate{if((page+1)*100<store.Messages().Count)page++;Reload();return System.Threading.Tasks.Task.FromResult(0);},false);
+            nextPage=Button(commands,"Suivants",delegate{if(hasNext)page++;Reload();return System.Threading.Tasks.Task.FromResult(0);},false);
             commands.Controls.Add(new Label{Text="Recherche",AutoSize=true,Margin=new Padding(5,8,0,0)});commands.Controls.Add(search);filter.Items.AddRange(new[]{"Tous","À traiter","En cours","Terminés"});filter.SelectedIndex=0;commands.Controls.Add(filter);search.TextChanged+=delegate{page=0;Reload();};filter.SelectedIndexChanged+=delegate{page=0;Reload();};
             var split=new SplitContainer{Size=new Size(1000,500),Dock=DockStyle.Fill,Orientation=Orientation.Horizontal,SplitterDistance=250};inbox.Controls.Add(split);split.BringToFront();
             messages.Dock=DockStyle.Fill;messages.View=View.Details;messages.FullRowSelect=true;messages.MultiSelect=false;messages.HideSelection=false;
@@ -56,7 +59,7 @@ namespace Creezio.Switcher
             Button(workerCommands,"Terminer puis arrêter",delegate{RelayDispatch.Set(store,"drain");RelayWorker.Resume(store);Reload();return System.Threading.Tasks.Task.FromResult(0);},false);
             Button(workerCommands,"Arrêter le suivi du relais",delegate{RelayWorker.Stop(store);Reload();return System.Threading.Tasks.Task.FromResult(0);},false);
             status.Text="";status.Dock=DockStyle.Bottom;status.Height=43;status.Padding=new Padding(12,10,0,0);status.ForeColor=MainForm.Muted;Controls.Add(status);
-            timer.Tick+=delegate{Reload();};timer.Start();FormClosed+=delegate{timer.Dispose();};Reload();
+            timer.Tick+=delegate{if(!reloading)Reload();};timer.Start();FormClosed+=delegate{timer.Dispose();};Reload();
         }
         private Button Button(Control parent,string text,Func<System.Threading.Tasks.Task> action,bool primary)
         {
@@ -70,12 +73,17 @@ namespace Creezio.Switcher
         }
         private async void Reload()
         {
-            if(reloading||IsDisposed)return;reloading=true;
+            requested++;if(reloading||IsDisposed)return;reloading=true;
             try {
+                int version;
+                do {
+                version=requested;
                 string query=search.Text;int filterIndex=filter.SelectedIndex,offset=page*100;
-                var rows=await System.Threading.Tasks.Task.Run(()=>store.Query(m=>Filter(new[]{m},query,filterIndex).Any(),offset,100));
+                var rows=await System.Threading.Tasks.Task.Run(()=>store.Query(m=>Filter(new[]{m},query,filterIndex).Any(),offset,101));
                 var connections=await System.Threading.Tasks.Task.Run(()=>store.Channels().Select(c=>{string health="Connecté";try{new DesktopRelayTransport().Verify(c);}catch{health=c.Enabled?"À reconnecter":"Désactivé";}string permission=RelayPermissions.Read(c.Home,c.AnchorThreadId);if(c.RequireFullAccess&&permission!="full-access")health="Permissions à vérifier";return new{Channel=c,Health=health,Permission=permission};}).ToArray());
                 if(IsDisposed)return;
+                if(version!=requested)continue;
+                hasNext=rows.Count>100;rows=rows.Take(100).ToList();nextPage.Enabled=hasNext;previousPage.Enabled=page>0;
                 string selected=messages.SelectedItems.Count==0?null:(string)messages.SelectedItems[0].Tag;
                 string top=messages.TopItem==null?null:(string)messages.TopItem.Tag;
                 messages.BeginUpdate();messages.Items.Clear();
@@ -86,6 +94,7 @@ namespace Creezio.Switcher
                 foreach(var connection in connections){var c=connection.Channel;string permissions=connection.Permission;var row=new ListViewItem(new[]{c.Id,c.Email,connection.Health,permissions=="full-access"?"Accès complet":permissions,c.Workspace}){Tag=c.Id};channels.Items.Add(row);row.Selected=c.Id==selected;}
                 channels.EndUpdate();
                 status.Text=(RelayWorker.Running(store)?"Moteur actif":RelayWorker.Paused(store)?"Suivi arrêté manuellement":"Moteur arrêté")+" · "+RelayDispatch.Caption(store)+" · Page "+(page+1);
+                }while(version!=requested&&!IsDisposed);
             }catch(Exception e){if(!IsDisposed)status.Text=Program.SafeError(e);}finally{reloading=false;}
         }
         private void ShowMessage()

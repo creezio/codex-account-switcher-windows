@@ -3,8 +3,8 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.6.0 — bêta de configuration et supervision.** Windows 10/11, interface en
-français, exécutable portable sans droits administrateur ni dépendances NuGet.
+**Version 0.7.0-beta.1 — nouvelle interface WPF.** Windows 10/11 x64, interface en
+français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
 · [Versions et téléchargements](https://github.com/creezio/codex-account-switcher-windows/releases)
@@ -25,7 +25,17 @@ et [état détaillé de l'implémentation](docs/IMPLEMENTATION.md).
 
 ![Relais avec des données fictives](assets/relay.png)
 
-## Nouveautés 0.6
+## Nouveautés 0.7
+
+Navigation synchronisée avec la page affichée, thèmes clair/sombre/système,
+listes avec fiches détaillées, actions regroupées et réglages protégés contre
+la perte de brouillons. Recherche réactive, pagination filtrée et erreurs visibles.
+L'accueil signale les interventions requises. Les outils de configuration,
+modèles, espaces Git et diagnostics sont intégrés à la nouvelle interface.
+
+[Réalisation, migration et tests 0.7](docs/UI-VALIDATION.md).
+
+## Fonctions introduites en 0.6
 
 Vue d'ensemble, premiers pas, configuration guidée, modèles facultatifs et
 simulation sans envoi. Recherche et filtres des travaux, pause des départs,
@@ -57,7 +67,7 @@ expurgé et vérification des versions publiées.
 - Coffre chiffré avec Windows DPAPI, lié à votre utilisateur Windows.
 - Quotas par compte et par catégorie : pourcentage restant, durée et date de
   réinitialisation. Une donnée inconnue reste inconnue.
-- Suggestion du compte disposant de la meilleure marge parmi les valeurs récentes.
+- Comparaison des marges d'utilisation récentes depuis les fiches de comptes.
 - Bascule manuelle avec vérification serveur préalable, sauvegarde chiffrée,
   remplacement atomique et restauration en cas d'échec local.
 - Icône près de l'horloge, actualisation automatique facultative toutes les
@@ -72,12 +82,14 @@ expurgé et vérification des versions publiées.
 
 1. Téléchargez le ZIP depuis [Releases](https://github.com/creezio/codex-account-switcher-windows/releases).
 2. Décompressez-le dans un dossier de votre choix.
-3. Lancez **CodexAccountSwitcher.exe**. Conservez les deux exécutables, leurs fichiers `.exe.config` et le dossier `plugins` ensemble.
+3. Lancez **CodexAccountSwitcher.exe**. Conservez **tout le contenu du ZIP**, dont les DLL du runtime, fichiers JSON et le dossier `plugins`.
 4. Pour une mise à jour, quittez d'abord l'ancien switcher via son icône près de
-   l'horloge : fermer sa fenêtre le réduit seulement. Réinstallez l'intégration
-   depuis le nouveau dossier sur les profils souhaités.
+   l'horloge : fermer sa fenêtre le réduit seulement. Gardez les fenêtres Codex
+   ouvertes. Les données sont relues à leur emplacement actuel. Pour déplacer
+   le chemin d'une intégration, réinstallez-la depuis le nouveau dossier.
 
-Windows 10/11 avec **.NET Framework 4.8** est requis. Le programme utilise
+Windows 10/11 x64 avec **.NET Framework 4.8** pour le relais est requis. Le runtime
+**.NET 10** de la fenêtre est fourni dans le ZIP. Le programme utilise
 **Codex CLI** : la version fournie par l'application Codex est recherchée dans le
 `PATH` et `%LOCALAPPDATA%\OpenAI\Codex\bin`. Sinon, sélectionnez votre `codex.exe`
 dans **Paramètres**. Les lanceurs npm `.cmd` ne sont pas acceptés ; sélectionnez
@@ -94,14 +106,14 @@ source, les tests et les sommes SHA-256 sont publiés pour inspection.
 
 ### Enregistrer les comptes
 
-**Importer le compte local** copie la connexion du dossier Codex configuré vers
+**Importer la session actuelle** copie la connexion du dossier Codex configuré vers
 le coffre chiffré. Le fichier actif n'est pas modifié.
 
 **Ajouter un compte** ouvre le parcours officiel de connexion dans votre
 navigateur. Choisissez le compte souhaité. Pour reconnecter un compte expiré,
 ajoutez de nouveau ce même compte : son entrée et son nom sont conservés.
 
-Cliquez sur **Actualiser** pour obtenir les quotas. Les anciennes valeurs sont
+Cliquez sur **Actualiser les limites** pour obtenir les quotas. Les anciennes valeurs sont
 conservées avec un avertissement si une requête échoue. Les recommandations
 excluent les valeurs datant de plus de dix minutes et les comptes en erreur.
 
@@ -112,14 +124,14 @@ excluent les valeurs datant de plus de dix minutes et les comptes en erreur.
 3. Dans **Comptes → Associer aux instances**, autorisez le compte pour tous les espaces
    ou cochez uniquement ceux qui doivent le proposer.
 4. Dans la carte de l'instance fermée, choisissez un compte et cliquez sur
-   **Configurer ce compte**, puis **Ouvrir**.
+   **Associer ce compte**, puis **Ouvrir l'instance**.
 5. Vous pouvez aussi ouvrir une instance vide, vous connecter dans Codex et cliquer
    sur **Importer sa connexion**. Un nouveau compte ainsi importé est associé à cet espace.
 
 Un changement de compte exige uniquement la fermeture de l'instance concernée.
 **Fermer** demande confirmation puis ferme sa fenêtre et ses processus : ses tâches
 en cours seront interrompues. Les autres instances restent ouvertes. **Archiver**
-masque un espace fermé sans supprimer ses données ; **Voir les archives** permet de le restaurer.
+masque un espace fermé sans supprimer ses données ; **Afficher / masquer les archives** permet de le restaurer.
 
 La **Session habituelle** représente le dossier Codex préexistant. Le switcher ne la
 ferme et ne la relance jamais. Sa bascule reste conservatrice : elle exige la fermeture
@@ -138,14 +150,17 @@ Chaque instance gérée possède aussi sa propre sauvegarde transactionnelle chi
 
 Fermer la fenêtre conserve l'icône de notification. Pour arrêter le programme,
 faites un clic droit sur cette icône puis **Quitter**.
-Quitter le switcher laisse les instances Codex ouvertes et arrête le suivi automatique
-des limites. Fermez les instances gérées et le switcher avant de remplacer son exécutable.
+Quitter le switcher laisse les instances Codex ouvertes. Le suivi des limites
+continue seulement si la supervision indépendante est activée dans Paramètres.
+Installez la mise à jour dans son dossier de livraison ; ne remplacez pas un
+exécutable utilisé par une instance ou un serveur MCP.
 
 ### Réinitialisation automatique des limites d'utilisation
 
 L'application lit les **crédits de réinitialisation gagnés**, distincts du solde
 de crédits d'utilisation achetés. Si une fenêtre du quota `codex` d'un compte utilisé
-atteint **1 % restant ou moins** et qu'un crédit compatible est disponible, elle
+atteint le **seuil configuré (1 % proposé)** et qu'une réinitialisation compatible
+est disponible, et si sa politique autorise l'automatisme, elle
 demande automatiquement un reset via `account/rateLimitResetCredit/consume`.
 Cela fonctionne pendant que Codex est ouvert et ne nécessite aucun changement
 de compte ni redémarrage de Codex.
@@ -156,9 +171,11 @@ de compte ni redémarrage de Codex.
 - Le contrôle démarre à l'ouverture du switcher et se répète toutes les **60
   secondes**, y compris lorsque sa fenêtre est masquée. L'actualisation de tous
   les comptes toutes les cinq minutes reste une option séparée. Il ne s'agit pas
-  d'un service Windows : quitter le switcher arrête le contrôle, et une connexion
-  réseau ou une authentification indisponible empêche un reset.
-- La mesure exacte est utilisée : 1,4 % ne déclenche pas un reset ; 1 % et 0 % oui.
+  d'un service Windows : le processus indépendant facultatif assure la continuité
+  après fermeture. Une connexion réseau ou une authentification indisponible
+  empêche un reset.
+- La mesure exacte est utilisée : avec un seuil de 1 %, 1,4 % ne déclenche pas
+  un reset ; 1 % et 0 % oui.
   Le serveur décide si la fenêtre est effectivement éligible.
 - Les crédits connus expirant le plus tôt sont prioritaires. Les crédits expirés,
   déjà utilisés ou d'un type inconnu sont exclus. Lorsque seul le nombre est
@@ -174,9 +191,10 @@ de compte ni redémarrage de Codex.
 - Si Codex répond `nothingToReset`, l'application attend que le quota change ;
   s'il répond `noCredit`, elle attend une nouvelle disponibilité.
 
-L'option est activée par défaut, y compris à la mise à jour depuis la version
-0.1.0. Une désactivation explicite est conservée entre les démarrages. Aucune
-confirmation supplémentaire n'est demandée pour chaque reset automatique.
+L'automatisme est désactivé pour une nouvelle installation. Les réglages existants
+sont conservés à la mise à jour. Chaque compte peut remplacer le choix global
+depuis sa fiche. Aucune confirmation supplémentaire n'est demandée pour chaque
+reset automatique autorisé par cette politique.
 
 ## Compatibilité et limites
 
@@ -244,13 +262,15 @@ pas déplacés ni supprimés.
 Depuis PowerShell à la racine du dépôt :
 
 ```powershell
-.\scripts\build.ps1
-.\scripts\test.ps1
+.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.7.0
+.\scripts\test.ps1 -TestDirectory work\framework-validation
+dotnet run --project tests\Core.Net10.csproj -c Release -- work\net10-validation
+.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.7.0
 ```
 
-Le compilateur C# fourni avec .NET Framework est utilisé directement. Aucun SDK
-supplémentaire ni téléchargement de dépendances n'est nécessaire. La sortie est
-réutilisée dans `build/`, les tests dans `work/`.
+La compilation de l'interface exige le SDK .NET 10 ; le moteur utilise le
+compilateur C# de .NET Framework. Les packs de runtime sont téléchargés lors
+de la première publication. Les sorties et tests réutilisent leurs dossiers.
 
 Avec Codex CLI installé, vérifiez aussi le protocole isolé :
 
@@ -278,7 +298,7 @@ de connexion que vous êtes autorisé à utiliser. Ces fichiers restent hors Git
 Pour produire le ZIP portable :
 
 ```powershell
-.\scripts\package.ps1
+.\scripts\package-desktop.ps1 -SkipBuild
 ```
 
 GitHub Actions compile l'application et exécute les tests hors ligne à chaque

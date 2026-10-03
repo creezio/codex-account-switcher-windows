@@ -123,7 +123,13 @@ namespace Creezio.Switcher
             var snapshot=await transport.Call(source,"read_thread",new {threadId=sourceThread,turnLimit=1,includeOutputs=false,maxOutputCharsPerItem=1000},token);
             if(Json.Str(Json.Get(Json.Get(snapshot,"thread"),"id"))!=sourceThread)throw new InvalidOperationException("Conversation source non reconnue.");
             using(store.Lease("submission")){
-                if(store.Exists(spec.Id)){var old=store.Message(spec.Id);if(old.SourceThreadId!=sourceThread||old.SubmissionHash!=hash)throw new InvalidOperationException("Cette clé de soumission existe avec un contenu différent.");return old;}
+                if(store.Exists(spec.Id)){
+                    var old=store.Message(spec.Id);
+                    // Framework and modern JSON serializers may escape the same text differently.
+                    // Compare the persisted contract in this runtime before rejecting a retry.
+                    bool same=old.SubmissionHash==hash||(old.Job!=null&&RelayPolicies.Fingerprint(old.Job)==hash);
+                    if(old.SourceThreadId!=sourceThread||!same)throw new InvalidOperationException("Cette clé de soumission existe avec un contenu différent.");return old;
+                }
                 var policy=RelayPolicies.Load(store);var project=policy.Projects.FirstOrDefault(x=>x.Id==spec.Project);
                 var rules=policy.Rules.Where(r=>r.Enabled&&RelayPolicies.Allows(r.Project,spec.Project??"")&&RelayPolicies.Allows(r.Task,spec.Kind)&&RelayPolicies.Allows(r.Sources,source.Id)).OrderByDescending(r=>r.Priority).ThenBy(r=>r.Id,StringComparer.Ordinal).ToList();
                 if(!spec.ExplicitDelegation&&(project==null||project.Delegation!="rules"||rules.Count==0))throw new InvalidOperationException("Ce projet exige une demande explicite de délégation.");

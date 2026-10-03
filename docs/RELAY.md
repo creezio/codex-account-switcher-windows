@@ -1,20 +1,20 @@
-﻿# Relais configurable — v0.5 beta
+# Relais configurable — interface 0.7, protocole 0.6
 
 Le relais transmet des travaux entre des chats de comptes Codex différents sur le même PC Windows. Chaque utilisateur définit ses rôles, projets, ressources et règles. Revue, tests, recherche, accès à un plugin privé et publication sont des usages possibles ; aucun n'est imposé.
 
 ## Installation et mise à jour
 
-1. Conserver les deux exécutables, leurs `.exe.config` et `plugins/` ensemble.
+1. Conserver tout le contenu du ZIP, dont les DLL du runtime .NET 10, les fichiers JSON et `plugins/`.
 2. Quitter l'ancien switcher par son icône près de l'horloge → **Quitter**. La croix réduit seulement la fenêtre. Ne pas faire fonctionner deux versions du moteur.
 3. Lancer le nouveau `CodexAccountSwitcher.exe`. Les comptes, instances et conversations restent dans leurs dossiers existants.
-4. **Travaux → Canaux connectés → Installer les skills** : sélectionner les profils souhaités. Le plugin `creezio-relay` est installé par le CLI officiel dans une marketplace locale propre au profil. Il fournit deux skills et dix outils MCP.
+4. **Agents → Installer l'intégration** : sélectionner les profils souhaités. Le plugin `creezio-relay` est installé par le CLI officiel dans une marketplace locale propre au profil. Il fournit deux skills et onze outils MCP.
 5. Après mise à jour, ouvrir un nouveau chat pour charger la nouvelle intégration. Les chats existants peuvent conserver leur ancien serveur MCP jusqu'à leur rechargement. Ne pas écraser un exécutable chargé ; utiliser le dossier de livraison, puis réinstaller l'intégration pour mettre ses chemins à jour.
 
-L'installation automatique dans les instances gérées est facultative dans **Rôles, projets et règles → Général**. La session habituelle nécessite une installation manuelle. Une intégration désactivée ou retirée dans Codex n'est pas réactivée par l'installation automatique. Le bouton d'installation explicite permet de la remettre.
+L'installation automatique dans les instances gérées est facultative dans **Paramètres → Collaboration**. La session habituelle nécessite une installation manuelle. Une intégration désactivée ou retirée dans Codex n'est pas réactivée par l'installation automatique. Le bouton d'installation explicite permet de la remettre.
 
 ## Connexion et permissions
 
-Connecter un canal par profil et dossier de projet dans **Canaux connectés → Connecter**. Coller la consigne générée dans le chat voulu. Le registre contrôle le compte, le profil, le processus, le dossier et la conversation réelle. Les profils gérés se reconnectent après redémarrage si leur identité reste identique. Une instance externe nécessite une nouvelle connexion explicite.
+Connecter un canal par profil et dossier de projet dans **Agents → Connecter une instance**. Coller la consigne générée dans le chat voulu. Le registre contrôle le compte, le profil, le processus, le dossier et la conversation réelle. Les profils gérés se reconnectent après redémarrage si leur identité reste identique. Une instance externe nécessite une nouvelle connexion explicite.
 
 **Le mode Accès complet est propre au chat.** Approuver une commande, même pour la session, ne transforme pas un chat `workspace-write / on-request` en `danger-full-access / never`. Une fenêtre ou un autre chat affichant Accès complet ne prouve pas le mode du nouveau chat créé par l'API.
 
