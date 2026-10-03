@@ -290,7 +290,7 @@ namespace Creezio.Switcher.Desktop
             split.Children.Add(right);
             List.SelectionChanged += delegate
             {
-                ShowSelected();
+                try { ShowSelected(); } catch (Exception e) { Error(e); }
             };
             Search.TextChanged += async delegate { try { await SearchChanged(); } catch (Exception e) { Error(e); } };
         }

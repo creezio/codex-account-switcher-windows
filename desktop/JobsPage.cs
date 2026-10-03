@@ -19,7 +19,7 @@ namespace Creezio.Switcher.Desktop
             Command("Nouvelle tâche", async delegate { await JobComposer.Open(Context, Shell, null); await Refresh(); }, true);
             filter = new ComboBox { ItemsSource = new[] { "Toutes", "À traiter", "En cours", "Terminées" }, SelectedIndex = 0, Width = 150, Margin = new Thickness(0, 0, 8, 6) };
             Commands.Children.Add(filter);
-            filter.SelectionChanged += async delegate { page = 0; await Refresh(); };
+            filter.SelectionChanged += async delegate { try { page = 0; await Refresh(); } catch (Exception e) { Error(e); } };
             previous = Command("Précédentes", async delegate { page = Math.Max(0, page - 1); await Refresh(); });
             next = Command("Suivantes", async delegate { if (hasNext) page++; await Refresh(); });
             var worker = new Button { Content = "Contrôle du relais" };

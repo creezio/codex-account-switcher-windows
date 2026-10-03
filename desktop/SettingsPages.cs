@@ -136,7 +136,7 @@ namespace Creezio.Switcher.Desktop
             var selected = Ui.Select("Instance", data.Instances.Select(x => x.Name), data.Instances.FirstOrDefault()?.Name, stack);
             var report = Ui.Text("", 14, true);
             stack.Children.Add(report);
-            Action status = () => { if (selected.SelectedIndex >= 0) report.Text = RelayIntegration.Status(context.Store, data.Instances[selected.SelectedIndex].Home).Status; };
+            Action status = () => { try { if (selected.SelectedIndex >= 0) report.Text = RelayIntegration.Status(context.Store, data.Instances[selected.SelectedIndex].Home).Status; } catch (Exception e) { report.Text = Program.SafeError(e); } };
             selected.SelectionChanged += delegate
             {
                 status();
