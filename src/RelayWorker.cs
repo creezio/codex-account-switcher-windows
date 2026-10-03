@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -20,7 +20,7 @@ namespace Creezio.Switcher
     }
     internal static class RelayWorker
     {
-        internal const string Version="0.6.0-beta.1";
+        internal const string Version="0.8.0-beta.1";
         public static RelayWorkerState Status(RelayStore store){var state=store.ReadRecord<RelayWorkerState>("worker.dpapi");state.Paused=Paused(store);return state;}
         public static bool Running(RelayStore store){var s=Status(store);return DesktopRuntime.SameProcess(s.Pid,s.Started);}
         public static bool Paused(RelayStore store){return store.ReadRecord<RelayWorkerState>("worker-stop.dpapi").Paused;}
@@ -62,10 +62,11 @@ namespace Creezio.Switcher
                         if(maintenance.IsFaulted)state.Error=Program.SafeError(maintenance.Exception.GetBaseException());
                         maintenance=Task.Run(async()=>{await RelayReconnect.Refresh(store,maintenanceToken.Token);await RelayQuota.RefreshWaiting(store,maintenanceToken.Token);},maintenanceToken.Token);lastConnect=DateTime.UtcNow;
                     }
-                    await engine.Pump(token);state.Error=null;
+                    await new Assistance(store).Pump(token);await engine.Pump(token);state.Error=null;
                 }catch(OperationCanceledException){throw;}catch(Exception e){state.Error=Program.SafeError(e);}
                 try{
                 bool active=store.ActiveMessages().Any(m=>m.SchemaVersion>=3&&((m.State=="queued"&&RelayDispatch.AllowsStart(store,m))||m.State=="children"||m.State=="waiting"||m.State=="sending"||m.ReturnState=="sending"||RelayEngine.PendingReturn(m)||((m.State=="uncertain"||m.ReturnState=="uncertain")&&m.ReconcileAttempts<3)));
+                active=active||new Assistance(store).List().Any(t=>t.State=="answered"||t.State=="delivering");
                 if(active)idle=DateTime.UtcNow;
                 if(!active&&RelayDispatch.Read(store).Mode=="drain"){RelayDispatch.Set(store,"paused");Stop(store);return;}
                 if(!active&&!RelayPolicies.Load(store).KeepWorkerRunning&&DateTime.UtcNow-idle>TimeSpan.FromSeconds(12))return;
@@ -79,7 +80,7 @@ namespace Creezio.Switcher
     {
         public static async Task Refresh(RelayStore store,CancellationToken token)
         {
-            foreach(var channel in store.Channels().Where(c=>c.Enabled&&!DesktopRuntime.SameProcess(c.ServerPid,c.ServerStartTicks))){
+            foreach(var channel in store.Channels().Where(c=>c.Enabled&&AgentProviders.Codex(c)&&!DesktopRuntime.SameProcess(c.ServerPid,c.ServerStartTicks))){
                 try{
                     if(!InstanceRules.ValidId(channel.InstanceId))continue;
                     string root=Path.GetDirectoryName(store.Root),home=InstancePaths.Home(root,channel.InstanceId);

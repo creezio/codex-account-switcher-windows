@@ -28,7 +28,7 @@ namespace Creezio.Switcher
             var waiting=store.ActiveMessages().Where(m=>m.SchemaVersion>=3&&m.State=="queued").Select(m=>m.TargetChannelId).Distinct().ToArray();
             if(waiting.Length==0)return;
             var service=new AccountService(Path.GetDirectoryName(store.Root));
-            foreach(var channel in store.Channels().Where(c=>waiting.Contains(c.Id)&&c.Enabled).GroupBy(c=>c.AccountKey).Select(g=>g.First())){
+            foreach(var channel in store.Channels().Where(c=>waiting.Contains(c.Id)&&c.Enabled&&AgentProviders.Codex(c)).GroupBy(c=>c.AccountKey).Select(g=>g.First())){
                 var old=store.ReadRecord<Profile>(Name(channel.AccountKey));DateTime last;if(DateTime.TryParse(old.QuotaTimeUtc,out last)&&DateTime.UtcNow-last.ToUniversalTime()<TimeSpan.FromMinutes(1))continue;
                 try{
                     if(service.Data.Profiles.Any(profile=>profile.Key==channel.AccountKey)){await UsageCoordinator.Refresh(store,channel.AccountKey,false,token);continue;}

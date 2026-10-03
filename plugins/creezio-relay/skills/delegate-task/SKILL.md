@@ -1,6 +1,6 @@
 ---
 name: delegate-task
-description: Delegate work to another locally connected Codex account using Codex Account Switcher when the user requests delegation or a configured project rule covers the current task. Also use to inspect available agents or follow an existing relay job. Local work without a matching rule does not require delegation.
+description: Delegate work to a configured local or remote Codex agent using Account Switcher when the user requests delegation or a project rule covers the task. Also inspect available agents or follow a relay job. Local work without a matching rule does not require delegation.
 ---
 
 Use the user's configured roles and rules. There is no built-in preferred account,
@@ -17,7 +17,7 @@ prompts, edit permission settings, or change executor to bypass a pending approv
    chat's command tool. Supply `-Channel` if several channels exist for this profile.
    Keep the returned session token within this conversation. Never copy another
    chat's environment variables or session. If no channel is connected, explain the
-   switcher's **Travaux → Canaux → Connecter** step.
+   switcher's **Agents → Connecter** step.
 2. Call `list_agents` with the session. Read the applicable project, roles,
    resources and rules. An `explicit` project requires a user request to delegate.
    A `rules` project permits delegation only within a matching configured rule and
@@ -37,9 +37,11 @@ prompts, edit permission settings, or change executor to bypass a pending approv
 
 Use `ReplyTo` to continue a completed exchange. Use `Parent` only for a relay job
 assigned to this chat, within its configured depth and task limits. For parallel
-writers, use distinct configured workspaces; the same folder contains the same
-files for every instance. Do not create copies or install dependencies just to
-increase parallelism.
+writers, use distinct configured workspaces. Instances on the same PC can share
+files when configured to the same folder. Remote PCs do not share or synchronize
+files automatically, even when folder names match. Verify the prepared revision
+on the destination. Do not create copies or install dependencies just to increase
+parallelism. Cursor IDE is not supported by this version.
 
 When delegating from a running parent task, submit children with `Parent` set to
 that task ID and `ReturnToSource=false`. Call `await_children` for the parent,

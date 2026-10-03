@@ -39,7 +39,7 @@ namespace Creezio.Switcher
             if(session.Token!=token||!DateTime.TryParse(session.Expires,out expiry)||expiry.ToUniversalTime()<DateTime.UtcNow||!RelayStore.SamePath(session.Home,expectedHome))throw new InvalidOperationException("Session expirée ou appartenant à une autre instance.");
             var channel=store.Channel(session.Channel);
             if(channel.AccountKey!=session.Account||!RelayStore.SamePath(channel.Home,session.Home)||!channel.Enabled)throw new InvalidOperationException("Le compte ou le canal de cette session a changé.");
-            if(verifyLive)new DesktopRelayTransport().Verify(channel);return session;
+            if(verifyLive)AgentProviders.Create(store).Verify(channel);return session;
         }
         public static RelayMessage Authorize(RelayStore store,RelaySession session,string id,bool originOnly)
         {

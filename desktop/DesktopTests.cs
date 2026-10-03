@@ -57,6 +57,7 @@ namespace Creezio.Switcher.Desktop
                 context.Store.Register(new RelayChannel { Id = id, Name = id, AccountKey = id, Home = dataRoot, Workspace = dataRoot, Email = id + "@example.com", Enabled = true, AnchorThreadId = "fixture" });
             policy.Agents.Add(new RelayAgent { Channel = "revue", Description = "Relecture et validation", Capabilities = "review,test" });
             RelayPolicies.Save(context.Store, policy);
+            context.Store.WriteRecord("assistance-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.dpapi",new AssistanceTicket{Id="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",Channel="developpement",Thread="fixture",Title="Préciser le périmètre avant modification",Reason="La demande contient deux interprétations possibles. Quelle option faut-il retenir ?",Context="Données fictives de recette. Le responsable doit préciser les écrans concernés.",State="pending",Created=DateTime.UtcNow.ToString("o")});
             for (int n = 0; n < 57; n++)
             {
                 string id = n.ToString("x32");
@@ -78,6 +79,23 @@ namespace Creezio.Switcher.Desktop
                         assert(shell.CurrentPage == page && Object.Equals(shell.Navigation.SelectedItem, page), "page active et sidebar : " + page);
                         Capture(shell, Path.Combine(root, page + ".png"));
                     }
+                    shell.Navigate("Comptes");
+                    var assistance=(AssistancePage)shell.Pages["Assistance"];
+                    shell.Navigate("Assistance");await assistance.Refresh();shell.UpdateLayout();
+                    assert(assistance.List.Items.Count==1&&Descendants(assistance).OfType<Button>().Any(b=>Object.Equals(b.Content,"Répondre au chat")),"assistance affiche la demande et son action de réponse");
+                    Exception composerError=null;
+                    var inspectComposer=shell.Dispatcher.BeginInvoke(new Action(()=>{
+                        var form=Application.Current.Windows.OfType<EditWindow>().Single(w=>w.Title=="Envoyer un message");
+                        try{
+                            var inputs=Descendants(form).OfType<TextBox>().ToArray();var chat=inputs.Single(t=>System.Windows.Automation.AutomationProperties.GetName(t).StartsWith("Identifiant du chat"));
+                            assert(!chat.IsEnabled,"nouveau chat ne demande pas d'identifiant existant");
+                            var mode=Descendants(form).OfType<ComboBox>().Single(c=>System.Windows.Automation.AutomationProperties.GetName(c)=="Conversation");mode.SelectedIndex=1;
+                            assert(chat.IsEnabled,"ciblage active l'identifiant du chat");
+                            inputs.Single(t=>System.Windows.Automation.AutomationProperties.GetName(t)=="Message").Text="Brouillon conservé pendant la saisie";
+                            assert(form.Dirty(),"composeur détecte le brouillon");Capture(form,Path.Combine(root,"compose-message.png"));
+                        }catch(Exception e){composerError=e;}finally{form.ConfirmDiscard=()=>true;form.Close();}
+                    }),DispatcherPriority.ApplicationIdle);
+                    await DirectComposer.Open(context,shell,null);await inspectComposer;if(composerError!=null)throw composerError;
                     shell.Navigate("Comptes");
                     await shell.Pages["Comptes"].Refresh();
                     var accounts = (AccountsPage)shell.Pages["Comptes"];

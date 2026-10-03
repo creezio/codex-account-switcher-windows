@@ -16,7 +16,8 @@ namespace Creezio.Switcher.Desktop
         private readonly Button previous, next;
         public JobsPage(DesktopContext c, ShellWindow s) : base(c, s, "Tâches", "Suivez les demandes, leurs résultats et les interventions nécessaires.")
         {
-            Command("Nouvelle tâche", async delegate { await JobComposer.Open(Context, Shell, null); await Refresh(); }, true);
+            Command("Envoyer un message", async delegate { await DirectComposer.Open(Context, Shell, null); await Refresh(); }, true);
+            Command("Déléguer depuis un agent", async delegate { await JobComposer.Open(Context, Shell, null); await Refresh(); });
             filter = new ComboBox { ItemsSource = new[] { "Toutes", "À traiter", "En cours", "Terminées" }, SelectedIndex = 0, Width = 150, Margin = new Thickness(0, 0, 8, 6) };
             Commands.Children.Add(filter);
             filter.SelectionChanged += async delegate { try { page = 0; await Refresh(); } catch (Exception e) { Error(e); } };
@@ -56,7 +57,7 @@ namespace Creezio.Switcher.Desktop
             hasNext = rows.Count > 50;
             previous.IsEnabled = page > 0;
             next.IsEnabled = hasNext;
-            Rows(rows.Take(50).Select(m => new ItemRow { Id = m.Id, Revision = m.UpdatedUtc, Title = m.Title, Summary = m.SourceChannelId + " → " + m.TargetChannelId, State = ProductUx.JobState(m) + " · " + RelayForm.State(m.ReturnState), Value = m }), false);
+            Rows(rows.Take(50).Select(m => new ItemRow { Id = m.Id, Revision = m.UpdatedUtc, Title = m.Title, Summary = (m.OperatorOrigin ? "Moi" : m.SourceChannelId) + " → " + m.TargetChannelId, State = ProductUx.JobState(m) + " · " + RelayForm.State(m.ReturnState), Value = m }), false);
             Notice.Text = "Page " + (page + 1) + " · " + RelayDispatch.Caption(Context.Store);
         }
         protected override async void ShowSelected()
@@ -79,13 +80,13 @@ namespace Creezio.Switcher.Desktop
                 Details.Children.Add(Ui.Card(resolution));
                 var actions = Ui.Actions(Details);
                 if (!String.IsNullOrEmpty(m.TargetThreadId))
-                    actions.Children.Add(Ui.AsyncButton("Ouvrir dans Codex", async delegate { await new DesktopRelayTransport().Call(Context.Store.Channel(m.TargetChannelId), "navigate_to_codex_page", new { threadId = m.TargetThreadId }, CancellationToken.None); }, Error, true));
+                    actions.Children.Add(Ui.AsyncButton("Ouvrir dans Codex", async delegate { await AgentProviders.Create(Context.Store).Call(Context.Store.Channel(m.TargetChannelId), "navigate_to_codex_page", new { threadId = m.TargetThreadId }, CancellationToken.None); }, Error, true));
                 if (m.State == "completed")
-                    actions.Children.Add(Ui.AsyncButton("Continuer l'échange", async delegate { await JobComposer.Open(Context, Shell, m); await Refresh(); }, Error));
+                    actions.Children.Add(Ui.AsyncButton("Continuer l'échange", async delegate { if (m.OperatorOrigin) await DirectComposer.Open(Context, Shell, m); else await JobComposer.Open(Context, Shell, m); await Refresh(); }, Error));
                 if (m.State == "queued" || m.State == "children")
                     actions.Children.Add(Ui.AsyncButton("Annuler la demande", async delegate { Context.Store.RequestCancel(m.Id); await Refresh(); }, Error));
                 if (m.State == "waiting" && !String.IsNullOrEmpty(m.TargetThreadId))
-                    actions.Children.Add(Ui.AsyncButton("Arrêter dans Codex…", async delegate { Context.Store.RequestCancel(m.Id); await new DesktopRelayTransport().Call(Context.Store.Channel(m.TargetChannelId), "navigate_to_codex_page", new { threadId = m.TargetThreadId }, CancellationToken.None); Notice.Text = "Utilisez Arrêter dans le chat Codex ouvert."; }, Error));
+                    actions.Children.Add(Ui.AsyncButton("Arrêter dans Codex…", async delegate { Context.Store.RequestCancel(m.Id); await AgentProviders.Create(Context.Store).Call(Context.Store.Channel(m.TargetChannelId), "navigate_to_codex_page", new { threadId = m.TargetThreadId }, CancellationToken.None); Notice.Text = "Utilisez Arrêter dans le chat Codex ouvert."; }, Error));
                 if (m.State == "uncertain" || m.ReturnState == "uncertain" || m.State == "attention")
                     actions.Children.Add(Ui.AsyncButton("Vérifier le résultat", async delegate { Context.Store.Recheck(m.Id); RelayWorker.Ensure(Context.Store); await Refresh(); }, Error));
                 Details.Children.Add(Ui.Text("Résultat", 18));

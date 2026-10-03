@@ -56,7 +56,7 @@ namespace Creezio.Switcher.Desktop
             side.Children.Add(brand);
             var footer = new StackPanel { Margin = new Thickness(8, 14, 0, 0) };
             footer.Children.Add(status);
-            footer.Children.Add(Ui.Text("0.7 · Interface WPF", 11, true));
+            footer.Children.Add(Ui.Text("0.8 bêta · Interface WPF", 11, true));
             DockPanel.SetDock(footer, Dock.Bottom);
             side.Children.Add(footer);
             side.Children.Add(Navigation);
@@ -68,6 +68,8 @@ namespace Creezio.Switcher.Desktop
             Pages.Add("Agents", new ConfigurationPage(context, this, true));
             Pages.Add("Projets", new ConfigurationPage(context, this, false));
             Pages.Add("Tâches", new JobsPage(context, this));
+            Pages.Add("PC distants", new RemotePage(context, this));
+            Pages.Add("Assistance", new AssistancePage(context, this));
             Pages.Add("Paramètres", new PreferencesPage(context, this));
             Navigation.ItemsSource = Pages.Keys.ToArray();
             System.Windows.Automation.AutomationProperties.SetName(Navigation, "Navigation principale");
@@ -186,6 +188,10 @@ namespace Creezio.Switcher.Desktop
             try
             {
                 await context.Supervise();
+                var assistance=(AssistancePage)Pages["Assistance"];
+                await assistance.FetchRemote();
+                if(!context.Fixture&&await context.Read(a=>a.Settings.Notifications))foreach(var entry in assistance.Entries().Where(e=>e.Ticket.State=="pending"))
+                    if(notified.Add("assistance:"+(entry.Remote?.Id??"local")+":"+entry.Ticket.Id)&&tray!=null)tray.ShowBalloonTip(6000,"Demande d'assistance",entry.Ticket.Title,System.Windows.Forms.ToolTipIcon.Info);
                 var low = await context.Read(a => a.Settings.Notifications ? a.Data.Profiles.Where(p => p.IsFresh && p.Score.HasValue && p.Score <= 10 && UsageCoordinator.For(context.Store, p.Key).Notifications).Select(p => new { p.Key, p.Label, p.Score }).ToArray() : null);
                 if (low != null)
                 {

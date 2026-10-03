@@ -11,6 +11,8 @@ namespace Creezio.Switcher
         private static int Main(string[] args){
             if(args.Length==2&&args[0]=="--worker")return RelayWorker.Run(args[1]);
             if(args.Length==2&&args[0]=="--usage-worker")return UsageCoordinator.Run(args[1]);
+            if(args.Length==2&&args[0]=="--remote-worker")return RemoteGateway.Run(args[1]);
+            if(args.Length==3&&args[0]=="--assistance-hook")return AssistanceHooks.Run(args[1],args[2]);
             if(args.Length==3&&args[0]=="--mcp")return RelayMcp.Run(args[1],args[2]);
             return RelayCommand.Run();
         }

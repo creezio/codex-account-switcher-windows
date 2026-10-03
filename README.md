@@ -3,7 +3,7 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.7.0-beta.1 — nouvelle interface WPF.** Windows 10/11 x64, interface en
+**Version 0.8.0-beta.1 — console Windows et assistance.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
@@ -24,6 +24,15 @@ et [état détaillé de l'implémentation](docs/IMPLEMENTATION.md).
 ![Vue d’ensemble avec des données fictives](assets/overview.png)
 
 ![Relais avec des données fictives](assets/relay.png)
+
+## Nouveautés 0.8
+
+Envoi de prompts depuis le switcher vers un chat nouveau ou existant, partage
+entre PC Windows par TLS avec invitations révocables, lecture des conversations
+autorisées et demandes d'assistance configurables avec retour au chat source.
+Les échanges utilisent les fenêtres Codex ouvertes. Aucun adaptateur Cursor CLI
+n'est livré. [Guide et limites de la bêta](docs/WINDOWS-CONSOLE.md) ·
+[Résultats de validation](docs/WINDOWS-CONSOLE-VALIDATION.md).
 
 ## Nouveautés 0.7
 
@@ -51,7 +60,7 @@ expurgé et vérification des versions publiées.
 
 - Relais local : nouvelles conversations, réponses automatiques et poursuite dans le même chat.
 - Moteur séparé de la fenêtre, file persistante et arrêt manuel conservé.
-- Plugin intégré : deux skills et onze outils MCP, installation par profil et mise à jour idempotente.
+- Plugin intégré : trois skills et quatorze outils MCP, installation par profil et mise à jour idempotente.
 - Délégation explicite par défaut ; routage selon les règles de chaque utilisateur.
 - Ressources liées à leurs canaux autorisés, limites par compte, dépendances et concurrence bornée.
 - Contrôle des permissions du nouveau chat avant transmission du travail ; réutilisation de chats terminés configurable.
@@ -262,10 +271,10 @@ pas déplacés ni supprimés.
 Depuis PowerShell à la racine du dépôt :
 
 ```powershell
-.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.7.0
+.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.8.0
 .\scripts\test.ps1 -TestDirectory work\framework-validation
 dotnet run --project tests\Core.Net10.csproj -c Release -- work\net10-validation
-.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.7.0
+.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.8.0
 ```
 
 La compilation de l'interface exige le SDK .NET 10 ; le moteur utilise le

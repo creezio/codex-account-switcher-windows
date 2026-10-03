@@ -10,7 +10,7 @@ namespace Creezio.Switcher
     {
         public const string Page="https://github.com/creezio/codex-account-switcher-windows/releases";
         #if NETCOREAPP
-        private const string InstalledVersion="0.7.0-beta.1";
+        private const string InstalledVersion="0.8.0-beta.1";
 #else
         private const string InstalledVersion=RelayWorker.Version;
 #endif

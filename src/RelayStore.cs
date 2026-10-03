@@ -11,6 +11,13 @@ namespace Creezio.Switcher
 {
     public sealed class RelayChannel
     {
+        public string Provider {get;set;}
+        public string Executable {get;set;}
+        public string PeerId {get;set;}
+        public string RemoteChannel {get;set;}
+        public string RemoteWorkspace {get;set;}
+        public string RemoteAccount {get;set;}
+        public string RemoteDevice {get;set;}
         public string Id {get;set;}
         public string Name {get;set;}
         public string Home {get;set;}
@@ -30,6 +37,11 @@ namespace Creezio.Switcher
     }
     public sealed class RelayMessage
     {
+        public bool OperatorOrigin {get;set;}
+        public string RequestedThreadId {get;set;}
+        public string TargetBinding {get;set;}
+        public string TargetExecutionWorkspace {get;set;}
+        public string TargetDevice {get;set;}
         public string Id {get;set;}
         public string SourceChannelId {get;set;}
         public string TargetChannelId {get;set;}
@@ -108,7 +120,8 @@ namespace Creezio.Switcher
             // v0.4 scans only messages/. Keep new contracts out of reach of its legacy pump.
             SafeFiles.PrivateDirectory(Path.Combine(Root,"jobs"));
             SafeFiles.PrivateDirectory(Path.Combine(Root,"jobs-v3"));
-            Directory.CreateDirectory(Path.Combine(Root,"catalog-v1"));SafeFiles.RejectLinks(Path.Combine(Root,"catalog-v1"));
+            SafeFiles.PrivateDirectory(Path.Combine(Root,"jobs-v4"));
+            Directory.CreateDirectory(Path.Combine(Root,"catalog-v2"));SafeFiles.RejectLinks(Path.Combine(Root,"catalog-v2"));
         }
         public static void ChannelId(string id)
         {if(id==null || !Regex.IsMatch(id,"^[a-z0-9][a-z0-9-]{0,47}$"))throw new InvalidOperationException("Le nom du canal doit contenir 1 à 48 lettres minuscules, chiffres ou tirets.");}
@@ -169,7 +182,7 @@ namespace Creezio.Switcher
             using(Lease("registry")) {var list=Channels();var c=list.Single(x=>x.Id==id);c.Enabled=enabled;Write(Path.Combine(Root,"channels.dpapi"),list);}
         }
         public RelayMessage Message(string id)
-        {MessageId(id);string path=Path.Combine(Root,"jobs-v3",id+".dpapi");if(!File.Exists(path))path=Path.Combine(Root,"jobs",id+".dpapi");if(!File.Exists(path))path=Path.Combine(Root,"messages",id+".dpapi");if(!File.Exists(path))throw new InvalidOperationException("Demande introuvable.");return Read<RelayMessage>(path);}
+        {MessageId(id);string path=Path.Combine(Root,"jobs-v4",id+".dpapi");if(!File.Exists(path))path=Path.Combine(Root,"jobs-v3",id+".dpapi");if(!File.Exists(path))path=Path.Combine(Root,"jobs",id+".dpapi");if(!File.Exists(path))path=Path.Combine(Root,"messages",id+".dpapi");if(!File.Exists(path))throw new InvalidOperationException("Demande introuvable.");return Read<RelayMessage>(path);}
         public List<RelayMessage> Messages()
         {
             return Query(null,0,Int32.MaxValue);
@@ -192,26 +205,28 @@ namespace Creezio.Switcher
             if(last==null||last.State!=state||last.Detail!=detail){message.Events.Add(new RelayEvent{At=message.UpdatedUtc,State=state,Detail=detail});if(message.Events.Count>200)message.Events.RemoveAt(0);}
             using(CatalogLease()){
                 var catalog=EnsureCatalog();
-                WriteRecord("catalog-dirty.dpapi",new CatalogHeader{Generation=Guid.NewGuid().ToString("N")});
-                Write(Path.Combine(Root,message.SchemaVersion>=3?"jobs-v3":message.SchemaVersion>=2?"jobs":"messages",message.Id+".dpapi"),message);
+                WriteRecord("catalog-dirty-v2.dpapi",new CatalogHeader{Generation=Guid.NewGuid().ToString("N")});
+                Write(Path.Combine(Root,message.SchemaVersion>=4?"jobs-v4":message.SchemaVersion>=3?"jobs-v3":message.SchemaVersion>=2?"jobs":"messages",message.Id+".dpapi"),message);
                 UpdateCatalog(catalog,message);
-                File.Delete(Path.Combine(Root,"catalog-dirty.dpapi"));
+                File.Delete(Path.Combine(Root,"catalog-dirty-v2.dpapi"));
             }
         }
-        public bool Exists(string id){MessageId(id);return File.Exists(Path.Combine(Root,"messages",id+".dpapi"))||File.Exists(Path.Combine(Root,"jobs",id+".dpapi"))||File.Exists(Path.Combine(Root,"jobs-v3",id+".dpapi"));}
-        public RelayMessage Enqueue(string sourceId,string sourceThread,string targetId,string title,string prompt,string revision,bool returnToSource,string replyTo,string requestedId=null,Action<RelayMessage> prepare=null)
+        public bool Exists(string id){MessageId(id);return File.Exists(Path.Combine(Root,"messages",id+".dpapi"))||File.Exists(Path.Combine(Root,"jobs",id+".dpapi"))||File.Exists(Path.Combine(Root,"jobs-v3",id+".dpapi"))||File.Exists(Path.Combine(Root,"jobs-v4",id+".dpapi"));}
+        public RelayMessage Enqueue(string sourceId,string sourceThread,string targetId,string title,string prompt,string revision,bool returnToSource,string replyTo,string requestedId=null,Action<RelayMessage> prepare=null,bool operatorOrigin=false)
         {
             replyTo=String.IsNullOrWhiteSpace(replyTo)?null:replyTo;
             if(String.IsNullOrWhiteSpace(prompt) || prompt.Length>24000)throw new InvalidOperationException("Le message doit contenir entre 1 et 24 000 caractères.");
-            if(String.IsNullOrWhiteSpace(sourceThread))throw new InvalidOperationException("Conversation source manquante.");
+            if(!operatorOrigin&&String.IsNullOrWhiteSpace(sourceThread))throw new InvalidOperationException("Conversation source manquante.");
+            if(operatorOrigin&&returnToSource)throw new InvalidOperationException("Une demande utilisateur retourne dans le switcher.");
             if(String.IsNullOrWhiteSpace(title) || title.Length>120)throw new InvalidOperationException("Choisissez un titre de 1 à 120 caractères.");
             if((revision??"").Length>160)throw new InvalidOperationException("Référence de version trop longue.");
             var source=Channel(sourceId);var target=Channel(targetId);
             if(!source.Enabled || !target.Enabled)throw new InvalidOperationException("Un des canaux est désactivé.");
-            if(source.Id==target.Id)throw new InvalidOperationException("Choisissez un autre canal destinataire.");
+            if(!operatorOrigin&&source.Id==target.Id)throw new InvalidOperationException("Choisissez un autre canal destinataire.");
             if(prepare==null&&!SamePath(source.Workspace,target.Workspace))throw new InvalidOperationException("Les canaux doivent désigner le même dossier de projet. Connectez un canal par projet.");
             var message=new RelayMessage {Id=requestedId??Guid.NewGuid().ToString("N"),SourceChannelId=source.Id,TargetChannelId=target.Id,SourceAccountKey=source.AccountKey,TargetAccountKey=target.AccountKey,SourceHome=source.Home,TargetHome=target.Home,SourceThreadId=sourceThread,Title=title,Prompt=prompt,Revision=revision??"",Workspace=source.Workspace,ReturnToSource=returnToSource,ReplyTo=replyTo,State="queued",ReturnState="none",CreatedUtc=DateTime.UtcNow.ToString("o")};
             message.NewConversation=String.IsNullOrWhiteSpace(replyTo);MessageId(message.Id);
+            message.OperatorOrigin=operatorOrigin;
             if(!String.IsNullOrWhiteSpace(replyTo)) {
                 var previous=Message(replyTo);
                 if(previous.SourceChannelId!=sourceId || previous.TargetChannelId!=targetId || previous.SourceAccountKey!=source.AccountKey || previous.TargetAccountKey!=target.AccountKey || !SamePath(previous.Workspace,message.Workspace) || String.IsNullOrEmpty(previous.TargetThreadId) || previous.State!="completed")throw new InvalidOperationException("La conversation précédente n'est pas terminée ou appartient à un autre canal ou dossier.");
@@ -222,7 +237,7 @@ namespace Creezio.Switcher
             using(Lease("registry")) {
                 if(Exists(message.Id)) {
                     var old=Message(message.Id);
-                    if(old.SourceChannelId!=sourceId || old.SourceThreadId!=sourceThread || old.TargetChannelId!=targetId || old.Prompt!=prompt || old.Title!=title || old.Revision!=message.Revision || old.ReturnToSource!=returnToSource || old.ReplyTo!=replyTo)throw new InvalidOperationException("Cet identifiant existe avec un contenu différent.");
+                    if(old.OperatorOrigin!=operatorOrigin || old.SourceChannelId!=sourceId || old.SourceThreadId!=sourceThread || old.TargetChannelId!=targetId || old.Prompt!=prompt || old.Title!=title || old.Revision!=message.Revision || old.ReturnToSource!=returnToSource || old.ReplyTo!=replyTo)throw new InvalidOperationException("Cet identifiant existe avec un contenu différent.");
                     return old;
                 }
                 Save(message);

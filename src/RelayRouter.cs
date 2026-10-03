@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -24,7 +24,7 @@ namespace Creezio.Switcher
         private readonly RelayStore store;
         private readonly IRelayTransport transport;
         private readonly Func<string,double?> quota;
-        public RelayRouter(RelayStore data,IRelayTransport adapter=null,Func<string,double?> score=null){store=data;transport=adapter??new DesktopRelayTransport();quota=score??AccountQuota;}
+        public RelayRouter(RelayStore data,IRelayTransport adapter=null,Func<string,double?> score=null){store=data;transport=adapter??AgentProviders.Create(data);quota=score??AccountQuota;}
         private double? AccountQuota(string account)
         {
             return RelayQuota.Read(store,account);
@@ -38,14 +38,14 @@ namespace Creezio.Switcher
             if(!a.Enabled||(automatic&&!a.AutoRoute)||!RelayPolicies.Allows(a.Tasks,spec.Kind)||!RelayPolicies.Allows(a.Projects,spec.Project??""))throw new InvalidOperationException("Le profil d'agent n'autorise pas cette tâche.");
             if(!RelayPolicies.Has(a.Capabilities,spec.Capabilities))throw new InvalidOperationException("Capacités requises absentes du profil d'agent.");
         }
-        public static void ValidateDestination(RelayPolicy p,RelayChannel source,RelayChannel target,RelayJobSpec spec)
+        public static void ValidateDestination(RelayPolicy p,RelayChannel source,RelayChannel target,RelayJobSpec spec,bool operatorOrigin=false)
         {
-            if(!source.Enabled||!target.Enabled||source.Id==target.Id)throw new InvalidOperationException("Source ou destination indisponible.");
+            if(!source.Enabled||!target.Enabled||(!operatorOrigin&&source.Id==target.Id))throw new InvalidOperationException("Source ou destination indisponible.");
             if(!WorkspaceAllowed(p,source,target,spec))throw new InvalidOperationException("Dossier destinataire non autorisé. Configurez un espace isolé dans ce projet ou utilisez le même dossier.");
             CheckAgent(p,target,spec,String.IsNullOrWhiteSpace(spec.To));
             var project=p.Projects.FirstOrDefault(x=>x.Id==spec.Project);
             if(!String.IsNullOrEmpty(spec.Project)&&project==null)throw new InvalidOperationException("Projet non configuré.");
-            if(project!=null){if(!RelayStore.SamePath(project.Workspace,source.Workspace)||!RelayPolicies.Allows(project.SourceChannels,source.Id)||!RelayPolicies.Allows(project.TargetChannels,target.Id))throw new InvalidOperationException("Canal ou dossier non autorisé pour ce projet.");}
+            if(project!=null){if(!RelayStore.SamePath(project.Workspace,source.Workspace)||(!operatorOrigin&&!RelayPolicies.Allows(project.SourceChannels,source.Id))||!RelayPolicies.Allows(project.TargetChannels,target.Id))throw new InvalidOperationException("Canal ou dossier non autorisé pour ce projet.");}
             if(!String.IsNullOrEmpty(spec.Resource)){
                 var resource=p.Resources.FirstOrDefault(x=>x.Id==spec.Resource&&x.Project==spec.Project);
                 if(resource==null||!RelayPolicies.Allows(resource.Channels,target.Id))throw new InvalidOperationException("Ce canal n'est pas autorisé pour la ressource.");
@@ -99,7 +99,7 @@ namespace Creezio.Switcher
             if(project==null||!project.ReassignQueued||!String.IsNullOrEmpty(message.Job.To)||!String.IsNullOrEmpty(message.TargetThreadId)||!String.IsNullOrEmpty(message.ReplyTo)||message.State!="queued")return false;
             var choice=Preview(message.Job,policy,message.Id).FirstOrDefault(x=>x.Allowed&&x.Ready);
             if(choice==null||choice.Channel==message.TargetChannelId)return false;
-            var target=store.Channel(choice.Channel);message.TargetChannelId=target.Id;message.TargetAccountKey=target.AccountKey;message.TargetHome=target.Home;message.TargetWorkspace=target.Workspace;message.RoutingReason="Réaffectation avant exécution · "+choice.Reason;store.Save(message);return true;
+            var target=store.Channel(choice.Channel);message.TargetChannelId=target.Id;message.TargetAccountKey=target.AccountKey;message.TargetHome=target.Home;message.TargetWorkspace=target.Workspace;AgentProviders.Pin(message,target);message.RoutingReason="Réaffectation avant exécution · "+choice.Reason;store.Save(message);return true;
         }
         public object Describe(string sourceId)
         {
@@ -107,7 +107,7 @@ namespace Creezio.Switcher
             var projects=p.Projects.Where(x=>RelayStore.SamePath(x.Workspace,source.Workspace)&&RelayPolicies.Allows(x.SourceChannels,sourceId)).ToArray();
             return new {version=1,source=source.Id,workspace=source.Workspace,
                 projects=projects,
-                agents=store.Channels().Where(c=>c.Enabled&&c.Id!=sourceId&&RelayStore.SamePath(c.Workspace,source.Workspace)).Select(c=>new {channel=c.Id,name=c.Name,profile=p.Agents.FirstOrDefault(a=>a.Channel==c.Id),online=DesktopRuntime.SameProcess(c.ServerPid,c.ServerStartTicks),remaining=quota(c.AccountKey),capabilityEvidence="user-declared; verify tools and resource access in destination chat"}).ToArray(),
+                agents=store.Channels().Where(c=>c.Enabled&&c.Id!=sourceId&&RelayStore.SamePath(c.Workspace,source.Workspace)).Select(c=>new {channel=c.Id,name=c.Name,provider=AgentProviders.Kind(c),profile=p.Agents.FirstOrDefault(a=>a.Channel==c.Id),online=AgentProviders.Codex(c)?(bool?)DesktopRuntime.SameProcess(c.ServerPid,c.ServerStartTicks):null,connection=AgentProviders.Caption(c),remaining=quota(c.AccountKey),capabilityEvidence="user-declared; verify tools and resource access in destination chat"}).ToArray(),
                 resources=p.Resources.Where(x=>projects.Any(project=>project.Id==x.Project)).ToArray(),
                 rules=p.Rules.Where(x=>x.Enabled&&RelayPolicies.Allows(x.Sources,sourceId)&&(x.Project=="*"||projects.Any(project=>project.Id==x.Project))).ToArray()};
         }
@@ -147,7 +147,7 @@ namespace Creezio.Switcher
                 var destination=store.Channel(chosen.Channel);
                 RelayPolicies.VerifyFiles(source.Workspace,spec.Files);
                 return store.Enqueue(source.Id,sourceThread,destination.Id,spec.Title,spec.Prompt,spec.Revision,spec.ReturnToSource,spec.ReplyTo,spec.Id,m=>{
-                    m.SchemaVersion=3;m.Job=spec;m.SubmissionHash=hash;m.RootJobId=group;m.Depth=parent==null?0:parent.Depth+1;m.OriginVerified=true;m.RoutingReason=chosen.Reason;m.TargetWorkspace=destination.Workspace;m.PolicyRevision=policy.Revision;m.ReturnMode=project==null?"immediate":project.ReturnMode;m.ReturnDelaySeconds=project==null?30:project.ReturnDelaySeconds;m.DeadlineUtc=DateTime.UtcNow.AddMinutes(project==null?120:project.MaxMinutes).ToString("o");});
+                    AgentProviders.Pin(m,destination);m.SchemaVersion=4;m.Job=spec;m.SubmissionHash=hash;m.RootJobId=group;m.Depth=parent==null?0:parent.Depth+1;m.OriginVerified=true;m.RoutingReason=chosen.Reason;m.TargetWorkspace=destination.Workspace;m.PolicyRevision=policy.Revision;m.ReturnMode=project==null?"immediate":project.ReturnMode;m.ReturnDelaySeconds=project==null?30:project.ReturnDelaySeconds;m.DeadlineUtc=DateTime.UtcNow.AddMinutes(project==null?120:project.MaxMinutes).ToString("o");});
             }
         }
     }

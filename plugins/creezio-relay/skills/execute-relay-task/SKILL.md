@@ -31,6 +31,12 @@ stores the result; the relay still waits for your turn to finish before delivery
 Do not include unrelated files or credentials. A source can read long results in
 pages with `read_result`.
 
+If the envelope identifies a remote-PC request, its durable job belongs to the
+origin PC. Return the result in this chat's final answer; do not use this PC's
+`report_result`, `await_children` or `Parent` for that foreign job ID. Remote
+transport currently collects final messages only, with a bounded transcript.
+Report a concise result and artifact locations; files are not synchronized.
+
 Finish with a concise result, relevant artifact paths, revision and available
 evidence. End with one JSON line:
 

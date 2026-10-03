@@ -59,7 +59,8 @@ namespace Creezio.Switcher.Desktop
         {
             if (Fixture)
                 return;
-            await Mutate(async a => { var policy = RelayPolicies.Load(Store); if (policy.KeepWorkerRunning || Store.ActiveMessages().Any()) RelayWorker.Ensure(Store); if (policy.AutoInstallManaged) foreach (var i in a.Data.Instances.Where(i => !i.IsLocal && !i.Archived)) await RelayIntegration.Install(Store, a.Instances.Home(i), a.Settings.CodexExecutable, false, CancellationToken.None); });
+            if (RemotePeers.Config(Store).Enabled) RemoteGateway.Start(Store);
+            await Mutate(async a => { var policy = RelayPolicies.Load(Store); if (policy.KeepWorkerRunning || Store.ActiveMessages().Any() || new Assistance(Store).List().Any(t=>t.State=="answered"||t.State=="delivering")) RelayWorker.Ensure(Store); if (policy.AutoInstallManaged) foreach (var i in a.Data.Instances.Where(i => !i.IsLocal && !i.Archived)) await RelayIntegration.Install(Store, a.Instances.Home(i), a.Settings.CodexExecutable, false, CancellationToken.None); });
         }
     }
 }
