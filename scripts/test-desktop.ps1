@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param([string]$BinaryDirectory)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -6,7 +6,7 @@ $bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Pat
 $exe=Join-Path $bin 'CodexAccountSwitcher.exe'
 $fixture=Join-Path $repo 'work\desktop-validation'
 $p=Start-Process -FilePath $exe -ArgumentList @('--ui-test',('"'+$fixture+'"')) -WindowStyle Hidden -PassThru -Wait
-$report=Get-Content -LiteralPath (Join-Path $fixture 'results.txt')
+$report=Get-Content -LiteralPath (Join-Path $fixture 'results.txt') -Encoding UTF8
 $report
 if($p.ExitCode -ne 0 -or ($report -match '^FAIL') -or $report[-1] -notmatch '^\d+ tests UI réussis$'){throw 'UI tests failed.'}
 $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
