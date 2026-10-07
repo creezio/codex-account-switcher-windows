@@ -42,6 +42,74 @@ namespace Creezio.Switcher.Desktop
                     yield return nested;
             }
         }
+        private static async Task Until(Func<bool> condition)
+        {
+            for(int attempt=0;attempt<500;attempt++){if(condition())return;await Task.Delay(10);}
+            throw new Exception("UI condition timed out");
+        }
+        private static async Task InstanceActions(DesktopContext context,ShellWindow shell,InstancesPage instances,InstanceResourcesView resources,DesktopInstance owner,DesktopInstance client,string root,Action<bool,string> assert)
+        {
+            Button RenameButton()=>Descendants(instances).OfType<Button>().Single(b=>Object.Equals(b.Content,"Renommer l’instance"));
+            Button VerifyButton(){instances.UpdateLayout();return Descendants(instances).OfType<Button>().Single(b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Vérifier l’intégration");}
+            TextBlock Result()=>Descendants(instances).OfType<TextBlock>().Single(t=>System.Windows.Automation.AutomationProperties.GetName(t)=="Résultat de la vérification");
+            async Task RenameTo(string value,bool validate)
+            {
+                var done=new TaskCompletionSource<bool>();
+                _=shell.Dispatcher.BeginInvoke(new Action(async()=>{
+                    EditWindow form=null;
+                    try {
+                        form=await WaitDialog("Renommer l’instance");var input=Descendants(form).OfType<TextBox>().Single();
+                        if(validate){
+                            input.Text=" ";form.SaveButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>form.SaveButton.IsEnabled);
+                            assert(!form.Saved&&form.IsVisible&&Descendants(form).OfType<TextBlock>().Any(t=>t.Text.Contains("non valide")),"renommage vide refusé dans le formulaire ouvert");
+                            input.Text=client.Name;form.SaveButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>form.SaveButton.IsEnabled);
+                            assert(!form.Saved&&input.Text==client.Name&&Descendants(form).OfType<TextBlock>().Any(t=>t.Text.Contains("déjà utilisé")),"nom déjà pris expliqué sans fermer ni effacer la saisie");
+                        }
+                        input.Text=value;Capture(form,Path.Combine(root,"Renommer-instance.png"));form.SaveButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>form.Saved);done.SetResult(true);
+                    }catch(Exception e){done.SetException(e);}finally{if(form!=null&&!form.Saved){form.ConfirmDiscard=()=>true;form.Close();}}
+                }),DispatcherPriority.ContextIdle);
+                RenameButton().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await done.Task;
+                await Until(()=>instances.List.Items.Cast<ItemRow>().Any(r=>r.Id==owner.Id&&r.Title==value.Trim()));shell.UpdateLayout();
+            }
+            var before=await context.Read(a=>new{Home=a.Instances.Home(a.Data.Instances.Single(i=>i.Id==owner.Id)),Account=a.Data.Instances.Single(i=>i.Id==owner.Id).AccountKey});
+            await RenameTo("  Atelier renommé  ",true);
+            var renamed=new AccountService(context.Root);var saved=renamed.Data.Instances.Single(i=>i.Id==owner.Id);
+            assert(saved.Name=="Atelier renommé"&&saved.AccountKey==before.Account&&renamed.Instances.Home(saved)==before.Home,"renommage persistant conserve le compte et le dossier");
+            assert(resources.Dirty&&ReferenceEquals(resources,Descendants(instances).OfType<InstanceResourcesView>().Single())&&Descendants(instances).OfType<TextBlock>().Any(t=>t.Text=="Atelier renommé"),"titre et liste actualisés sans perdre le brouillon des accès");
+            for(int index=0;index<3;index++){instances.ShowTab(index);shell.UpdateLayout();assert(RenameButton().IsVisible&&RenameButton().IsEnabled,"renommer accessible dans l’onglet "+index);}
+            instances.ShowTab(0);shell.UpdateLayout();
+            assert(Descendants(instances).OfType<TextBlock>().Any(t=>t.Text.Contains("Délègue cette mission à Atelier renommé")),"exemple de délégation utilise le nouveau nom");
+            var cancelRename=new TaskCompletionSource<bool>();
+            _=shell.Dispatcher.BeginInvoke(new Action(async()=>{
+                try{var form=await WaitDialog("Renommer l’instance");Descendants(form).OfType<TextBox>().Single().Text="Changement abandonné";form.ConfirmDiscard=()=>true;Descendants(form).OfType<Button>().Single(b=>Object.Equals(b.Content,"Annuler")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));cancelRename.SetResult(true);}catch(Exception e){cancelRename.SetException(e);}
+            }),DispatcherPriority.ContextIdle);
+            RenameButton().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await cancelRename.Task;
+            assert(new AccountService(context.Root).Data.Instances.Single(i=>i.Id==owner.Id).Name=="Atelier renommé","annuler le renommage ne modifie pas le nom enregistré");
+            await RenameTo(owner.Name,false);
+
+            var held=new TaskCompletionSource<bool>();int calls=0;
+            context.VerifyIntegrationFixture=async(home,settings)=>{calls++;await held.Task;context.Store.WriteRecord("integration-"+RelayIntegration.HomeKey(home)+".dpapi",new RelayIntegrationState{Home=home,Healthy=true,Status="Intégration installée et vérifiée",Updated=DateTime.UtcNow.ToString("o"),InstalledVersion=RelayWorker.Version});};
+            var accountScroll=Descendants(instances).OfType<ScrollViewer>().Single(s=>s.Tag is string);accountScroll.ScrollToBottom();shell.UpdateLayout();double offset=accountScroll.VerticalOffset;
+            VerifyButton().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));shell.UpdateLayout();
+            assert(Result().Text.StartsWith("Vérification en cours")&&!VerifyButton().IsEnabled,"clic montre immédiatement la progression et désactive le bouton");
+            assert(offset>0&&accountScroll.VerticalOffset>=offset-1,"vérification conserve le défilement de la fiche");
+            await Until(()=>calls==1);await instances.Refresh();shell.UpdateLayout();VerifyButton().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            assert(calls==1&&!VerifyButton().IsEnabled,"actualisation et double clic ne relancent pas une vérification");
+            instances.ShowTab(1);shell.UpdateLayout();assert(Result().Text.StartsWith("Vérification en cours")&&resources.Dirty,"progression visible dans Ressources sans perdre les modifications");
+            held.SetResult(true);await Until(()=>Result().Text.StartsWith("Vérification réussie"));instances.ShowTab(0);shell.UpdateLayout();await Until(()=>VerifyButton().IsEnabled);
+            assert(Descendants(instances).OfType<TextBlock>().Any(t=>t.Text.StartsWith("Dernière vérification :")&&t.Text.Contains(RelayWorker.Version)),"succès avec heure et version persistées");
+            VerifyButton().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>calls==2);await Until(()=>Result().Text.StartsWith("Vérification réussie")&&VerifyButton().IsEnabled);
+            assert(calls==2,"nouveau clic confirmé même lorsque l’intégration est déjà saine");
+            Capture(shell,Path.Combine(root,"Instance-verification.png"));
+
+            context.VerifyIntegrationFixture=(home,settings)=>{settings.CodexExecutable=Path.Combine(root,"codex-inexistant.exe");return IntegrationMaintenance.Check(context.Store,home,settings,true,true,System.Threading.CancellationToken.None);};
+            VerifyButton().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>Result().Text.StartsWith("Intégration à corriger")&&VerifyButton().IsEnabled);
+            assert(!RelayIntegration.Status(context.Store,before.Home).Healthy&&Result().Text.Length>40,"échec enregistré par la maintenance affiché sans faux succès");
+            context.VerifyIntegrationFixture=(home,settings)=>throw new InvalidOperationException("Erreur de contrôle de recette");
+            VerifyButton().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>Result().Text.Contains("Erreur de contrôle de recette")&&VerifyButton().IsEnabled);
+            assert(Result().Text.StartsWith("Échec de la vérification"),"exception expliquée et nouvelle tentative possible");
+            instances.ShowTab(1);shell.UpdateLayout();assert(resources.Dirty,"succès et échecs de vérification préservent les accès non enregistrés");
+        }
         internal static int Run(Application app, string root)
         {
             int passed = 0;
@@ -178,6 +246,7 @@ namespace Creezio.Switcher.Desktop
                     Descendants(resources).OfType<Button>().Single(b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Configurer les actions de Outils de l’équipe").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     await inspectPluginDone.Task;
                     assert(resources.Dirty,"enregistrer les actions du plugin conserve le brouillon des ressources");
+                    await InstanceActions(context,shell,instances,resources,toolOwner,toolClient,root,assert);
                     resources.ConfirmDiscard=()=>false;shell.Navigate("Accueil");assert(shell.CurrentPage=="Instances","navigation protège les changements de partage");
                     instances.ShowTab(0);shell.UpdateLayout();Capture(shell,Path.Combine(root,"Instance-compte.png"));instances.ShowTab(1);shell.UpdateLayout();
                     assert(resources.Dirty,"onglets Compte et Ressources conservent le brouillon");
@@ -187,6 +256,14 @@ namespace Creezio.Switcher.Desktop
                     var saveResources=Descendants(resources).OfType<Button>().Single(b=>Object.Equals(b.Content,"Enregistrer les accès"));var savePosition=saveResources.TranslatePoint(new Point(),shell);
                     assert(savePosition.Y>=0&&savePosition.Y+saveResources.ActualHeight<=shell.ActualHeight,"enregistrement des accès accessible en petite fenêtre");Capture(shell,Path.Combine(root,"Instance-ressources-compact.png"));shell.Width=width;shell.Height=height;
                     resources.ConfirmDiscard=()=>true;shell.Navigate("Accueil");assert(shell.CurrentPage=="Accueil"&&!resources.Dirty,"abandon confirmé restaure les autorisations précédentes");
+                    await instances.Open(toolOwner.Id,false);instances.ShowTab(0);shell.UpdateLayout();
+                    var pendingCheck=new TaskCompletionSource<bool>();var startedCheck=new TaskCompletionSource<bool>();
+                    context.VerifyIntegrationFixture=async(home,settings)=>{startedCheck.SetResult(true);await pendingCheck.Task;context.Store.WriteRecord("integration-"+RelayIntegration.HomeKey(home)+".dpapi",new RelayIntegrationState{Home=home,Healthy=true,Status="Intégration installée et vérifiée",Updated=DateTime.UtcNow.ToString("o")});};
+                    Descendants(instances).OfType<Button>().Single(b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Vérifier l’intégration").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await startedCheck.Task;
+                    await instances.Open(toolClient.Id,false);shell.UpdateLayout();pendingCheck.SetResult(true);await Task.Delay(100);await instances.Refresh();shell.UpdateLayout();
+                    assert(Descendants(instances).OfType<TextBlock>().Single(t=>System.Windows.Automation.AutomationProperties.GetName(t)=="Résultat de la vérification").Visibility==Visibility.Collapsed,"résultat d’une instance absent de la fiche d’une autre instance");
+                    await instances.Open(toolOwner.Id,false);shell.UpdateLayout();
+                    assert(Descendants(instances).OfType<TextBlock>().Any(t=>t.Text.StartsWith("Vérification réussie")),"résultat retrouvé en revenant sur l’instance vérifiée");
                     shell.Navigate("Comptes");
                     var assistance=(AssistancePage)shell.Pages["Assistance"];
                     shell.Navigate("Assistance");await assistance.Refresh();shell.UpdateLayout();
@@ -347,7 +424,7 @@ namespace Creezio.Switcher.Desktop
                     shell.ExitForTest();
                     app.Shutdown(0);
                 }
-                catch (Exception e) { report.Add("FAIL " + e); File.WriteAllLines(Path.Combine(root, "results.txt"), report); app.Shutdown(1); }
+                catch (Exception e) { report.Add("FAIL " + e); File.WriteAllLines(Path.Combine(root, "results.txt"), report); foreach(var view in Descendants(shell).OfType<InstanceResourcesView>())view.ConfirmDiscard=()=>true; app.Shutdown(1); }
             };
             return app.Run(shell);
         }

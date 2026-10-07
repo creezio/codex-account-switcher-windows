@@ -14,6 +14,24 @@ namespace Creezio.Switcher.Desktop
         private readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
         private DateTime lastFullRefresh = DateTime.MinValue;
         private readonly SemaphoreSlim integrationGate = new SemaphoreSlim(1, 1);
+        internal Func<string, Settings, Task> VerifyIntegrationFixture;
+        internal async Task<RelayIntegrationState> VerifyIntegration(string instanceId)
+        {
+            await integrationGate.WaitAsync();
+            try {
+                var target = await Read(a => {
+                    var instance = a.Data.Instances.Single(i => i.Id == instanceId);
+                    if (instance.Archived) throw new InvalidOperationException("Restaurez cette instance avant de vérifier son intégration.");
+                    return new { a.Settings, Home = a.Instances.Home(instance) };
+                });
+                if (Fixture) {
+                    if (VerifyIntegrationFixture == null) throw new InvalidOperationException("Vérification non configurée dans cette recette.");
+                    await VerifyIntegrationFixture(target.Home, target.Settings);
+                } else await IntegrationMaintenance.Check(Store, target.Home, target.Settings, true, true, CancellationToken.None);
+                // Maintenance persists failures as well as success. Completing the call alone is not success.
+                return RelayIntegration.Status(Store, target.Home);
+            } finally { integrationGate.Release(); }
+        }
         internal async Task MaintainIntegrations(bool force = false, string instanceId = null, bool repair = false)
         {
             if (Fixture) return;

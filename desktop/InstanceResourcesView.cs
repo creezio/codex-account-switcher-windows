@@ -35,6 +35,7 @@ namespace Creezio.Switcher.Desktop
         internal Func<bool> ConfirmDiscard;
         internal Func<PluginAccess> PluginServiceFactory;
         internal bool Dirty=>Snapshot(initial)!=Snapshot(draft);
+        internal void UpdateOwnerName(string name){owner.Name=name;}
         private static string Snapshot(Dictionary<string,string> value)=>String.Join("|",value.OrderBy(p=>p.Key).Select(p=>p.Key+":"+p.Value));
         internal InstanceResourcesView(DesktopContext context,ShellWindow shell,DesktopInstance owner)
         {

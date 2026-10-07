@@ -1,10 +1,17 @@
-# Instances, comptes, plugins et ressources — 0.11.1
+# Instances, comptes, plugins et ressources — 0.11.2
 
 ## Parcours
 
 1. Ouvrir **Instances**, créer un espace nommé et connecter son compte permanent.
 2. Sélectionner l’instance. **Compte** réunit identité, limites, ouverture de Codex
    et vérification de l’intégration.
+   **Renommer l’instance** est toujours accessible au-dessus des onglets. Un nom
+   vide ou déjà utilisé laisse le formulaire ouvert avec son erreur. Le nouveau
+   nom apparaît immédiatement, sans changer le compte, le dossier ou les accès.
+   **Vérifier l’intégration** indique sa progression puis un succès daté ou une
+   erreur explicite ; le bouton redevient disponible pour réessayer. La vérification
+   contrôle et répare le plugin et les skills. Elle ne modifie pas les permissions
+   natives des chats et ne recharge pas l’intégration dans un chat déjà ouvert.
 3. **Ressources & accès** affiche les ressources du compte. La détection démarre
    à la sélection de l’instance si son inventaire a plus de dix minutes. Le bouton
    **Actualiser** permet de la relancer. Codex propriétaire doit rester ouvert.
@@ -119,3 +126,11 @@ toutes avec un libellé fournisseur. Aucune action métier ni permission réelle
 Recette 0.11.1 : **286 tests moteur par runtime** et **69 tests WPF**, dont un
 enregistrement de permission par clic depuis la fiche plugin. Les règles de
 ressources, de plugins et les anciennes règles avancées sont testées séparément.
+
+Correction 0.11.2 : **89 tests WPF**. Les nouveaux parcours testent le renommage
+par clic (validation, annulation, persistance, identité et compte conservés), son
+accès depuis les trois onglets et la conservation des brouillons. Les contrôles
+d’intégration testent une réponse lente, le double clic, une intégration déjà saine,
+l’erreur persistée par la maintenance, une exception et le changement d’instance
+pendant le contrôle. Le résultat reste attaché à l’instance vérifiée ; la fiche
+conserve son défilement. Les tests isolés utilisent des comptes fictifs.
