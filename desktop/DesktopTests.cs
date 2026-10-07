@@ -70,6 +70,17 @@ namespace Creezio.Switcher.Desktop
             {
                 try
                 {
+                    assert(!shell.Navigation.Items.Contains("Agents")&&!shell.Navigation.Items.Contains("Projets"),"parcours simple sans canaux ni projets dans la navigation");
+                    var inspectInstance=shell.Dispatcher.BeginInvoke(new Action(()=>{
+                        var form=Application.Current.Windows.OfType<EditWindow>().Single(w=>w.Title=="Votre instance Codex");
+                        try{
+                            assert(Descendants(form).OfType<ComboBox>().Single(c=>System.Windows.Automation.AutomationProperties.GetName(c)=="Compte permanent").Items.Count==5,"création propose connexion ou comptes existants");
+                            assert(Descendants(form).OfType<Button>().Any(b=>Object.Equals(b.Content,"Préparer et ouvrir")),"création expose une action unique de préparation");
+                            assert(!Descendants(form).OfType<TextBox>().Any(t=>System.Windows.Automation.AutomationProperties.GetName(t).Contains("canal")),"création ne demande aucun canal");
+                            Capture(form,Path.Combine(root,"Creation-instance.png"));
+                        }finally{form.Close();}
+                    }),DispatcherPriority.ContextIdle);
+                    await InstanceWizard.Open(context,shell);await inspectInstance.Task;
                     foreach (string page in shell.Pages.Keys)
                     {
                         shell.Navigate(page);
@@ -256,7 +267,9 @@ namespace Creezio.Switcher.Desktop
             window.UpdateLayout();
             var content = (FrameworkElement)window.Content;
             var target = new RenderTargetBitmap((int)Math.Ceiling(content.ActualWidth * scale), (int)Math.Ceiling(content.ActualHeight * scale), 96 * scale, 96 * scale, PixelFormats.Pbgra32);
-            target.Render(content);
+            var drawing = new DrawingVisual();
+            using(var dc=drawing.RenderOpen()) dc.DrawRectangle(new VisualBrush(content),null,new Rect(0,0,content.ActualWidth,content.ActualHeight));
+            target.Render(drawing);
             var encoder = new PngBitmapEncoder();
             encoder.Frames.Add(BitmapFrame.Create(target));
             using (var stream = File.Create(path))

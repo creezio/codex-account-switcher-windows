@@ -51,6 +51,7 @@ internal static class TestRunner
             Check("switch does not touch conversations",delegate {string home=Folder("history");Directory.CreateDirectory(Path.Combine(home,"sessions"));string history=Path.Combine(home,"sessions","conversation.jsonl");File.WriteAllText(history,"keep me");new SwitchTransaction(home,()=>false).Execute(a,s=>{},delegate{});Assert(File.ReadAllText(history)=="keep me","history changed");});
             ResetTests.RunAll(Check);
             InstanceTests.RunAll(Check,sandbox,a,b);
+            SimpleWorkflowTests.RunAll(Check,sandbox,a,b);
             RelayTests.RunAll(Check,sandbox);
             GeneralRelayTests.RunAll(Check,sandbox);
             ProductTests.RunAll(Check,sandbox);

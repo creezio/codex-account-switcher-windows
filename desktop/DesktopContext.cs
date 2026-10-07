@@ -13,6 +13,16 @@ namespace Creezio.Switcher.Desktop
         internal readonly bool Fixture;
         private readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
         private DateTime lastFullRefresh = DateTime.MinValue;
+        private readonly SemaphoreSlim integrationGate = new SemaphoreSlim(1, 1);
+        internal async Task MaintainIntegrations(bool force = false, string instanceId = null, bool repair = false)
+        {
+            if (Fixture) return;
+            await integrationGate.WaitAsync();
+            try {
+                var data = await Read(a => new { a.Settings, Homes = a.Data.Instances.Where(i => !i.Archived && (instanceId == null || i.Id == instanceId)).Select(a.Instances.Home).ToArray() });
+                foreach (var home in data.Homes) await IntegrationMaintenance.Check(Store, home, data.Settings, force, repair, CancellationToken.None);
+            } finally { integrationGate.Release(); }
+        }
         internal DesktopContext(string root, bool fixture = false)
         {
             Root = root;
@@ -48,6 +58,7 @@ namespace Creezio.Switcher.Desktop
         {
             if (Fixture)
                 return;
+            await MaintainIntegrations();
             await gate.WaitAsync();
             try
             {
@@ -60,7 +71,8 @@ namespace Creezio.Switcher.Desktop
             if (Fixture)
                 return;
             if (RemotePeers.Config(Store).Enabled) RemoteGateway.Start(Store);
-            await Mutate(async a => { var policy = RelayPolicies.Load(Store); if (policy.KeepWorkerRunning || Store.ActiveMessages().Any() || new Assistance(Store).List().Any(t=>t.State=="answered"||t.State=="delivering")) RelayWorker.Ensure(Store); if (policy.AutoInstallManaged) foreach (var i in a.Data.Instances.Where(i => !i.IsLocal && !i.Archived)) await RelayIntegration.Install(Store, a.Instances.Home(i), a.Settings.CodexExecutable, false, CancellationToken.None); });
+            await Mutate(a => { a.Instances.AdoptAccounts(); var policy = RelayPolicies.Load(Store); if (policy.KeepWorkerRunning || Store.ActiveMessages().Any() || new Assistance(Store).List().Any(t=>t.State=="answered"||t.State=="delivering")) RelayWorker.Ensure(Store); return Task.CompletedTask; });
+            if (await Read(a=>a.Settings.MaintainIntegration)) await MaintainIntegrations(true);
         }
     }
 }

@@ -213,6 +213,7 @@ namespace Creezio.Switcher
         public string Id { get; set; }
         public string Name { get; set; }
         public string AccountKey { get; set; }
+        public bool AccountLocked { get; set; }
         public string PreviousAuthJson { get; set; }
         public bool Archived { get; set; }
         public bool IsLocal { get { return Id == "local"; } }
@@ -224,7 +225,9 @@ namespace Creezio.Switcher
         public bool AutoRefresh { get; set; }
         public bool Notifications { get; set; }
         public bool AutoResetCredits { get; set; }
-        public Settings() { AutoRefresh = false; Notifications = true; AutoResetCredits = true; }
+        public bool MaintainIntegration { get; set; }
+        public int IntegrationCheckMinutes { get; set; }
+        public Settings() { AutoRefresh = false; Notifications = true; AutoResetCredits = true; MaintainIntegration=true; IntegrationCheckMinutes=5; }
     }
     internal static class Quotas
     {

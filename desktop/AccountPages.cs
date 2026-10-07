@@ -13,7 +13,7 @@ namespace Creezio.Switcher.Desktop
     internal sealed class AccountsPage : CollectionPage
     {
         private CancellationTokenSource login; private readonly Button cancelLogin;
-        public AccountsPage(DesktopContext c, ShellWindow s) : base(c, s, "Comptes", "Consultez les limites d'utilisation et choisissez où chaque compte peut travailler.")
+        public AccountsPage(DesktopContext c, ShellWindow s) : base(c, s, "Comptes", "Consultez les limites de vos comptes. Chaque instance conserve son compte permanent.")
         {
             Command("Ajouter un compte", async delegate { cancelLogin.Visibility = Visibility.Visible; login = new CancellationTokenSource(TimeSpan.FromMinutes(5)); Notice.Text = "Terminez la connexion dans votre navigateur. Vous pouvez continuer à naviguer."; try { await Change(async a => { var p = await a.Login(url => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }), login.Token); await UsageCoordinator.Refresh(Context.Store, p.Key, false, login.Token); }); Notice.Text = "Compte ajouté."; } finally { login.Dispose(); login = null; cancelLogin.Visibility = Visibility.Collapsed; } }, true);
             Command("Importer la session actuelle", () => Change(a => { a.ImportCurrent(); return Task.CompletedTask; }));
@@ -71,9 +71,8 @@ namespace Creezio.Switcher.Desktop
             reset.Children.Add(Ui.Text("Ces réinitialisations rétablissent les quotas d'utilisation. Elles sont distinctes des crédits achetés.", 13, true));
             reset.Children.Add(Ui.AsyncButton("Configurer les réinitialisations", () => UsageEditor.Open(Context, Shell, p.Key), Error));
             Details.Children.Add(Ui.Card(reset));
-            Details.Children.Add(Ui.Text(p.AllInstances ? "Disponible pour toutes les instances, actuelles et futures" : p.InstanceIds.Count + " instance(s) autorisée(s)", 14, true));
             var actions = Ui.Actions(Details);
-            actions.Children.Add(Ui.AsyncButton("Associer aux instances", async delegate { await Scope(p.Key); await Refresh(); }, Error));
+            actions.Children.Add(Ui.Button("Voir les instances", () => Shell.Navigate("Instances")));
             actions.Children.Add(Ui.AsyncButton("Renommer", async delegate { string name = Ui.Prompt(Shell, "Renommer le compte", "Nom", p.Label); if (name != null) await Change(a => { a.Data.Profiles.Single(x => x.Key == p.Key).Label = name; a.Save(); return Task.CompletedTask; }); }, Error));
             actions.Children.Add(Ui.AsyncButton("Retirer…", async delegate { if (Ui.Confirm(Shell, "Retirer ce compte du coffre ? Ses conversations et les connexions ouvertes restent conservées.", "Retirer le compte")) await Change(a => { a.Instances.Forget(a.Data.Profiles.Single(x => x.Key == p.Key)); return Task.CompletedTask; }); }, Error));
         }
@@ -149,16 +148,16 @@ namespace Creezio.Switcher.Desktop
         private bool archived;
         private sealed class Info
         {
-            public DesktopInstance Instance; public InstanceState State; public Profile Account; public Profile[] Choices;
+            public DesktopInstance Instance; public InstanceState State; public Profile Account; public RelayIntegrationState Integration; public string ActiveKey;
         }
         public InstancesPage(DesktopContext c, ShellWindow s) : base(c, s, "Instances", "Des espaces Codex indépendants, chacun avec ses conversations et son compte.")
         {
-            Command("Créer une instance", async delegate { string name = Ui.Prompt(Shell, "Créer une instance", "Nom de cet espace", ""); if (name != null) await Change(a => { a.Instances.Create(name); return Task.CompletedTask; }); }, true);
+            Command("Créer une instance", async delegate { await InstanceWizard.Open(Context, Shell); await Refresh(); }, true);
             Command("Afficher / masquer les archives", async delegate { archived = !archived; await Refresh(); });
         }
         public override async Task Refresh()
         {
-            var rows = await Context.Read(a => a.Data.Instances.Where(i => archived || !i.Archived).Select(i => { var state = Context.Fixture ? new InstanceState { Running = false, Phase = "stopped" } : a.Instances.Runtime.Probe(i); var account = a.Data.Profiles.FirstOrDefault(p => p.Key == (Context.Fixture ? i.AccountKey : a.Instances.ActiveKey(i))); return new ItemRow { Id = i.Id, Revision = state.Phase + "|" + state.Message + "|" + String.Join(",", a.Data.Profiles.Where(p => p.Allows(i.Id)).Select(p => p.Key + ":" + p.Label)), Title = i.Name, Summary = account?.Label ?? "Aucun compte associé", State = i.Archived ? "Archivée" : i.IsLocal ? "Session habituelle" : state.Running ? "Ouverte" : "Fermée", Value = new Info { Instance = i, State = state, Account = account, Choices = a.Data.Profiles.Where(p => p.Allows(i.Id)).ToArray() } }; }).ToArray());
+            var rows = await Context.Read(a => a.Data.Instances.Where(i => archived || !i.Archived).Select(i => { var state = Context.Fixture ? new InstanceState { Running = false, Phase = "stopped" } : a.Instances.Runtime.Probe(i); string active = Context.Fixture ? i.AccountKey : a.Instances.ActiveKey(i); var account = a.Data.Profiles.FirstOrDefault(p => p.Key == i.AccountKey); var integration = RelayIntegration.Status(Context.Store, a.Instances.Home(i)); return new ItemRow { Id = i.Id, Revision = state.Phase + "|" + state.Message + "|" + i.AccountKey + "|" + active + "|" + integration.Updated, Title = i.Name, Summary = account?.Label ?? "Compte à connecter", State = i.Archived ? "Archivée" : i.AccountKey != null && active != i.AccountKey ? "Compte à reconnecter" : state.Running ? "Ouverte" : i.IsLocal ? "Session habituelle" : "Fermée", Value = new Info { Instance = i, State = state, Account = account, Integration = integration, ActiveKey = active } }; }).ToArray());
             Rows(rows);
         }
         protected override void ShowSelected()
@@ -171,7 +170,8 @@ namespace Creezio.Switcher.Desktop
             var i = info.Instance;
             Details.Children.Add(Ui.Text(i.Name, 23));
             Details.Children.Add(Ui.Text(row.State, 14, true));
-            Details.Children.Add(Ui.Text("Compte · " + (info.Account?.Label ?? "À choisir"), 17));
+            Details.Children.Add(Ui.Text("Compte permanent · " + (info.Account?.Label ?? "À connecter"), 17));
+            Details.Children.Add(Ui.Text("Dans Codex, dites : « Délègue cette mission à " + i.Name + " ». Le résultat reviendra dans votre conversation.", 15, true));
             var actions = Ui.Actions(Details);
             if (i.Archived)
             {
@@ -180,21 +180,24 @@ namespace Creezio.Switcher.Desktop
             }
             if (!i.IsLocal)
             {
-                var open = Ui.AsyncButton("Ouvrir l'instance", () => Change(a => a.Instances.Start(a.Data.Instances.Single(x => x.Id == i.Id), CancellationToken.None)), Error, true);
-                open.IsEnabled = !info.State.Running;
+                var open = Ui.AsyncButton("Ouvrir l'instance", async delegate { await Context.MaintainIntegrations(false, i.Id); await Change(a => a.Instances.Start(a.Data.Instances.Single(x => x.Id == i.Id), CancellationToken.None)); }, Error, true);
+                open.IsEnabled = !info.State.Running && i.AccountKey != null;
                 actions.Children.Add(open);
             }
             Details.Children.Add(Ui.Text(i.IsLocal ? "Cette session est gérée dans Codex. Sa fermeture se fait depuis sa propre fenêtre." : "Le profil, les conversations et les plugins de cet espace restent indépendants.", 14, true));
-            if (!info.State.Running)
+            if (String.IsNullOrEmpty(i.AccountKey))
             {
-                var choices = new ComboBox { ItemsSource = info.Choices, DisplayMemberPath = "Label", SelectedItem = info.Account };
-                System.Windows.Automation.AutomationProperties.SetName(choices, "Compte autorisé");
-                Details.Children.Add(choices);
-                Details.Children.Add(Ui.AsyncButton("Associer ce compte", async delegate { var selected = choices.SelectedItem as Profile; if (selected == null) throw new InvalidOperationException("Choisissez un compte autorisé."); await Change(a => a.Instances.SelectAccount(a.Data.Instances.Single(x => x.Id == i.Id), a.Data.Profiles.Single(p => p.Key == selected.Key), CancellationToken.None)); }, Error));
+                Details.Children.Add(Ui.AsyncButton("Connecter son compte", async delegate { if(info.ActiveKey != null) await Change(a=>{a.Instances.Capture(a.Data.Instances.Single(x=>x.Id==i.Id));return Task.CompletedTask;}); else await InstanceWizard.Open(Context, Shell, i.Id); await Context.MaintainIntegrations(true, i.Id); await Refresh(); }, Error, true));
             }
+            var integration = new StackPanel();
+            integration.Children.Add(Ui.Text("Intégration Codex", 17));
+            integration.Children.Add(Ui.Text(info.Integration.Status ?? "Installation et vérification à venir", 14, true));
+            DateTime checkedAt;
+            if(DateTime.TryParse(info.Integration.Updated, out checkedAt)) integration.Children.Add(Ui.Text("Dernière vérification · " + checkedAt.ToLocalTime().ToString("g"), 12, true));
+            integration.Children.Add(Ui.AsyncButton("Vérifier et réparer", async delegate { Notice.Text="Vérification du plugin et des skills…"; await Context.MaintainIntegrations(true, i.Id, true); await Refresh(); Notice.Text="Vérification terminée. Consultez l'état de l'intégration."; }, Error));
+            Details.Children.Add(Ui.Card(integration));
             var extras = Ui.Actions(Details);
             extras.Children.Add(Ui.AsyncButton("Renommer", async delegate { string name = Ui.Prompt(Shell, "Renommer l'instance", "Nom", i.Name); if (name != null) await Change(a => { a.Instances.Rename(a.Data.Instances.Single(x => x.Id == i.Id), name); return Task.CompletedTask; }); }, Error));
-            extras.Children.Add(Ui.AsyncButton("Importer sa connexion", () => Change(a => { a.Instances.Capture(a.Data.Instances.Single(x => x.Id == i.Id)); return Task.CompletedTask; }), Error));
             if (!i.IsLocal)
             {
                 if (info.State.Running)

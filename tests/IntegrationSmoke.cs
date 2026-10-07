@@ -24,6 +24,12 @@ internal static class IntegrationSmoke
             var first=RelayIntegration.Install(store,home,executable,true,CancellationToken.None).GetAwaiter().GetResult();
             var second=RelayIntegration.Install(store,home,executable,false,CancellationToken.None).GetAwaiter().GetResult();
             if(first.Fingerprint!=second.Fingerprint)throw new Exception("Installation not idempotent");
+            if(!second.Healthy||first.InstalledVersion!=second.InstalledVersion)throw new Exception("Healthy verification rewrote plugin");
+            string installedSkill=Path.Combine(home,"plugins","cache",RelayIntegration.Market,RelayIntegration.Name,second.InstalledVersion,"skills","delegate-task","SKILL.md");
+            File.WriteAllText(installedSkill,"damaged test skill");
+            var repaired=RelayIntegration.Install(store,home,executable,false,CancellationToken.None).GetAwaiter().GetResult();
+            if(!repaired.Healthy||repaired.InstalledVersion==second.InstalledVersion)throw new Exception("Missing cache repair");
+            Console.WriteLine("PASS damaged cached skill repaired without modifying cache used by existing chats");
             string configPath=Path.Combine(home,"config.toml"),config=File.ReadAllText(configPath);
             string disabled=System.Text.RegularExpressions.Regex.Replace(config,"(\\[plugins\\.\"creezio-relay@creezio-switcher\"\\]\\s*enabled\\s*=\\s*)true","${1}false");
             if(disabled==config)throw new Exception("Fixture plugin configuration not found");File.WriteAllText(configPath,disabled);
@@ -47,8 +53,8 @@ internal static class IntegrationSmoke
                     var names=RelayIntegration.Objects(skills).Select(x=>Json.Str(Json.Get(x,"name"))).Where(x=>x.EndsWith("delegate-task")||x.EndsWith("execute-relay-task")).Distinct().ToArray();
                     Console.WriteLine(Json.Write(new{skills=names}));if(names.Length!=2)throw new Exception("Both relay skills must load in Codex");
                     var servers=Rpc(process,3,"mcpServerStatus/list",new{detail="toolsAndAuthOnly"});
-                    var tools=RelayIntegration.Objects(servers).Select(x=>Json.Str(Json.Get(x,"name"))).Where(x=>new[]{"get_setup","list_agents","submit_job","get_job","read_result","report_result","await_children","reconcile_job","wait_job","list_jobs","cancel_job"}.Contains(x)).Distinct().ToArray();
-                    Console.WriteLine(Json.Write(new{loadedTools=tools}));if(tools.Length!=11)throw new Exception("Relay MCP tools must load in Codex");
+                    var tools=RelayIntegration.Objects(servers).Select(x=>Json.Str(Json.Get(x,"name"))).Where(x=>new[]{"get_setup","list_agents","list_instances","delegate_to_instance","submit_job","get_job","read_result","report_result","await_children","reconcile_job","wait_job","list_jobs","cancel_job"}.Contains(x)).Distinct().ToArray();
+                    Console.WriteLine(Json.Write(new{loadedTools=tools}));if(tools.Length!=13)throw new Exception("Relay MCP tools must load in Codex");
                 }finally{try{process.StandardInput.Close();if(!process.WaitForExit(3000))process.Kill();}catch{}}
             }
             return 0;

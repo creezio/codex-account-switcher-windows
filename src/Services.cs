@@ -160,6 +160,8 @@ namespace Creezio.Switcher
                 throw new InvalidOperationException("Codex CLI est introuvable. Sélectionnez codex.exe dans les paramètres. L'application de bureau Codex fournit généralement cet exécutable.");
         }
         public async Task<Profile> Login(Action<string> openUrl, CancellationToken token)
+        { return Import(await LoginAuth(openUrl,token),null); }
+        public async Task<string> LoginAuth(Action<string> openUrl, CancellationToken token)
         {
             RequireExecutable();
             using(var rpc=new RpcClient(Settings.CodexExecutable,Vault.Root))
@@ -172,7 +174,7 @@ namespace Creezio.Switcher
                 openUrl(url);
                 await rpc.WaitLogin(token);
                 string auth=SafeFiles.ReadText(Path.Combine(rpc.Home,"auth.json"));
-                return Import(auth,null);
+                return auth;
             }
         }
         private async Task<RpcClient> OpenUsageSession(string auth,CancellationToken token)
@@ -244,6 +246,8 @@ namespace Creezio.Switcher
         {
             if(String.IsNullOrEmpty(Data.PreviousAuthJson)) throw new InvalidOperationException("Aucun compte précédent dans le coffre.");
             string previous=Data.PreviousAuthJson;
+            var local=Data.Instances.First(i=>i.IsLocal);
+            if(local.AccountLocked&&AuthIdentity.Parse(previous).Key!=local.AccountKey)throw new InvalidOperationException("La session habituelle est liée à son compte permanent. Utilisez une autre instance pour l'autre compte.");
             var matching=Data.Profiles.FirstOrDefault(p=>p.AuthJson==previous);
             if(matching!=null) InstanceRules.RequireAvailable(matching,Data.Instances.First(i=>i.IsLocal));
             new SwitchTransaction(Settings.CodexHome,CodexEnvironment.ClientsRunning,true).Execute(previous, current=> {Data.PreviousAuthJson=current; Save();},delegate {});

@@ -1,9 +1,9 @@
-﻿# Codex Account Switcher pour Windows
+# Codex Account Switcher pour Windows
 
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.8.0-beta.1 — console Windows et assistance.** Windows 10/11 x64, interface en
+**Version 0.9.0-beta.2 — instances nommées et préparation automatique.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
@@ -15,11 +15,20 @@ français et livraison portable incluant le runtime .NET 10, sans droits adminis
 
 ## Relais entre comptes
 
-Configurez vos rôles, projets, capacités, ressources et règles de délégation.
-Un agent peut demander une revue, des tests, une analyse ou une action avec les
-outils d'un autre compte, puis recevoir le résultat dans son chat. Aucun compte,
-fournisseur ou workflow de publication n'est imposé. [Guide du relais](docs/RELAY.md)
-et [état détaillé de l'implémentation](docs/IMPLEMENTATION.md).
+Créez une instance, donnez-lui un nom et connectez son compte permanent.
+Dans un nouveau chat Codex, dites par exemple : **« Relis ces fichiers et délègue
+la vérification à Léa »**. Le plugin connecte le chat automatiquement, transmet la
+mission à l'instance nommée et retourne son résultat dans le chat source.
+
+Le plugin et les skills sont installés lors de la création, vérifiés au démarrage
+puis toutes les 5 minutes par défaut (intervalle réglable). Le switcher doit rester
+ouvert, éventuellement près de l'horloge. Les réglages de canaux, projets et règles
+restent dans **Réglages avancés**, sans être requis pour une mission explicite.
+[Parcours, plan et validation 0.9](docs/SIMPLE-INSTANCES.md).
+
+Une instance entièrement neuve doit avoir reçu un premier message dans Codex.
+Les permissions restent propres à chaque chat ; le relais ne les modifie pas.
+Les anciens chats peuvent conserver l'ancien plugin jusqu'à un nouveau chat.
 
 ![Vue d’ensemble avec des données fictives](assets/overview.png)
 
@@ -60,14 +69,14 @@ expurgé et vérification des versions publiées.
 
 - Relais local : nouvelles conversations, réponses automatiques et poursuite dans le même chat.
 - Moteur séparé de la fenêtre, file persistante et arrêt manuel conservé.
-- Plugin intégré : trois skills et quatorze outils MCP, installation par profil et mise à jour idempotente.
+- Plugin intégré : trois skills et seize outils MCP, installation par profil et mise à jour idempotente.
 - Délégation explicite par défaut ; routage selon les règles de chaque utilisateur.
 - Ressources liées à leurs canaux autorisés, limites par compte, dépendances et concurrence bornée.
 - Contrôle des permissions du nouveau chat avant transmission du travail ; réutilisation de chats terminés configurable.
 - Réponses longues paginées, résultat déclaré distinct de la livraison, reprise sans renvoi aveugle.
 - Contrôle des comptes, dossiers et permissions effectives ; historique chiffré et protection contre les envois répétés.
 - Création d'instances nommées, avec authentification, interface, réglages et bases séparés.
-- Comptes disponibles pour **toutes les instances, présentes et futures**, ou uniquement une sélection.
+- Un compte permanent par instance ; changement de compte et dissociation refusés. Un même compte peut être utilisé dans plusieurs instances explicitement créées pour lui.
 - Ouverture simultanée, nom de l'instance dans le titre de sa fenêtre et fermeture ciblée.
 - Instances retrouvées au redémarrage du switcher ; quitter le switcher les laisse ouvertes.
 - Archivage réversible : les profils et les conversations sont conservés.
@@ -77,11 +86,10 @@ expurgé et vérification des versions publiées.
 - Quotas par compte et par catégorie : pourcentage restant, durée et date de
   réinitialisation. Une donnée inconnue reste inconnue.
 - Comparaison des marges d'utilisation récentes depuis les fiches de comptes.
-- Bascule manuelle avec vérification serveur préalable, sauvegarde chiffrée,
-  remplacement atomique et restauration en cas d'échec local.
+- Association initiale avec écriture atomique ; détection d’un compte changé manuellement dans Codex.
 - Icône près de l'horloge, actualisation automatique facultative toutes les
   cinq minutes et notifications lorsque les quotas deviennent faibles.
-- Noms personnalisés et retrait des comptes du coffre.
+- Noms personnalisés et retrait des comptes non associés à une instance.
 - Affichage des crédits de reset disponibles et de la prochaine expiration connue.
 - **Reset automatique facultatif des limites**, avec seuil et fenêtre configurables par compte (1 % proposé). Les réglages existants sont conservés ; une nouvelle installation exige une activation. Il concerne les
   comptes utilisés : session habituelle et instances gérées ouvertes. Un même compte
@@ -271,10 +279,10 @@ pas déplacés ni supprimés.
 Depuis PowerShell à la racine du dépôt :
 
 ```powershell
-.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.8.0
+.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.9.0-beta.2
 .\scripts\test.ps1 -TestDirectory work\framework-validation
 dotnet run --project tests\Core.Net10.csproj -c Release -- work\net10-validation
-.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.8.0
+.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.9.0-beta.2
 ```
 
 La compilation de l'interface exige le SDK .NET 10 ; le moteur utilise le

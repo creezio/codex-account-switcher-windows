@@ -1,8 +1,8 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param([string]$BinaryDirectory)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.8.0'}
+$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.9.0-beta.2'}
 $exe=Join-Path $bin 'CodexAccountSwitcher.exe'
 $fixture=Join-Path $repo 'work\desktop-validation'
 $p=Start-Process -FilePath $exe -ArgumentList @('--ui-test',('"'+$fixture+'"')) -WindowStyle Hidden -PassThru -Wait

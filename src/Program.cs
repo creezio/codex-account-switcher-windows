@@ -6,11 +6,11 @@ using System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("Creezio Codex Account Switcher")]
 #if NETCOREAPP
-[assembly: System.Reflection.AssemblyVersion("0.7.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersion("0.7.0-beta.1")]
+[assembly: System.Reflection.AssemblyVersion("0.9.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersion("0.9.0-beta.2")]
 #else
-[assembly: System.Reflection.AssemblyVersion("0.6.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersion("0.6.0-beta.1")]
+[assembly: System.Reflection.AssemblyVersion("0.9.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersion("0.9.0-beta.2")]
 #endif
 [assembly: System.Reflection.AssemblyCompany("Creezio")]
 

@@ -32,12 +32,13 @@ namespace Creezio.Switcher
             data.Version = 2;
         }
         public static IEnumerable<Profile> Available(VaultData data, DesktopInstance instance)
-        { return data.Profiles.Where(p=>p.Allows(instance.Id)); }
+        { return data.Profiles.Where(p=>p.Allows(instance.Id)&&(!instance.AccountLocked||instance.AccountKey==p.Key)); }
         public static Profile Best(VaultData data, DesktopInstance instance)
         { return Available(data,instance).Where(p=>p.Score.HasValue && p.Score>0).OrderByDescending(p=>p.Score).FirstOrDefault(); }
         public static void RequireAvailable(Profile profile, DesktopInstance instance)
         {
             if(instance.Archived) throw new InvalidOperationException("Restaurez d'abord cette instance archivée.");
+            if(instance.AccountLocked&&instance.AccountKey!=profile.Key) throw new InvalidOperationException("« "+instance.Name+" » est liée définitivement à un autre compte. Créez une autre instance pour ce compte.");
             if(!profile.Allows(instance.Id)) throw new InvalidOperationException("Ce compte n'est pas associé à cette instance. Modifiez ses associations dans Comptes.");
         }
     }

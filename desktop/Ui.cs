@@ -115,7 +115,7 @@ namespace Creezio.Switcher.Desktop
         public bool Saved;
         internal Func<bool> ConfirmDiscard;
         private bool saving;
-        public EditWindow(Window owner, string title)
+        public EditWindow(Window owner, string title, string saveCaption = "Enregistrer")
         {
             Owner = owner;
             Title = title;
@@ -130,6 +130,7 @@ namespace Creezio.Switcher.Desktop
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             ShowInTaskbar = false;
             var dock = new DockPanel { Margin = new Thickness(24) };
+            dock.SetResourceReference(Panel.BackgroundProperty,"CanvasBrush");
             Content = dock;
             var heading = Ui.Text(title, 24);
             DockPanel.SetDock(heading, Dock.Top);
@@ -141,9 +142,9 @@ namespace Creezio.Switcher.Desktop
             error.Foreground = Brushes.Firebrick;
             footer.Children.Add(error);
             var actions = Ui.Actions(footer);
-            actions.Children.Add(Ui.AsyncButton("Enregistrer", async delegate { saving = true; try { if (Save != null) await Save(); Saved = true; Close(); } finally { saving = false; } }, e => error.Text = Program.SafeError(e), true));
+            actions.Children.Add(Ui.AsyncButton(saveCaption, async delegate { saving = true; try { if (Save != null) await Save(); Saved = true; Close(); } finally { saving = false; } }, e => error.Text = Program.SafeError(e), true));
             actions.Children.Add(Ui.Button("Annuler", Close));
-            dock.Children.Add(new ScrollViewer { Content = Fields });
+            dock.Children.Add(new ScrollViewer { Content = Fields, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
             ConfirmDiscard = () => Ui.Confirm(this, "Abandonner les modifications non enregistrées ?", "Modifications en cours");
             Closing += delegate (object sender, System.ComponentModel.CancelEventArgs e)
             {

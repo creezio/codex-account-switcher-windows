@@ -12,11 +12,12 @@ namespace Creezio.Switcher.Desktop
     public sealed class AppearanceSettings
     {
         public string Theme { get; set; } = "Système";
+        public bool Advanced { get; set; }
     }
     internal sealed class PreferencesPage : PageView
     {
         private readonly StackPanel fields = new StackPanel();
-        private TextBox exe, home, max, perAccount;
+        private TextBox exe, home, max, perAccount, checkMinutes;
         private CheckBox autoRefresh, autoReset, notify, background, persistent, autoInstall;
         private ComboBox theme;
         private string saved;
@@ -32,7 +33,7 @@ namespace Creezio.Switcher.Desktop
         }
         private string Snapshot()
         {
-            return exe.Text + "|" + home.Text + "|" + max.Text + "|" + perAccount.Text + "|" + autoRefresh.IsChecked + "|" + autoReset.IsChecked + "|" + notify.IsChecked + "|" + background.IsChecked + "|" + persistent.IsChecked + "|" + autoInstall.IsChecked + "|" + theme.SelectedItem;
+            return exe.Text + "|" + home.Text + "|" + max.Text + "|" + perAccount.Text + "|" + autoRefresh.IsChecked + "|" + autoReset.IsChecked + "|" + notify.IsChecked + "|" + background.IsChecked + "|" + persistent.IsChecked + "|" + autoInstall.IsChecked + "|" + checkMinutes.Text + "|" + theme.SelectedItem;
         }
         public override async Task Refresh()
         {
@@ -58,7 +59,9 @@ namespace Creezio.Switcher.Desktop
                 fields.Children.Add(new GroupBox { Header = "Limites d'utilisation", Content = supervision });
                 var relay = new StackPanel();
                 persistent = Ui.Check("Garder le relais actif même sans tâche", state.Relay.KeepWorkerRunning, relay);
-                autoInstall = Ui.Check("Mettre à jour l'intégration des instances gérées au lancement", state.Relay.AutoInstallManaged, relay);
+                autoInstall = Ui.Check("Vérifier et entretenir automatiquement le plugin et les skills", state.Settings.MaintainIntegration, relay);
+                checkMinutes = Ui.Input("Vérification au démarrage puis toutes les X minutes (1 à 120)", state.Settings.IntegrationCheckMinutes.ToString(), relay);
+                relay.Children.Add(Ui.Text("Actif tant que le switcher est ouvert, y compris près de l'horloge. Les installations manquantes sont réparées. Une désactivation volontaire dans Codex reste signalée jusqu'à une réparation demandée.",13,true));
                 max = Ui.Input("Tâches simultanées au total (1 à 16)", state.Relay.MaxParallel.ToString(), relay);
                 perAccount = Ui.Input("Tâches simultanées par compte (1 à 16)", state.Relay.MaxPerAccount.ToString(), relay);
                 fields.Children.Add(new GroupBox { Header = "Collaboration", Content = relay });
@@ -98,11 +101,13 @@ namespace Creezio.Switcher.Desktop
             if (saved == null)
                 return;
             int total, account;
+            int interval;
+            if(!Int32.TryParse(checkMinutes.Text,out interval)||interval<1||interval>120)throw new InvalidOperationException("Choisissez un intervalle de 1 à 120 minutes.");
             if (!Int32.TryParse(max.Text, out total) || !Int32.TryParse(perAccount.Text, out account) || total < 1 || total > 16 || account < 1 || account > 16)
                 throw new InvalidOperationException("Les limites de tâches doivent être comprises entre 1 et 16.");
             if (!File.Exists(exe.Text) || !Directory.Exists(home.Text) || !Path.IsPathRooted(home.Text))
                 throw new InvalidOperationException("Choisissez un exécutable et un dossier Codex existants.");
-            await Context.Mutate(a => { a.Settings.CodexExecutable = Path.GetFullPath(exe.Text); a.Settings.CodexHome = Path.GetFullPath(home.Text); a.Settings.AutoRefresh = autoRefresh.IsChecked == true; a.Settings.AutoResetCredits = autoReset.IsChecked == true; a.Settings.Notifications = notify.IsChecked == true; a.Vault.SaveSettings(a.Settings); var usage = UsageCoordinator.Policies(Context.Store); usage.Background = background.IsChecked == true; UsageCoordinator.SavePolicies(Context.Store, usage); var policy = RelayPolicies.Load(Context.Store); policy.MaxParallel = total; policy.MaxPerAccount = account; policy.KeepWorkerRunning = persistent.IsChecked == true; policy.AutoInstallManaged = autoInstall.IsChecked == true; RelayPolicies.Save(Context.Store, policy); Context.Store.WriteRecord("appearance.dpapi", new AppearanceSettings { Theme = (string)theme.SelectedItem }); if (!Context.Fixture) { if (usage.Background) UsageCoordinator.Ensure(Context.Store); if (policy.KeepWorkerRunning) RelayWorker.Ensure(Context.Store); } return Task.CompletedTask; });
+            await Context.Mutate(a => { a.Settings.CodexExecutable = Path.GetFullPath(exe.Text); a.Settings.CodexHome = Path.GetFullPath(home.Text); a.Settings.AutoRefresh = autoRefresh.IsChecked == true; a.Settings.AutoResetCredits = autoReset.IsChecked == true; a.Settings.Notifications = notify.IsChecked == true; a.Settings.MaintainIntegration = autoInstall.IsChecked == true; a.Settings.IntegrationCheckMinutes = interval; a.Vault.SaveSettings(a.Settings); var usage = UsageCoordinator.Policies(Context.Store); usage.Background = background.IsChecked == true; UsageCoordinator.SavePolicies(Context.Store, usage); var policy = RelayPolicies.Load(Context.Store); policy.MaxParallel = total; policy.MaxPerAccount = account; policy.KeepWorkerRunning = persistent.IsChecked == true; policy.AutoInstallManaged = false; RelayPolicies.Save(Context.Store, policy); Context.Store.WriteRecord("appearance.dpapi", new AppearanceSettings { Theme = (string)theme.SelectedItem, Advanced = Context.Store.ReadRecord<AppearanceSettings>("appearance.dpapi").Advanced }); if (!Context.Fixture) { if (usage.Background) UsageCoordinator.Ensure(Context.Store); if (policy.KeepWorkerRunning) RelayWorker.Ensure(Context.Store); } return Task.CompletedTask; });
             saved = Snapshot();
             Notice.Text = "Réglages enregistrés.";
         }

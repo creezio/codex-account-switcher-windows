@@ -24,7 +24,11 @@ namespace Creezio.Switcher
             string thread=Environment.GetEnvironmentVariable("CODEX_THREAD_ID");
             if(String.IsNullOrEmpty(thread))throw new InvalidOperationException("La connexion doit être exécutée comme commande dans le chat appelant.");
             string home=CodexEnvironment.DefaultHome();
-            var candidates=store.Channels().Where(c=>c.Enabled&&RelayStore.SamePath(c.Home,home)&&(String.IsNullOrEmpty(channelId)||c.Id==channelId)).ToList();
+            if(String.IsNullOrEmpty(channelId)){
+                var incoming=store.Messages().Where(m=>m.TargetThreadId==thread&&RelayStore.SamePath(m.TargetHome,home)).Select(m=>m.TargetChannelId).Distinct().ToArray();
+                channelId=incoming.Length==1?incoming[0]:(await NamedInstances.BindSource(store,token)).Id;
+            }
+            var candidates=store.Channels().Where(c=>c.Enabled&&RelayStore.SamePath(c.Home,home)&&c.Id==channelId).ToList();
             if(candidates.Count!=1)throw new InvalidOperationException("Indiquez le canal à utiliser dans ce profil : "+String.Join(", ",candidates.Select(c=>c.Id)));
             var channel=candidates[0];RelayCommand.RequireSource(channel);
             var transport=new DesktopRelayTransport();var snapshot=await transport.Call(channel,"read_thread",new{threadId=thread,turnLimit=1,includeOutputs=false,maxOutputCharsPerItem=1000},token);

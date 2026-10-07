@@ -22,6 +22,7 @@ namespace Creezio.Switcher.Desktop
         private readonly System.Windows.Forms.NotifyIcon tray;
         private bool navigating, supervising, exit;
         private readonly HashSet<string> refreshing = new HashSet<string>();
+        private CheckBox advancedNavigation;
         private string themeMode = "Système";
         private readonly HashSet<string> notified = new HashSet<string>(), lowNotified = new HashSet<string>();
         internal string CurrentPage
@@ -56,7 +57,8 @@ namespace Creezio.Switcher.Desktop
             side.Children.Add(brand);
             var footer = new StackPanel { Margin = new Thickness(8, 14, 0, 0) };
             footer.Children.Add(status);
-            footer.Children.Add(Ui.Text("0.8 bêta · Interface WPF", 11, true));
+            advancedNavigation = Ui.Check("Réglages avancés", context.Store.ReadRecord<AppearanceSettings>("appearance.dpapi").Advanced, footer);
+            footer.Children.Add(Ui.Text("0.9 bêta · Instances nommées", 11, true));
             DockPanel.SetDock(footer, Dock.Bottom);
             side.Children.Add(footer);
             side.Children.Add(Navigation);
@@ -71,7 +73,12 @@ namespace Creezio.Switcher.Desktop
             Pages.Add("PC distants", new RemotePage(context, this));
             Pages.Add("Assistance", new AssistancePage(context, this));
             Pages.Add("Paramètres", new PreferencesPage(context, this));
-            Navigation.ItemsSource = Pages.Keys.ToArray();
+            UpdateNavigation();
+            advancedNavigation.Click += delegate {
+                if(advancedNavigation.IsChecked!=true && (CurrentPage=="Agents"||CurrentPage=="Projets") && !Pages[CurrentPage].CanLeave()){advancedNavigation.IsChecked=true;return;}
+                string previous=CurrentPage; UpdateNavigation(); Navigate(previous=="Agents"||previous=="Projets" ? "Instances" : previous??"Accueil");
+                var appearance=context.Store.ReadRecord<AppearanceSettings>("appearance.dpapi");appearance.Advanced=advancedNavigation.IsChecked==true;context.Store.WriteRecord("appearance.dpapi",appearance);
+            };
             System.Windows.Automation.AutomationProperties.SetName(Navigation, "Navigation principale");
             Navigation.SelectionChanged += async delegate
             {
@@ -149,8 +156,11 @@ namespace Creezio.Switcher.Desktop
         }
         internal void Navigate(string page)
         {
+            if((page=="Agents"||page=="Projets")&&advancedNavigation.IsChecked!=true){advancedNavigation.IsChecked=true;UpdateNavigation();}
             Navigation.SelectedItem = page;
         }
+        private void UpdateNavigation()
+        { Navigation.ItemsSource = new[]{"Accueil","Instances","Tâches","Comptes","Assistance","PC distants","Agents","Projets","Paramètres"}.Where(p=>advancedNavigation.IsChecked==true||(p!="Agents"&&p!="Projets")).ToArray(); }
         internal void ExitForTest()
         {
             exit = true;
@@ -243,10 +253,10 @@ namespace Creezio.Switcher.Desktop
         private string fingerprint;
         public HomePage(DesktopContext c, ShellWindow s) : base(c, s, "Votre espace de travail", "Vos comptes, vos instances et les tâches qui demandent votre attention.")
         {
-            Command("Nouvelle tâche", async delegate { await JobComposer.Open(Context, Shell, null); }, true);
-            Command("Configurer la collaboration", delegate
+            Command("Créer une instance", async delegate { await InstanceWizard.Open(Context, Shell); await Refresh(); }, true);
+            Command("Mes instances", delegate
             {
-                Shell.Navigate("Agents");
+                Shell.Navigate("Instances");
                 return Task.CompletedTask;
             });
             Body.Children.Add(new ScrollViewer { Content = stack });
@@ -259,6 +269,11 @@ namespace Creezio.Switcher.Desktop
                 return;
             fingerprint = stamp;
             stack.Children.Clear();
+            var guide = new StackPanel();
+            guide.Children.Add(Ui.Text("Déléguez avec un nom",22));
+            guide.Children.Add(Ui.Text("1. Créez une instance et connectez son compte.\n2. Le plugin et les skills sont préparés automatiquement.\n3. Dans Codex : « Analyse ces fichiers et délègue la relecture à Léa ».\nLe travail apparaît dans l'autre instance et sa réponse revient dans votre chat.",15,true));
+            guide.Children.Add(Ui.Text("Une instance entièrement neuve doit avoir reçu un premier message dans Codex. Après une mise à jour du plugin, utilisez un nouveau chat pour charger ses outils.",13,true));
+            stack.Children.Add(Ui.Card(guide));
             var stats = new UniformGrid { Columns = 3, Margin = new Thickness(0, 8, 0, 8) };
             foreach (var item in new[] { new { Count = snapshot.Accounts, Label = "Comptes", Page = "Comptes" }, new { Count = snapshot.Instances, Label = "Instances", Page = "Instances" }, new { Count = snapshot.Jobs.Count, Label = "Tâches actives", Page = "Tâches" } })
             {
