@@ -73,14 +73,30 @@ foreach($name in @('INSTANCE-LIFECYCLE.md','SHARED-PAGES.md','SHARED-PAGES-VALID
 $zip=Join-Path $repo 'outputs\CodexAccountSwitcher-0.12.1-beta.1-windows-x64.zip'
 # All published runtime assemblies are required. Test helpers and debug symbols are not shipped.
 $items=Get-ChildItem -LiteralPath $bin | Where-Object {$_.Name -notmatch '(Smoke|Tests|\.pdb$)' } | ForEach-Object FullName
-Compress-Archive -LiteralPath $items -DestinationPath $zip -Force
+Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-$archive=[IO.Compression.ZipFile]::OpenRead($zip)
+# Windows PowerShell Compress-Archive requests write access to DLLs and fails
+# when the delivered app is open. Read immutable release files with shared access.
+$temporary=$zip+'.tmp'
+$stream=[IO.File]::Open($temporary,[IO.FileMode]::Create,[IO.FileAccess]::Write,[IO.FileShare]::None)
+$archive=[IO.Compression.ZipArchive]::new($stream,[IO.Compression.ZipArchiveMode]::Create,$false)
+try {
+  foreach($item in $items){
+    $files=if(Test-Path -LiteralPath $item -PathType Container){Get-ChildItem -LiteralPath $item -Recurse -File}else{Get-Item -LiteralPath $item}
+    foreach($file in $files){
+      $entry=$archive.CreateEntry($file.FullName.Substring($bin.TrimEnd('\').Length+1).Replace('\','/'),[IO.Compression.CompressionLevel]::Optimal)
+      $inputStream=[IO.File]::Open($file.FullName,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+      try{$outputStream=$entry.Open();try{$inputStream.CopyTo($outputStream)}finally{$outputStream.Dispose()}}finally{$inputStream.Dispose()}
+    }
+  }
+}finally{$archive.Dispose();$stream.Dispose()}
+$archive=[IO.Compression.ZipFile]::OpenRead($temporary)
 try{
   foreach($required in @('CodexAccountSwitcher.exe','CodexAccountSwitcher.dll','coreclr.dll','CreezioRelay.exe','plugins/creezio-relay/.codex-plugin/plugin.json','plugins/creezio-relay/ui/viewer.html')){
     if(-not($archive.Entries | Where-Object {$_.FullName.Replace('\','/') -eq $required})){throw "Fichier absent du ZIP : $required"}
   }
 }finally{$archive.Dispose()}
+Move-Item -LiteralPath $temporary -Destination $zip -Force
 $hash=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText((Join-Path $repo 'outputs\SHA256SUMS-0.12.1-beta.1.txt'),$hash+'  '+[IO.Path]::GetFileName($zip)+"`n")
 Get-Item -LiteralPath $zip | Select-Object Name,Length
