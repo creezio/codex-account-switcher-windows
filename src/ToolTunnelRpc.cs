@@ -99,7 +99,7 @@ namespace Creezio.Switcher
                         var raw=pair.Value;string name=Json.Str(Json.Get(raw,"name"));if(String.IsNullOrEmpty(name))continue;
                         var meta=Json.Get(raw,"_meta");var annotations=Json.Get(raw,"annotations");
                         string connector=Json.Str(Json.Get(meta,"connector_id"));if(serverName=="codex_apps"&&!callable.Contains(connector))continue;
-                        tools.Add(new TunnelTool{Server=serverName,Name=name,Group=Json.Str(Json.Get(meta,"connector_name")),ConnectorId=connector,Annotations=annotations,Description=Json.Str(Json.Get(raw,"description")),Schema=Json.Get(raw,"inputSchema"),ReadOnly=Object.Equals(Json.Get(annotations,"readOnlyHint"),true)&&!Object.Equals(Json.Get(annotations,"destructiveHint"),true)});
+                        tools.Add(new TunnelTool{Server=serverName,Name=name,Title=Json.Str(Json.Get(raw,"title")),Group=Json.Str(Json.Get(meta,"connector_name")),ConnectorId=connector,Annotations=annotations,Description=Json.Str(Json.Get(raw,"description")),Schema=Json.Get(raw,"inputSchema"),ReadOnly=Object.Equals(Json.Get(annotations,"readOnlyHint"),true)&&!Object.Equals(Json.Get(annotations,"destructiveHint"),true)});
                     }
                 }
                 cursor=Json.Str(Json.Get(result,"nextCursor"));if(cursor.Length>0&&!seen.Add(cursor))throw new IOException("Pagination Codex répétée.");

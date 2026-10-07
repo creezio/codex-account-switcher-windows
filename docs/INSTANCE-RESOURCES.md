@@ -1,4 +1,4 @@
-# Instances, comptes et ressources — 0.11
+# Instances, comptes, plugins et ressources — 0.11.1
 
 ## Parcours
 
@@ -12,7 +12,14 @@
 5. Rechercher par nom, filtrer par plugin, cocher les ressources et choisir les
    droits. **Enregistrer les accès** applique les changements ensemble. **Annuler**
    restaure les droits enregistrés. Les nouvelles ressources ne sont pas cochées.
-6. Dans un nouveau chat de l’instance cliente, demander par exemple :
+6. Pour un autre plugin, cliquer sur **Configurer les actions** sur sa fiche.
+   La fenêtre porte le nom du plugin et conserve le propriétaire et le destinataire.
+   Ses actions se chargent automatiquement, avec leurs libellés fournisseur et une
+   recherche. Cocher les lectures ou les autres actions utiles, puis enregistrer.
+   Aucun nom de partage ni sélection Site/Page n’est demandé. Les actions utilisent
+   les accès du compte propriétaire ; le switcher n’ajoute pas de filtre par élément
+   pour un plugin dont il ne sait pas énumérer les ressources.
+7. Dans un nouveau chat de l’instance cliente, demander par exemple :
    « Utilise les ressources de Principal pour lire la Feuille de route ».
    Le skill retrouve le nom et l’identifiant parmi les ressources autorisées.
 
@@ -30,7 +37,7 @@ dans **Réglages avancés**.
 | Pages / Space | Pages accessibles, noms et droits du compte | Modification textuelle de la Page sélectionnée |
 | Sites | Sites du propriétaire et Sites éditables | Métadonnées du Site sélectionné |
 | Tableurs, présentations, documents natifs | Signalés si renvoyés par le catalogue Pages | Non partageables avec le transport actuel |
-| Autres plugins connectés | Nom du plugin et nombre d’outils | Configuration avancée des opérations disponibles |
+| Autres plugins connectés | Nom du plugin et nombre d’actions | Cases par action, dans une fenêtre propre au plugin |
 
 Il n’existe pas d’énumération universelle des ressources de tous les MCP.
 Le catalogue signale explicitement les plugins sans adaptateur, les erreurs et
@@ -51,6 +58,14 @@ et éditeurs natifs ne sont pas transférés. Voir [le contrat du tunnel](TOOL-T
   et attachés à l’identité exacte de l’instance, du compte et du profil.
 - `InstanceResourcesView` conserve les choix en brouillon. Une actualisation
   périodique ne remplace pas une sélection en cours. La découverte est annulable.
+- `PluginAccess` et `PluginAccessEditor` gèrent les permissions par action dans
+  le contexte exact propriétaire / destinataire / plugin. `CatalogPlugin` distingue
+  ces règles des sélections de ressources : enregistrer l’une ne révoque pas l’autre.
+  Le chargement ne coche rien par défaut et signale les anciennes règles distinctes.
+  L’enregistrement vérifie à nouveau les outils disponibles et leur contrat, puis
+  applique les choix sous verrou avec une révision contre les conflits concurrents.
+  Un titre d’action fourni par le plugin sert à l’affichage ; en son absence le nom
+  technique est conservé, sans inventer une interprétation métier.
 - Enregistrement : vérification de l’identité, de la fraîcheur et des outils,
   préparation des règles, puis remplacement atomique sous verrou. Une révision
   empêche l’écrasement d’un changement concurrent. Chaque règle a une liste
@@ -92,3 +107,15 @@ Résultats : **276 tests moteur** réussis sous .NET Framework et **276 sous .NE
 **61 tests WPF**, compatibilité du coffre dans les deux sens, installation et
 réparation du plugin, chargement de ses **4 skills et 20 outils**, cycle de vie
 des workers et compilation portable sans avertissement.
+
+Correction 0.11.1 : le parcours complet depuis la fiche d’un plugin est testé par
+clic jusqu’à l’enregistrement, avec vérification du propriétaire, du destinataire,
+de la liste exclusive des actions, des filtres et du maintien du brouillon des
+ressources. Le formulaire avancé ne propose plus systématiquement Site/Page.
+Recette réelle en lecture seule : Certivan — V5 expose 57 actions dont 25 lectures,
+toutes avec un libellé fournisseur. Aucune action métier ni permission réelle n’a
+été modifiée pendant cette vérification.
+
+Recette 0.11.1 : **286 tests moteur par runtime** et **69 tests WPF**, dont un
+enregistrement de permission par clic depuis la fiche plugin. Les règles de
+ressources, de plugins et les anciennes règles avancées sont testées séparément.

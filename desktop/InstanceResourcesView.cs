@@ -21,6 +21,7 @@ namespace Creezio.Switcher.Desktop
         private readonly Dictionary<string,string> clientHomes;
         private string client,revision;
         private TunnelGrant[] legacyGrants=new TunnelGrant[0];
+        private int configuredPlugins;
         private readonly ComboBox recipient,plugin;
         internal readonly TextBox Search=new TextBox();
         private readonly StackPanel rows=new StackPanel();
@@ -32,6 +33,7 @@ namespace Creezio.Switcher.Desktop
         private CancellationTokenSource discovery;
         private DateTime attempted;
         internal Func<bool> ConfirmDiscard;
+        internal Func<PluginAccess> PluginServiceFactory;
         internal bool Dirty=>Snapshot(initial)!=Snapshot(draft);
         private static string Snapshot(Dictionary<string,string> value)=>String.Join("|",value.OrderBy(p=>p.Key).Select(p=>p.Key+":"+p.Value));
         internal InstanceResourcesView(DesktopContext context,ShellWindow shell,DesktopInstance owner)
@@ -69,7 +71,13 @@ namespace Creezio.Switcher.Desktop
         private void LoadFilters()
         {string old=plugin.SelectedValue as string;plugin.ItemsSource=new[]{new KeyValuePair<string,string>("Tous les plugins","")}.Concat(inventory.Plugins.Select(p=>new KeyValuePair<string,string>(p.Name,p.Key))).ToArray();plugin.SelectedValue=inventory.Plugins.Any(p=>p.Key==old)?old:"";}
         private void LoadSelection()
-        {initial=client==null?new Dictionary<string,string>():service.Selections(inventory,client);draft=new Dictionary<string,string>(initial);revision=client==null?null:service.Revision(owner.Id,client);legacyGrants=new ToolTunnel(context.Store).Grants().Where(g=>g.Enabled&&g.Instance==owner.Id&&String.IsNullOrEmpty(g.CatalogClient)).ToArray();page=0;Render();}
+        {initial=client==null?new Dictionary<string,string>():service.Selections(inventory,client);draft=new Dictionary<string,string>(initial);revision=client==null?null:service.Revision(owner.Id,client);RefreshRules();page=0;Render();}
+        private void RefreshRules()
+        {
+            var grants=new ToolTunnel(context.Store).Grants().Where(g=>g.Enabled&&g.Instance==owner.Id).ToArray();
+            legacyGrants=grants.Where(g=>String.IsNullOrEmpty(g.CatalogClient)).ToArray();
+            configuredPlugins=grants.Where(g=>g.CatalogClient==client&&!String.IsNullOrEmpty(g.CatalogPlugin)).Select(g=>g.CatalogPlugin).Distinct().Count();
+        }
         private IEnumerable<InstanceResource> Filtered()
         {string selected=plugin.SelectedValue as string;return inventory.Resources.Where(r=>(String.IsNullOrEmpty(selected)||r.Plugin==selected)&&(r.Title+" "+r.Kind).IndexOf(Search.Text,StringComparison.CurrentCultureIgnoreCase)>=0).OrderBy(r=>r.Kind).ThenBy(r=>r.Title);}
         private InstanceResource[] Visible()=>Filtered().Skip(page*40).Take(40).ToArray();
@@ -82,7 +90,7 @@ namespace Creezio.Switcher.Desktop
         private void UpdateSummary()
         {
             int added=draft.Keys.Except(initial.Keys).Count(),removed=initial.Keys.Except(draft.Keys).Count(),changed=draft.Count(p=>initial.ContainsKey(p.Key)&&initial[p.Key]!=p.Value);
-            summary.Text=client==null?"Créez une autre instance pour configurer ses accès.":Dirty?$"À enregistrer · {added} ajout(s), {removed} retrait(s), {changed} droit(s) modifié(s)":$"{draft.Count} ressource(s) partagée(s) avec {clients[client].Name}";
+            summary.Text=client==null?"Créez une autre instance pour configurer ses accès.":Dirty?$"À enregistrer · {added} ajout(s), {removed} retrait(s), {changed} droit(s) modifié(s)":$"Pour {clients[client].Name} · {draft.Count} ressource(s) · {configuredPlugins} plugin(s) partagé(s)";
             save.IsEnabled=client!=null&&Dirty&&!busy;
         }
         private void Render()
@@ -107,10 +115,17 @@ namespace Creezio.Switcher.Desktop
                 choices.SelectionChanged+=delegate{if(check.IsChecked==true){draft[resource.Key]=choices.SelectedIndex==1?"edit":"read";UpdateSummary();}};
                 var resourceCard=Ui.Card(card);resourceCard.Padding=new Thickness(12);resourceCard.Margin=new Thickness(0,0,0,8);rows.Children.Add(resourceCard);
             }
-            if(total==0)rows.Children.Add(Ui.Text(String.IsNullOrWhiteSpace(inventory.Updated)?"Les ressources apparaîtront après la détection du compte.":"Aucune ressource correspondant à cette recherche.",15,true));
+            bool actionsOnly=inventory.Plugins.Any(p=>p.Key==(string)plugin.SelectedValue&&p.State=="unsupported");
+            if(total==0&&!actionsOnly)rows.Children.Add(Ui.Text(String.IsNullOrWhiteSpace(inventory.Updated)?"Les ressources apparaîtront après la détection du compte.":"Aucune ressource correspondant à cette recherche.",15,true));
             foreach(var p in inventory.Plugins.Where(p=>p.State!="ready"&&(String.IsNullOrEmpty(plugin.SelectedValue as string)||p.Key==(string)plugin.SelectedValue))){
-                var item=new StackPanel();item.Children.Add(Ui.Text(p.Name+" · "+p.Tools+" outils",16));item.Children.Add(Ui.Text(p.Message,13,true));
-                if(p.State=="unsupported")item.Children.Add(Ui.AsyncButton("Choisir ses opérations…",async()=>{if(!CanLeave())return;await ((ToolSharingPage)shell.Pages["Outils partagés"]).Edit(null,owner.Id);LoadSelection();},e=>state.Text=Program.SafeError(e)));
+                var item=new StackPanel();item.Children.Add(Ui.Text(p.Name+" · "+p.Tools+" actions",16));item.Children.Add(Ui.Text(p.State=="unsupported"?"Ce plugin se partage par actions. Choisissez ce que l’instance destinataire pourra utiliser.":p.Message,13,true));
+                if(p.State=="unsupported"){
+                    var configure=Ui.Button("Configurer les actions",()=>{
+                        if(client==null||busy)return;
+                        try{var dialog=PluginAccessEditor.Create(context,shell,owner,clients[client],p,PluginServiceFactory?.Invoke());dialog.ShowDialog();if(dialog.Saved){RefreshRules();Render();}}
+                        catch(Exception e){state.Text=Program.SafeError(e);}
+                    });configure.IsEnabled=client!=null&&!busy;System.Windows.Automation.AutomationProperties.SetName(configure,"Configurer les actions de "+p.Name);item.Children.Add(configure);
+                }
                 rows.Children.Add(Ui.Card(item));
             }
             UpdateSummary();

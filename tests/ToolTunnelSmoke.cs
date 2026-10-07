@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
@@ -33,6 +33,17 @@ internal static class ToolTunnelSmoke
                 Console.WriteLine("PASS metadata discovery; no model turn; existing permissions preserved");return 0;
             }
             var catalog=tunnel.Discover(args[0],CancellationToken.None).GetAwaiter().GetResult();
+            if(args.Length>2&&args[2]=="plugin-context"){
+                var accounts=new AccountService(Path.GetDirectoryName(store.Root));var owner=NamedInstances.Resolve(accounts,args[0]);var client=accounts.Data.Instances.First(i=>!i.Archived&&i.Id!=owner.Id&&!String.IsNullOrEmpty(i.AccountKey));
+                var matching=catalog.Where(t=>t.Group.IndexOf("Certivan",StringComparison.OrdinalIgnoreCase)>=0).ToArray();
+                if(matching.Length==0)throw new Exception("Target plugin not present on this account");
+                var key=InstanceResources.PluginKey(matching[0]);var before=ToolTunnel.Hash(Json.Read<object>(Json.Write(tunnel.Grants())));
+                var pluginState=new PluginAccess(store).Load(owner.Id,owner.AccountKey,accounts.Instances.Home(owner),client.Id,accounts.Instances.Home(client),client.AccountKey,key,CancellationToken.None).GetAwaiter().GetResult();
+                if(pluginState.Tools.Any(t=>InstanceResources.PluginKey(t)!=key))throw new Exception("Mixed plugin context");
+                if(before!=ToolTunnel.Hash(Json.Read<object>(Json.Write(tunnel.Grants()))))throw new Exception("Loading changed permissions");
+                Console.WriteLine(Json.Write(new{plugin=matching[0].Group,actions=pluginState.Tools.Length,namedActions=pluginState.Tools.Count(t=>PluginAccess.Label(t)!=t.Name),readActions=pluginState.Tools.Count(t=>t.ReadOnly),selected=pluginState.Selected.Count,existingRules=pluginState.ExistingRules.Length}));
+                Console.WriteLine("PASS exact live plugin context; no action invoked and no permission changed");return 0;
+            }
             var wanted=new[]{"chatgpt_space.list_pages","chatgpt_space.create_page","chatgpt_space.read_page","chatgpt_space.edit_page","sites.create_site","sites.save_site_version","sites.save_version_and_deploy_private","sites.deploy_site_version","sites.get_site","sites.create_source_repository_write_credential","sites.get_deployment_status","sites.list_site_versions"};
             var tools=catalog.Where(t=>wanted.Contains(t.Name)).ToArray();
             File.WriteAllText(args[1],Json.Write(tools));Console.WriteLine("PASS official app-server inventory: "+catalog.Length+" tools; saved "+tools.Length+" selected schemas (no credentials)");

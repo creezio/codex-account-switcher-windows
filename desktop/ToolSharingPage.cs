@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -35,7 +35,7 @@ namespace Creezio.Switcher.Desktop
                 var owner=Context.Accounts().Data.Instances.FirstOrDefault(i=>i.Id==g.Instance);
                 Details.Children.Add(Ui.Text("Propriétaire : "+(owner?.Name??g.Instance)));
                 Details.Children.Add(Ui.Text(String.IsNullOrEmpty(g.ResourceField)?"Périmètre : contenu accessible aux outils sélectionnés.":g.ResourceValues?.Count>0?"Périmètre : "+g.ResourceValues.Count+" ressources sélectionnées":"Périmètre : "+g.ResourceField+" = "+g.ResourceValue,13,true));
-                var actions=Ui.Actions(Details);actions.Children.Add(Ui.AsyncButton("Configurer",()=>String.IsNullOrEmpty(g.CatalogClient)?Edit(g):((InstancesPage)Shell.Pages["Instances"]).Open(g.Instance),Error));
+                var actions=Ui.Actions(Details);actions.Children.Add(Ui.AsyncButton("Configurer",()=>!String.IsNullOrEmpty(g.CatalogPlugin)?EditPlugin(g):String.IsNullOrEmpty(g.CatalogClient)?Edit(g):((InstancesPage)Shell.Pages["Instances"]).Open(g.Instance),Error));
                 actions.Children.Add(Ui.AsyncButton("Désactiver",async delegate{Tunnel.Disable(g.Id);await Refresh();},Error));
                 Details.Children.Add(Ui.Text("Dans Codex : « Utilise les outils de "+(owner?.Name??"cette instance")+" pour… »",14));
                 foreach(var t in g.Tools)Details.Children.Add(Ui.Text((t.ReadOnly?"Lecture · ":"Action · ")+t.Name,13,true));
@@ -44,6 +44,14 @@ namespace Creezio.Switcher.Desktop
                 if(!String.IsNullOrEmpty(call.Error))Details.Children.Add(Ui.Text(call.Error,14));
                 Details.Children.Add(Ui.Text("Le chat émetteur peut récupérer la réponse avec read_shared_tool_result. Une réponse reçue ne confirme pas à elle seule la publication : l’agent vérifie aussi le reçu du service.",13,true));
             }
+        }
+        private Task EditPlugin(TunnelGrant grant)
+        {
+            var accounts=Context.Accounts();
+            var owner=accounts.Data.Instances.Single(i=>i.Id==grant.Instance&&!i.Archived);
+            var client=accounts.Data.Instances.Single(i=>i.Id==grant.CatalogClient&&!i.Archived);
+            var plugin=new InstancePlugin{Key=grant.CatalogPlugin,Name=grant.Tools.First().Group};
+            var dialog=PluginAccessEditor.Create(Context,Shell,owner,client,plugin);dialog.ShowDialog();return Refresh();
         }
         internal Task Edit(TunnelGrant old,string ownerId=null)
         {
@@ -56,11 +64,11 @@ namespace Creezio.Switcher.Desktop
             var info=Ui.Text("Chargez les plugins disponibles sur le compte propriétaire.",13,true);d.Fields.Children.Add(info);
             var group=Ui.Select("Plugin",new string[0],null,d.Fields);
             var write=Ui.Check("Afficher aussi les outils qui modifient ou publient",old?.Tools.Any(t=>!t.ReadOnly)??false,d.Fields);
-            var scope=Ui.Select("Périmètre",new[]{"Contenu des outils sélectionnés","Un site précis","Une page précise","Champ personnalisé"},String.IsNullOrEmpty(old?.ResourceField)?"Contenu des outils sélectionnés":old.ResourceField=="project_id"?"Un site précis":old.ResourceField=="page_id"?"Une page précise":"Champ personnalisé",d.Fields);
+            var scope=Ui.Select("Périmètre",new[]{"Accès du compte pour les actions cochées","Restriction technique par identifiant"},String.IsNullOrEmpty(old?.ResourceField)?"Accès du compte pour les actions cochées":"Restriction technique par identifiant",d.Fields);
             var resourcePanel=new StackPanel();d.Fields.Children.Add(resourcePanel);
             var customFieldPanel=new StackPanel();resourcePanel.Children.Add(customFieldPanel);
             var field=Ui.Input("Champ d’identifiant",old?.ResourceField??"",customFieldPanel);
-            var resource=Ui.Input("Identifiant exact du site ou de la page",old?.ResourceValue??"",resourcePanel);
+            var resource=Ui.Input("Valeur de la restriction",old?.ResourceValue??"",resourcePanel);
             d.Fields.Children.Add(Ui.Text("Outils autorisés · cochez les opérations utiles",13));
             var toolPanel=new StackPanel();var toolScroll=new ScrollViewer{Content=toolPanel,MaxHeight=210,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};d.Fields.Children.Add(toolScroll);
             d.Fields.Children.Add(Ui.Text("Instances clientes autorisées",13));var sources=new StackPanel();d.Fields.Children.Add(sources);
@@ -73,7 +81,7 @@ namespace Creezio.Switcher.Desktop
             selectionActions.Children.Add(Ui.Button("Sélectionner les outils affichés",()=>{foreach(var p in toolChecks.Where(p=>p.Value.IsEnabled)){p.Value.IsChecked=true;selectedTools.Add(p.Key.Server+"/"+p.Key.Name);}summarize();}));
             selectionActions.Children.Add(Ui.Button("Tout décocher",()=>{foreach(var p in toolChecks)p.Value.IsChecked=false;selectedTools.Clear();summarize();}));
             Action renderTools=delegate{
-                toolPanel.Children.Clear();toolChecks.Clear();string prop=scope.SelectedIndex==0?"":scope.SelectedIndex==1?"project_id":scope.SelectedIndex==2?"page_id":field.Text.Trim();
+                toolPanel.Children.Clear();toolChecks.Clear();string prop=scope.SelectedIndex==0?"":field.Text.Trim();
                 selectedTools.RemoveWhere(key=>!catalog.Any(t=>t.Server+"/"+t.Name==key&&ToolTunnel.Limitation(t).Length==0&&(prop.Length==0||Json.Obj(Json.Get(t.Schema,"properties")).ContainsKey(prop))));
                 foreach(var t in catalog.Where(t=>t.Group==(string)group.SelectedItem&&(write.IsChecked==true||t.ReadOnly)&&(prop.Length==0||Json.Obj(Json.Get(t.Schema,"properties")).ContainsKey(prop)))){
                     string limitation=ToolTunnel.Limitation(t);var check=Ui.Check((limitation.Length>0?"Indisponible · ":t.ReadOnly?"Lecture · ":"Action · ")+t.Name,selectedTools.Contains(t.Server+"/"+t.Name),toolPanel);check.ToolTip=limitation.Length>0?limitation:t.Description;check.IsEnabled=limitation.Length==0;toolChecks[t]=check;
@@ -87,7 +95,7 @@ namespace Creezio.Switcher.Desktop
                     string home=accounts.Instances.Home(i);sourceChecks[i]=Ui.Check(i.Name,old?.Sources.Any(p=>RelayStore.SamePath(p.Key,home)&&p.Value==i.AccountKey)??false,sources);
                 }
             };
-            Action renderScope=delegate{resourcePanel.Visibility=scope.SelectedIndex==0?Visibility.Collapsed:Visibility.Visible;customFieldPanel.Visibility=scope.SelectedIndex==3?Visibility.Visible:Visibility.Collapsed;field.IsEnabled=scope.SelectedIndex==3;if(scope.SelectedIndex==1)field.Text="project_id";else if(scope.SelectedIndex==2)field.Text="page_id";renderTools();};
+            Action renderScope=delegate{resourcePanel.Visibility=scope.SelectedIndex==0?Visibility.Collapsed:Visibility.Visible;customFieldPanel.Visibility=Visibility.Visible;field.IsEnabled=true;renderTools();};
             var load=Ui.AsyncButton("Charger les plugins",async delegate{
                 int current=++generation;string id=((DesktopInstance)owner.SelectedValue).Id;info.Text="Lecture des outils du compte propriétaire…";
                 var loaded=await Tunnel.Discover(id,CancellationToken.None);
@@ -95,7 +103,7 @@ namespace Creezio.Switcher.Desktop
                 if(String.IsNullOrWhiteSpace(label.Text))label.Text=(string)group.SelectedItem+" via "+((DesktopInstance)owner.SelectedValue).Name;
             },e=>info.Text=Program.SafeError(e));d.Fields.Children.Insert(4,load);
             owner.SelectionChanged+=delegate{generation++;selectedTools.Clear();catalog=new TunnelTool[0];group.ItemsSource=new string[0];renderTools();renderSources();info.Text="Rechargez les plugins de cette instance.";};
-            group.SelectionChanged+=delegate{renderTools();};write.Click+=delegate{renderTools();};scope.SelectionChanged+=delegate{renderScope();};field.TextChanged+=delegate{if(scope.SelectedIndex==3)renderTools();};
+            group.SelectionChanged+=delegate{renderTools();};write.Click+=delegate{renderTools();};scope.SelectionChanged+=delegate{renderScope();};field.TextChanged+=delegate{if(scope.SelectedIndex==1)renderTools();};
             group.ItemsSource=catalog.Select(t=>t.Group).Distinct().ToArray();if(group.Items.Count>0)group.SelectedIndex=0;renderSources();renderScope();
             d.Fields.Children.Add(Ui.Text("Les opérations sélectionnées seront autorisées aux instances cochées. Changer de périmètre retire les outils incompatibles. Les permissions du connecteur restent applicables. Les appels exigeant un fichier local restent indisponibles.",12,true));
             Func<string> draft=()=>Json.Write(new{label=label.Text,owner=((DesktopInstance)owner.SelectedValue).Id,scope=scope.SelectedIndex,field=field.Text,resource=resource.Text,tools=selectedTools.OrderBy(x=>x).ToArray(),sources=sourceChecks.Where(p=>p.Value.IsChecked==true).Select(p=>p.Key.Id).OrderBy(x=>x).ToArray()});string initial=draft();d.Dirty=()=>draft()!=initial;

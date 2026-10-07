@@ -120,6 +120,7 @@ namespace Creezio.Switcher.Desktop
         public Func<Task> Save;
         public Func<bool> Dirty;
         public bool Saved;
+        internal readonly Button SaveButton;
         internal Func<bool> ConfirmDiscard;
         private bool saving;
         public EditWindow(Window owner, string title, string saveCaption = "Enregistrer")
@@ -149,7 +150,8 @@ namespace Creezio.Switcher.Desktop
             error.Foreground = Brushes.Firebrick;
             footer.Children.Add(error);
             var actions = Ui.Actions(footer);
-            actions.Children.Add(Ui.AsyncButton(saveCaption, async delegate { saving = true; try { if (Save != null) await Save(); Saved = true; Close(); } finally { saving = false; } }, e => error.Text = Program.SafeError(e), true));
+            SaveButton=Ui.AsyncButton(saveCaption, async delegate { saving = true; try { if (Save != null) await Save(); Saved = true; Close(); } finally { saving = false; } }, e => error.Text = Program.SafeError(e), true);
+            actions.Children.Add(SaveButton);
             actions.Children.Add(Ui.Button("Annuler", Close));
             dock.Children.Add(new ScrollViewer { Content = Fields, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
             ConfirmDiscard = () => Ui.Confirm(this, "Abandonner les modifications non enregistrées ?", "Modifications en cours");

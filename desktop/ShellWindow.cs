@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -59,7 +59,7 @@ namespace Creezio.Switcher.Desktop
             var footer = new StackPanel { Margin = new Thickness(8, 14, 0, 0) };
             footer.Children.Add(status);
             advancedNavigation = Ui.Check("Réglages avancés", context.Store.ReadRecord<AppearanceSettings>("appearance.dpapi").Advanced, footer);
-            footer.Children.Add(Ui.Text("0.11 bêta · Instances & ressources", 11, true));
+            footer.Children.Add(Ui.Text("0.11.1 bêta · Instances & plugins", 11, true));
             DockPanel.SetDock(footer, Dock.Bottom);
             side.Children.Add(footer);
             side.Children.Add(Navigation);

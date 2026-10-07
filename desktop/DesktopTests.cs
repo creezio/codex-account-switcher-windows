@@ -13,6 +13,17 @@ namespace Creezio.Switcher.Desktop
 {
     internal static class DesktopTests
     {
+        private sealed class PluginFixtureConnection:IToolTunnelConnection
+        {
+            internal static readonly TunnelTool[] Tools={
+                new TunnelTool{Server="private_mcp",Name="records.list",Title="Consulter les dossiers",Group="Outils de l’équipe",ReadOnly=true,Description="Afficher les dossiers accessibles au compte.",Schema=Json.Read<object>("{\"type\":\"object\",\"properties\":{}}")},
+                new TunnelTool{Server="private_mcp",Name="records.update",Title="Modifier un dossier",Group="Outils de l’équipe",ReadOnly=false,Description="Modifier les informations du dossier choisi.",Schema=Json.Read<object>("{\"type\":\"object\",\"properties\":{}}")},
+                new TunnelTool{Server="codex_apps",Name="sites.get_site",Group="Sites",ReadOnly=true,Schema=Json.Read<object>("{\"type\":\"object\",\"properties\":{\"project_id\":{\"type\":\"string\"}}}")}
+            };
+            public Task<TunnelTool[]> Inventory(System.Threading.CancellationToken token)=>Task.FromResult(Json.Read<TunnelTool[]>(Json.Write(Tools)));
+            public Task<object> Invoke(string server,string tool,object args,System.Threading.CancellationToken token)=>throw new Exception("UI must not invoke provider actions");
+            public void Dispose(){}
+        }
         private static async Task<EditWindow> WaitDialog(string title)
         {
             for(int attempt=0;attempt<500;attempt++){
@@ -67,7 +78,7 @@ namespace Creezio.Switcher.Desktop
             var catalog=new InstanceInventory{Instance=toolOwner.Id,Account=toolOwner.AccountKey,Home=service.Instances.Home(toolOwner),Updated=DateTime.UtcNow.ToString("o")};
             catalog.Plugins.Add(new InstancePlugin{Key=pagesKey,Name="Pages",Tools=12,State="ready"});
             catalog.Plugins.Add(new InstancePlugin{Key="sites",Name="Sites",Tools=35,State="ready"});
-            catalog.Plugins.Add(new InstancePlugin{Key="private",Name="Outils de l’équipe",Tools=4,State="unsupported",Message="Ce plugin ne propose pas de catalogue de ressources. Choisissez les opérations à partager."});
+            catalog.Plugins.Add(new InstancePlugin{Key=InstanceResources.PluginKey(PluginFixtureConnection.Tools[0]),Name="Outils de l’équipe",Tools=2,State="unsupported",Message="Ce plugin ne propose pas de catalogue de ressources. Choisissez les opérations à partager."});
             foreach(var r in new[]{new InstanceResource{Title="Feuille de route produit",Kind="Page",Plugin=pagesKey,Field="page_id",Value="page_roadmap",CanModify=true,Access="Modification autorisée"},new InstanceResource{Title="Portail client",Kind="Site",Plugin="sites",Field="project_id",Value="site_portal",CanModify=true,Access="Propriétaire"},new InstanceResource{Title="Budget prévisionnel",Kind="Tableur",Plugin=pagesKey,Field="page_id",Value="page_sheet",NativeEditor=true,Access="Lecture"}}){r.Key=InstanceResources.ResourceKey(r.Plugin,r.Field,r.Value);catalog.Resources.Add(r);}
             context.Store.WriteRecord(InstanceResources.CacheName(toolOwner.Id),catalog);
             var policy = new RelayPolicy();
@@ -124,6 +135,7 @@ namespace Creezio.Switcher.Desktop
                             assert(!form.Dirty(),"ouvrir un partage existant ne crée pas de faux changement");
                             assert(Descendants(form).OfType<CheckBox>().Any(c=>System.Windows.Automation.AutomationProperties.GetName(c).Contains("Développement démo")&&c.IsChecked==true),"partage conserve les instances clientes choisies");
                             assert(Descendants(form).OfType<TextBox>().Any(t=>t.Text=="page_demo"),"partage conserve la restriction de ressource");
+                            assert(!Descendants(form).OfType<ComboBox>().SelectMany(c=>c.Items.Cast<object>()).Any(x=>Object.Equals(x,"Un site précis")||Object.Equals(x,"Une page précise")),"réglages avancés sans types de ressources imposés aux plugins");
                             Capture(form,Path.Combine(root,"Partage-outils.png"));form.Dirty=()=>false;
                         }finally{form.Dirty=()=>false;form.Close();}
                     }),DispatcherPriority.ContextIdle);
@@ -140,6 +152,32 @@ namespace Creezio.Switcher.Desktop
                     resources.Search.Text="portail";shell.UpdateLayout();resources.Search.Text="";shell.UpdateLayout();
                     assert(Descendants(resources).OfType<CheckBox>().Single(c=>System.Windows.Automation.AutomationProperties.GetName(c)=="Partager Feuille de route produit").IsChecked==true,"filtrage conserve les ressources cochées");
                     await instances.Refresh();assert(resources.Dirty,"actualisation périodique conserve le brouillon");
+                    resources.PluginServiceFactory=()=>new PluginAccess(context.Store,new ToolTunnel(context.Store,id=>new TunnelOwner{Id=toolOwner.Id,Name=toolOwner.Name,Home=service.Instances.Home(toolOwner),Account=toolOwner.AccountKey},o=>new PluginFixtureConnection(),s=>{}));
+                    var inspectPluginDone=new TaskCompletionSource<bool>();
+                    _=shell.Dispatcher.BeginInvoke(new Action(async()=>{
+                        EditWindow form=null;
+                        try{
+                            form=await WaitDialog("Outils de l’équipe");
+                            for(int attempt=0;attempt<300&&!Descendants(form).OfType<CheckBox>().Any();attempt++)await Task.Delay(10);
+                            form.UpdateLayout();
+                            assert(Descendants(form).OfType<TextBlock>().Any(t=>t.Text.Contains("Depuis Propriétaire démo")&&t.Text.Contains("Pour Développement démo")),"plugin conserve propriétaire et destinataire du parcours");
+                            assert(!Descendants(form).OfType<ComboBox>().Any()&&!Descendants(form).OfType<TextBox>().Any(t=>System.Windows.Automation.AutomationProperties.GetName(t).Contains("Identifiant")),"plugin sans nouveau sélecteur ni périmètre site page");
+                            assert(Descendants(form).OfType<CheckBox>().Count()==2&&!form.SaveButton.IsEnabled,"chargement automatique des seules actions du plugin sans sélection implicite");
+                            var read=Descendants(form).OfType<CheckBox>().Single(c=>System.Windows.Automation.AutomationProperties.GetName(c)=="Consulter les dossiers");read.IsChecked=true;
+                            var actionSearch=Descendants(form).OfType<TextBox>().Single();actionSearch.Text="modifier";form.UpdateLayout();actionSearch.Text="";form.UpdateLayout();
+                            assert(Descendants(form).OfType<CheckBox>().Single(c=>System.Windows.Automation.AutomationProperties.GetName(c)=="Consulter les dossiers").IsChecked==true,"recherche du plugin conserve les actions cochées");
+                            Capture(form,Path.Combine(root,"Plugin-actions.png"));
+                            form.SaveButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                            for(int attempt=0;attempt<300&&!form.Saved;attempt++)await Task.Delay(10);
+                            assert(form.Saved,"enregistrement contextuel du plugin réussi depuis le bouton");
+                            var saved=new ToolTunnel(context.Store).Grants().Single(g=>g.CatalogPlugin==InstanceResources.PluginKey(PluginFixtureConnection.Tools[0]));
+                            assert(saved.Instance==toolOwner.Id&&saved.CatalogClient==toolClient.Id&&saved.Tools.Single().Name=="records.list","interface persiste uniquement le bon plugin la bonne action et le bon client");
+                            inspectPluginDone.SetResult(true);
+                        }catch(Exception e){inspectPluginDone.SetException(e);}finally{if(form!=null&&!form.Saved){form.ConfirmDiscard=()=>true;form.Close();}}
+                    }),DispatcherPriority.ContextIdle);
+                    Descendants(resources).OfType<Button>().Single(b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Configurer les actions de Outils de l’équipe").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    await inspectPluginDone.Task;
+                    assert(resources.Dirty,"enregistrer les actions du plugin conserve le brouillon des ressources");
                     resources.ConfirmDiscard=()=>false;shell.Navigate("Accueil");assert(shell.CurrentPage=="Instances","navigation protège les changements de partage");
                     instances.ShowTab(0);shell.UpdateLayout();Capture(shell,Path.Combine(root,"Instance-compte.png"));instances.ShowTab(1);shell.UpdateLayout();
                     assert(resources.Dirty,"onglets Compte et Ressources conservent le brouillon");
@@ -217,7 +255,8 @@ namespace Creezio.Switcher.Desktop
                     await Task.Delay(40);
                     shell.UpdateLayout();
                     Capture(shell, Path.Combine(root, "compact.png"));
-                    assert(shell.ActualWidth <= 1000, "fenêtre compacte");
+                    for(int attempt=0;attempt<100&&Math.Abs(shell.ActualWidth-1000)>=1;attempt++)await Task.Delay(20);
+                    assert(Math.Abs(shell.ActualWidth-1000)<1, "fenêtre compacte");
                     shell.Theme("Sombre");
                     Capture(shell, Path.Combine(root, "dark.png"));
                     shell.Theme("Clair");

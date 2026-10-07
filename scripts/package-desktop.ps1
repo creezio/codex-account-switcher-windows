@@ -2,11 +2,11 @@
 param([switch]$SkipBuild,[string]$BinaryDirectory)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.11.0-beta.1'}
+$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.11.1-beta.1'}
 if(-not $SkipBuild){& (Join-Path $PSScriptRoot 'build-desktop.ps1') -OutputDirectory $bin -Portable}
 foreach($required in @('CodexAccountSwitcher.exe','CodexAccountSwitcher.dll','CodexAccountSwitcher.runtimeconfig.json','coreclr.dll','PresentationFramework.dll','CreezioRelay.exe','plugins')){if(-not(Test-Path -LiteralPath (Join-Path $bin $required))){throw "Livraison autonome incomplète : $required"}}
 $instructions=@'
-CODEX ACCOUNT SWITCHER — 0.11.0-beta.1 — WINDOWS X64
+CODEX ACCOUNT SWITCHER — 0.11.1-beta.1 — WINDOWS X64
 
 Extraire TOUT le ZIP et lancer CodexAccountSwitcher.exe.
 Garder les DLL, fichiers JSON, exécutables et dossier plugins ensemble.
@@ -18,6 +18,8 @@ Le plugin et les skills sont installés et vérifiés automatiquement.
 Dans Codex : « Délègue cette mission à Léa ». Le résultat revient dans ce chat.
 Instances > Ressources & accès : choisir le destinataire, cocher les ressources
 par leur nom, choisir Lecture ou Lecture et modification, enregistrer.
+Pour les autres plugins : Configurer les actions, cocher et enregistrer.
+Le plugin, son compte et l'instance destinataire sont conservés automatiquement.
 Dans Codex : « Utilise les outils Pages de Principal pour modifier cette page ».
 Aucun prompt envoyé au propriétaire. Codex doit rester ouvert sur les deux côtés.
 Les fichiers joints ne sont pas transférés : publication de nouvelles versions
@@ -57,7 +59,7 @@ https://github.com/creezio/codex-account-switcher-windows
 [IO.File]::WriteAllText((Join-Path $bin 'LIRE-MOI.txt'),$instructions,[Text.UTF8Encoding]::new($false))
 Copy-Item -LiteralPath (Join-Path $repo 'LICENSE') -Destination (Join-Path $bin 'LICENSE.txt') -Force
 foreach($name in @('INSTANCE-RESOURCES.md','TOOL-TUNNEL.md','SIMPLE-INSTANCES.md','UI-VALIDATION.md','UI-REBUILD-PLAN.md','RELAY.md','WINDOWS-CONSOLE.md','WINDOWS-CONSOLE-VALIDATION.md')){Copy-Item -LiteralPath (Join-Path $repo ('docs\'+$name)) -Destination $bin -Force}
-$zip=Join-Path $repo 'outputs\CodexAccountSwitcher-0.11.0-beta.1-windows-x64.zip'
+$zip=Join-Path $repo 'outputs\CodexAccountSwitcher-0.11.1-beta.1-windows-x64.zip'
 # All published runtime assemblies are required. Test helpers and debug symbols are not shipped.
 $items=Get-ChildItem -LiteralPath $bin | Where-Object {$_.Name -notmatch '(Smoke|Tests|\.pdb$)' } | ForEach-Object FullName
 Compress-Archive -LiteralPath $items -DestinationPath $zip -Force
@@ -69,5 +71,5 @@ try{
   }
 }finally{$archive.Dispose()}
 $hash=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-[IO.File]::WriteAllText((Join-Path $repo 'outputs\SHA256SUMS-0.11.0-beta.1.txt'),$hash+'  '+[IO.Path]::GetFileName($zip)+"`n")
+[IO.File]::WriteAllText((Join-Path $repo 'outputs\SHA256SUMS-0.11.1-beta.1.txt'),$hash+'  '+[IO.Path]::GetFileName($zip)+"`n")
 Get-Item -LiteralPath $zip | Select-Object Name,Length

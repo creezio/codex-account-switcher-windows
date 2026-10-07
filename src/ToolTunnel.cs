@@ -14,6 +14,7 @@ namespace Creezio.Switcher
     {
         public string Server {get;set;}
         public string Name {get;set;}
+        public string Title {get;set;}
         public string Group {get;set;}
         public string ConnectorId {get;set;}
         public object Annotations {get;set;}
@@ -39,6 +40,7 @@ namespace Creezio.Switcher
         public List<string> ResourceValues {get;set;}
         public Dictionary<string,string> ResourceLabels {get;set;}
         public string CatalogClient {get;set;}
+        public string CatalogPlugin {get;set;}
         public TunnelGrant(){Sources=new Dictionary<string,string>();Tools=new List<TunnelTool>();}
     }
     public sealed class TunnelCall

@@ -103,7 +103,7 @@ namespace Creezio.Switcher
             store.WriteRecord(CacheName(instance),data);return data;
         }
         internal static bool Managed(TunnelGrant g,string instance,string client)
-        {return g.Instance==instance&&g.CatalogClient==client;}
+        {return g.Instance==instance&&g.CatalogClient==client&&String.IsNullOrEmpty(g.CatalogPlugin);}
         internal string Revision(string instance,string client)
         {return ToolTunnel.Hash(Json.Read<object>(Json.Write(tunnel.Grants().Where(g=>Managed(g,instance,client)).OrderBy(g=>g.Id).ToArray())));}
         internal static string Mode(TunnelGrant g){return g.Tools.Any(t=>!t.ReadOnly)?"edit":"read";}

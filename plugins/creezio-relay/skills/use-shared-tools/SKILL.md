@@ -5,7 +5,10 @@ description: Use tools or private plugins through another named Codex instance w
 
 The user configures resource access in Account Switcher → Instances → the owner
 instance → Ressources & accès → Partager avec → select the requesting instance,
-check resources and choose read/edit, then save. Advanced tool operations remain
+check resources and choose read/edit, then save. For other plugins, use the plugin
+card's Configurer les actions: the owner, recipient and plugin stay fixed, and
+only that plugin's actions are selectable. These action grants use the owner's
+provider access; they do not imply a per-resource restriction. Advanced rules remain
 in Réglages avancés → Outils partagés. No account,
 plugin, project or resource is shared by default. This workflow performs direct
 tool calls; it never sends a mission or starts a model turn in the owner instance.

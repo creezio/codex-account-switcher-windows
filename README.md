@@ -3,7 +3,7 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.11.0-beta.1 — comptes et ressources réunis par instance.** Windows 10/11 x64, interface en
+**Version 0.11.1-beta.1 — comptes et ressources réunis par instance.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
@@ -23,8 +23,10 @@ Choisissez **Partager avec**, cochez les ressources par leur nom, sélectionnez
 
 Chaque instance cliente conserve ses propres droits. Décocher révoque l’accès au
 prochain appel après enregistrement. Les futures ressources restent décochées.
-Les plugins sans catalogue pris en charge affichent cette limite et un accès aux
-opérations avancées. Aucun partage n’est créé par la simple détection.
+Pour un plugin sans catalogue pris en charge, **Configurer les actions** ouvre
+directement ses actions : plugin, propriétaire et destinataire sont conservés,
+la liste se charge automatiquement. Cochez les actions utiles puis enregistrez.
+Aucun partage n’est créé par la simple détection.
 [Guide et validation du nouveau parcours](docs/INSTANCE-RESOURCES.md).
 
 Dans Codex, dites : **« Utilise les outils Pages de Principal pour mettre à jour
@@ -48,6 +50,8 @@ Le partage concerne les instances locales Windows, pas les invitations de PC
 distants. [Fonctionnement, plan et validation du tunnel](docs/TOOL-TUNNEL.md).
 
 ![Ressources d’une instance, avec des données fictives](assets/instance-resources.png)
+
+![Actions d’un plugin dans le contexte des deux instances, données fictives](assets/plugin-actions.png)
 
 ## Relais entre comptes
 
@@ -315,10 +319,10 @@ pas déplacés ni supprimés.
 Depuis PowerShell à la racine du dépôt :
 
 ```powershell
-.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.11.0-beta.1
+.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.11.1-beta.1
 .\scripts\test.ps1 -TestDirectory work\framework-validation
 dotnet run --project tests\Core.Net10.csproj -c Release -- work\net10-validation
-.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.11.0-beta.1
+.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.11.1-beta.1
 ```
 
 La compilation de l'interface exige le SDK .NET 10 ; le moteur utilise le
