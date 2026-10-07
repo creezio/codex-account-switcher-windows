@@ -11,6 +11,8 @@ namespace Creezio.Switcher.Desktop
         internal readonly string Root;
         internal readonly RelayStore Store;
         internal readonly bool Fixture;
+        private ResourceLinkServer resourceLinks;
+        internal void StopResourceLinks(){resourceLinks?.Dispose();resourceLinks=null;}
         internal Func<DesktopInstance,InstanceState> InstanceStateFixture;
         internal Func<string,Task<string>> InstanceWindowFixture;
         internal Func<string,bool,InstanceState,Task<string>> InstanceLifecycleFixture;
@@ -104,6 +106,7 @@ namespace Creezio.Switcher.Desktop
         {
             if (Fixture)
                 return;
+            if(resourceLinks==null)resourceLinks=ResourceLinkServer.Start(Store);
             if (RemotePeers.Config(Store).Enabled) RemoteGateway.Start(Store);
             await Mutate(a => { a.Instances.AdoptAccounts(); var policy = RelayPolicies.Load(Store); if (policy.KeepWorkerRunning || Store.ActiveMessages().Any() || new Assistance(Store).List().Any(t=>t.State=="answered"||t.State=="delivering")) RelayWorker.Ensure(Store); return Task.CompletedTask; });
             if (await Read(a=>a.Settings.MaintainIntegration)) await MaintainIntegrations(true);

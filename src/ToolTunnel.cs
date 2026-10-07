@@ -203,7 +203,7 @@ namespace Creezio.Switcher
             var obj=value as IDictionary<string,object>;
             if(obj!=null){var copy=new Dictionary<string,object>();foreach(var p in obj){
                 string key=p.Key.ToLowerInvariant();
-                if(new[]{"token","access_token","refresh_token","id_token","api_key","password","secret","client_secret","authorization"}.Contains(key)&&p.Value!=null){copy[p.Key]="[not retained]";sensitive=true;}
+                if(new[]{"token","access_token","refresh_token","id_token","api_key","password","secret","client_secret","authorization","siwc_bypass_bearer_token"}.Contains(key)&&p.Value!=null){copy[p.Key]="[not retained]";sensitive=true;}
                 else if(p.Key=="text"&&p.Value is string){try{copy[p.Key]=Json.Write(Redact(Json.Read<object>((string)p.Value),ref sensitive));}catch{copy[p.Key]=p.Value;}}
                 else copy[p.Key]=Redact(p.Value,ref sensitive);
             }return copy;}

@@ -171,7 +171,7 @@ namespace Creezio.Switcher.Desktop
             }
             var integration=new StackPanel();integration.Children.Add(Ui.Text("Intégration & ressources",18));integration.Children.Add(Ui.Text(info.Integration.Status??"Préparation à venir",13,true));
             if(DateTime.TryParse(info.Integration.Updated,out var updated))integration.Children.Add(Ui.Text("Dernière vérification : "+updated.ToLocalTime().ToString("dd/MM à HH:mm:ss")+(String.IsNullOrEmpty(info.Integration.InstalledVersion)?"":" · v"+info.Integration.InstalledVersion),12,true));
-            var links=Ui.Actions(integration);links.Children.Add(Ui.Button("Consulter les Pages reçues",()=>SharedPagesWindow.Open(Context,Shell,i)));links.Children.Add(Ui.Button("Voir les ressources",()=>ShowTab(1),true));
+            var links=Ui.Actions(integration);links.Children.Add(Ui.Button("Voir les ressources",()=>ShowTab(1),true));
             var verify=Ui.AsyncButton(verifying?"Vérification en cours…":"Vérifier l’intégration",()=>Verify(info),Error);System.Windows.Automation.AutomationProperties.SetName(verify,"Vérifier l’intégration");verify.IsEnabled=!verifying&&!i.Archived;links.Children.Add(verify);body.Children.Add(Ui.Card(integration));
             body.Children.Add(Ui.Text("Dans Codex : « Délègue cette mission à "+i.Name+" » ou « Utilise les ressources de "+i.Name+" ».",14,true));
             var extra=new StackPanel();if(!i.IsLocal&&!i.Archived&&!info.State.Running){extra.Children.Add(Ui.AsyncButton("Archiver cette instance…",async()=>{if(!Ui.Confirm(Shell,"Archiver cette instance en conservant ses données ?","Gérer l’instance"))return;await Change(a=>{a.Instances.Archive(a.Data.Instances.Single(x=>x.Id==i.Id),true);return Task.CompletedTask;});},Error));}

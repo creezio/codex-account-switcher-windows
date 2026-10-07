@@ -1,10 +1,9 @@
 # Appels d’outils entre instances — plan et contrat
 
-Depuis la version 0.12, **Consulter les Pages reçues** affiche les Pages autorisées
-via le tunnel et permet leur édition textuelle. Le plugin fournit le même parcours
-en MCP App pour les hôtes compatibles. Voir [Pages partagées](SHARED-PAGES.md) et
-[validation](SHARED-PAGES-VALIDATION.md). Les cartes Pages natives restent liées
-aux permissions du compte actuellement connecté.
+Depuis la version 0.12.2, les réponses utilisent des liens nommés qui ouvrent
+la ressource dans le Codex propriétaire, sans éditeur supplémentaire ni prompt.
+Voir [les liens interinstances](RESOURCE-LINKS.md). Les cartes natives restent
+liées au compte connecté et les anciennes cartes ne sont pas réécrites.
 
 Depuis la version 0.11, le parcours principal est **Instances → Ressources & accès** :
 détection des Sites et Pages, choix du destinataire et cases à cocher par nom.

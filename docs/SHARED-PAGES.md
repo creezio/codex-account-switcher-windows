@@ -1,3 +1,5 @@
+Document historique 0.12 : parcours retiré en 0.12.2. Voir [les liens vers le propriétaire](RESOURCE-LINKS.md).
+
 # Pages partagées par le tunnel
 
 La version 0.12 ajoute une vue de la Page originale dans le compte propriétaire.

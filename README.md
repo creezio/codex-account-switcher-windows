@@ -3,7 +3,7 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.12.1-beta.1 — ouvrir, fermer et redémarrer les instances.** Windows 10/11 x64, interface en
+**Version 0.12.2-beta.1 — liens vers les ressources du compte propriétaire.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
@@ -43,15 +43,15 @@ pour une définition d’outil identique. Le contrôle compare désormais les de
 définitions dans le même runtime, sans élargir les autorisations existantes.
 Après la mise à jour, ouvrir un nouveau chat pour charger le relais corrigé.
 
-La version 0.12 ajoute **Consulter les Pages reçues** dans chaque instance cliente.
-Cette vue lit la Page originale via le compte propriétaire, permet de modifier
-un bloc ou d'ajouter du texte selon les droits cochés, et garde le brouillon en
-cas de conflit. **Ouvrir chez le propriétaire** donne accès à son éditeur natif.
-Le plugin fournit aussi un panneau MCP pour les hôtes compatibles et évite les
-liens natifs inaccessibles dans les nouvelles réponses. Les anciennes cartes ne
-changent pas. Voir [Pages partagées](docs/SHARED-PAGES.md) et
-[preuves et limites de validation](docs/SHARED-PAGES-VALIDATION.md).
-
+La version 0.12.2 retire le parcours d’édition des Pages dans le Switcher.
+Après une opération via le tunnel, le relais fournit un lien ordinaire avec le
+vrai nom de la Page ou du Site. Un clic ouvre la ressource originale dans
+l’instance Codex propriétaire, sans prompt ni nouvelle conversation.
+Les nouvelles réponses évitent ainsi les cartes natives « indisponible ».
+Le Switcher et les instances doivent rester ouverts sur ce PC.
+Les anciennes cartes et les permissions natives du compte demandeur ne changent
+pas : ce mécanisme ne rend pas une Page privée dans le Codex d’un autre compte.
+Voir [le fonctionnement des liens](docs/RESOURCE-LINKS.md).
 Chaque instance cliente conserve ses propres droits. Décocher révoque l’accès au
 prochain appel après enregistrement. Les futures ressources restent décochées.
 Pour un plugin sans catalogue pris en charge, **Configurer les actions** ouvre
@@ -350,10 +350,10 @@ pas déplacés ni supprimés.
 Depuis PowerShell à la racine du dépôt :
 
 ```powershell
-.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.12.1-beta.1
+.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.12.2-beta.1
 .\scripts\test.ps1 -TestDirectory work\framework-validation
 dotnet run --project tests\Core.Net10.csproj -c Release -- work\net10-validation
-.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.12.1-beta.1
+.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.12.2-beta.1
 ```
 
 La compilation de l'interface exige le SDK .NET 10 ; le moteur utilise le

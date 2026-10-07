@@ -78,6 +78,7 @@ namespace Creezio.Switcher.Desktop
             assert(resources.Dirty&&ReferenceEquals(resources,Descendants(instances).OfType<InstanceResourcesView>().Single())&&Descendants(instances).OfType<TextBlock>().Any(t=>t.Text=="Atelier renommé"),"titre et liste actualisés sans perdre le brouillon des accès");
             for(int index=0;index<3;index++){instances.ShowTab(index);shell.UpdateLayout();assert(RenameButton().IsVisible&&RenameButton().IsEnabled,"renommer accessible dans l’onglet "+index);}
             instances.ShowTab(0);shell.UpdateLayout();
+            assert(!Descendants(instances).OfType<Button>().Any(b=>Object.Equals(b.Content,"Consulter les Pages reçues")),"la fiche instance ne propose plus un éditeur de Pages");
             assert(Descendants(instances).OfType<TextBlock>().Any(t=>t.Text.Contains("Délègue cette mission à Atelier renommé")),"exemple de délégation utilise le nouveau nom");
             var cancelRename=new TaskCompletionSource<bool>();
             _=shell.Dispatcher.BeginInvoke(new Action(async()=>{
@@ -368,13 +369,14 @@ namespace Creezio.Switcher.Desktop
                     assert(jobs.List.Items.Count == 50, "dernière recherche appliquée et recherche par projet");
                     search.Text = "";
                     shell.Navigate("Comptes");
+                    shell.WindowState = WindowState.Normal;
                     shell.Width = 1000;
                     shell.Height = 700;
                     await Task.Delay(40);
                     shell.UpdateLayout();
                     Capture(shell, Path.Combine(root, "compact.png"));
                     for(int attempt=0;attempt<100&&Math.Abs(shell.ActualWidth-1000)>=1;attempt++)await Task.Delay(20);
-                    assert(Math.Abs(shell.ActualWidth-1000)<1, "fenêtre compacte");
+                    assert(Math.Abs(shell.ActualWidth-1000)<1, "fenêtre compacte (demandée="+shell.Width+", réelle="+shell.ActualWidth+", état="+shell.WindowState+")");
                     shell.Theme("Sombre");
                     Capture(shell, Path.Combine(root, "dark.png"));
                     shell.Theme("Clair");
@@ -384,6 +386,7 @@ namespace Creezio.Switcher.Desktop
                     shell.UpdateLayout();
                     Capture(shell, Path.Combine(root, "small.png"));
                     assert(Math.Abs(shell.ActualWidth - 800) < 1 && Math.Abs(shell.ActualHeight - 550) < 1, "fenêtre utilisable sur une petite surface logique");
+                    shell.WindowState = WindowState.Normal;
                     shell.Width = 1000;
                     shell.Height = 700;
                     var source = new Dictionary<string, object> { { "outer", new Dictionary<string, object> { { "value", 12 }, { "flag", true }, { "rows", new object[] { "a", 3 } } } } };

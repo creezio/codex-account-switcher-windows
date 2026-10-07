@@ -1,3 +1,5 @@
+Document historique 0.12 : parcours retiré en 0.12.2. Voir [les liens vers le propriétaire](RESOURCE-LINKS.md).
+
 # Validation de la visionneuse 0.12
 
 Recette Windows du 7 octobre 2026, Codex 26.930.7945.0.

@@ -1,3 +1,5 @@
+Document historique 0.12 : parcours retiré en 0.12.2. Voir [les liens vers le propriétaire](RESOURCE-LINKS.md).
+
 # Consultation des Pages par le tunnel — 0.12
 
 Objectif : consulter et modifier la Page originale depuis une instance cliente,

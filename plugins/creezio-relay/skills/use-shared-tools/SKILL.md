@@ -45,19 +45,24 @@ tool calls; it never sends a mission or starts a model turn in the owner instanc
    scoped provider workflow; stored/replayed results redact credentials. Losing
    the response does not authorize blindly repeating the operation.
 
-6. For a shared text Page that the user wants to see, or after a verified edit,
-   call `open_shared_page` with the same session, authorized share and Page ID.
-   This displays the original content in the tunnel viewer; it sends no prompt.
-   Use `list_shared_pages` to find authorized named Pages when needed. Do not
-   emit the owner's native Page URL, Page citation/attachment syntax or native
-   Page card in the final answer: the requesting account may not have native
-   access and Codex would show “Page indisponible”. Refer to the Page by its
-   plain title and the opened viewer. The viewer supports text blocks and an
-   explicit “Ouvrir chez le propriétaire” action. If this Codex host does not
-   render MCP Apps, direct the user to Account Switcher → their requesting
-   instance → “Consulter les Pages reçues”. Do not claim native access changed.
-   No extra share or chat is required. Private media and native Docs/Sheets/
-   Slides are handled in the owner instance; do not promise those in this view.
+6. After a verified shared Page or Site operation, call
+   `get_shared_resource_link` with the authorized share and exact resource ID.
+   Use its `Markdown` as an ordinary named link in the answer, followed by
+   “s'ouvre dans [Owner]” when useful. Clicking it opens the ORIGINAL resource
+   in the owner's existing Codex instance. No prompt, new chat, copy, preview
+   or Switcher editor is involved. Do not open anything automatically after
+   an edit: the user chooses whether to follow the link.
+   Never emit native Page/Site citation syntax, attachment directives, cards,
+   or the owner's native resource URL for a cross-account resource, including
+   when a provider workflow normally requests a native citation. Those cards
+   resolve under the requesting account and show “Page/Site indisponible”.
+   Preserve provider IDs in tool arguments and evidence, but use the named
+   ordinary link in user-facing prose. Do not call the legacy viewer tools.
+   If link creation fails, use the real plain title and explain that the owner
+   instance and Switcher must be open. Do not invent a URL or offer an editor.
+   Native access rights and old cards in existing messages are unchanged.
+   This workaround does not render another account's native resources inside
+   the requesting account's Codex window. Local links work only on this PC.
 
 The owner Codex window must remain open. The switcher uses its profile via the
 official app-server, with an ephemeral technical context and no model turn.
@@ -83,9 +88,8 @@ and publishing a new Sites version is blocked in this release; Pages text edits,
 Sites reads and compatible tools use the direct path. An already saved Site
 version may have a separate native deployment operation: preserve its exact ID,
 access scope and normal provider workflow. A tool's presence is not a claim that
-every workflow of its plugin is supported. The shared Pages viewer renders
-authorized text through the tunnel. Other provider widgets and resource downloads
-remain in the native provider interface.
+every workflow of its plugin is supported. Provider widgets and resource downloads
+remain in the owner's native provider interface.
 
 On Windows, if the installed Sites publishing helper resolves `bash` to WSL,
 use an already-installed Git Bash in that helper process's PATH. GNU tar needs

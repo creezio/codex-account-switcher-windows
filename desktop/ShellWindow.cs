@@ -147,6 +147,7 @@ namespace Creezio.Switcher.Desktop
             Microsoft.Win32.SystemEvents.UserPreferenceChanged += UserAppearanceChanged;
             Closed += delegate
             {
+                context.StopResourceLinks();
                 refreshTimer.Stop();
                 usageTimer.Stop();
                 SystemParameters.StaticPropertyChanged -= SystemAppearanceChanged;

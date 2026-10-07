@@ -2,11 +2,11 @@
 param([switch]$SkipBuild,[string]$BinaryDirectory)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.12.1-beta.1'}
+$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.12.2-beta.1'}
 if(-not $SkipBuild){& (Join-Path $PSScriptRoot 'build-desktop.ps1') -OutputDirectory $bin -Portable}
 foreach($required in @('CodexAccountSwitcher.exe','CodexAccountSwitcher.dll','CodexAccountSwitcher.runtimeconfig.json','coreclr.dll','PresentationFramework.dll','CreezioRelay.exe','plugins')){if(-not(Test-Path -LiteralPath (Join-Path $bin $required))){throw "Livraison autonome incomplète : $required"}}
 $instructions=@'
-CODEX ACCOUNT SWITCHER — 0.12.1-beta.1 — WINDOWS X64
+CODEX ACCOUNT SWITCHER — 0.12.2-beta.1 — WINDOWS X64
 
 Extraire TOUT le ZIP et lancer CodexAccountSwitcher.exe.
 Garder les DLL, fichiers JSON, exécutables et dossier plugins ensemble.
@@ -32,9 +32,9 @@ Rouvrir la fenêtre réactive une instance restée en arrière-plan après le cl
 Fermer et Redémarrer sont accessibles au-dessus des onglets, avec confirmation.
 Ces deux actions interrompent les tâches de la cible et conservent ses données.
 Activité affiche l'outil appelé et le motif exact de son éventuel blocage.
-0.12 : Consulter les Pages reçues, lecture et édition par le tunnel.
+0.12.2 : liens nommés vers la Page ou le Site dans le Codex propriétaire.
 Les anciennes cartes Pages natives restent soumises aux droits du compte.
-Le panneau MCP est livré ; voir SHARED-PAGES-VALIDATION.md pour sa qualification.
+Voir RESOURCE-LINKS.md pour le fonctionnement et les limites des liens locaux.
 Ouvrir un nouveau chat pour charger le relais corrigé ; les droits sont conservés.
 Réglages avancés : anciens canaux, projets, ressources et règles facultatives.
 Tâches : envoyer un prompt vers un chat nouveau ou ciblé et lire sa réponse.
@@ -69,8 +69,8 @@ https://github.com/creezio/codex-account-switcher-windows
 '@
 [IO.File]::WriteAllText((Join-Path $bin 'LIRE-MOI.txt'),$instructions,[Text.UTF8Encoding]::new($false))
 Copy-Item -LiteralPath (Join-Path $repo 'LICENSE') -Destination (Join-Path $bin 'LICENSE.txt') -Force
-foreach($name in @('INSTANCE-LIFECYCLE.md','SHARED-PAGES.md','SHARED-PAGES-VALIDATION.md','INSTANCE-RESOURCES.md','TOOL-TUNNEL.md','SIMPLE-INSTANCES.md','UI-VALIDATION.md','UI-REBUILD-PLAN.md','RELAY.md','WINDOWS-CONSOLE.md','WINDOWS-CONSOLE-VALIDATION.md')){Copy-Item -LiteralPath (Join-Path $repo ('docs\'+$name)) -Destination $bin -Force}
-$zip=Join-Path $repo 'outputs\CodexAccountSwitcher-0.12.1-beta.1-windows-x64.zip'
+foreach($name in @('RESOURCE-LINKS.md','RESOURCE-LINKS-VALIDATION.md','INSTANCE-LIFECYCLE.md','SHARED-PAGES.md','SHARED-PAGES-VALIDATION.md','INSTANCE-RESOURCES.md','TOOL-TUNNEL.md','SIMPLE-INSTANCES.md','UI-VALIDATION.md','UI-REBUILD-PLAN.md','RELAY.md','WINDOWS-CONSOLE.md','WINDOWS-CONSOLE-VALIDATION.md')){Copy-Item -LiteralPath (Join-Path $repo ('docs\'+$name)) -Destination $bin -Force}
+$zip=Join-Path $repo 'outputs\CodexAccountSwitcher-0.12.2-beta.1-windows-x64.zip'
 # All published runtime assemblies are required. Test helpers and debug symbols are not shipped.
 $items=Get-ChildItem -LiteralPath $bin | Where-Object {$_.Name -notmatch '(Smoke|Tests|\.pdb$)' } | ForEach-Object FullName
 Add-Type -AssemblyName System.IO.Compression
@@ -98,5 +98,5 @@ try{
 }finally{$archive.Dispose()}
 Move-Item -LiteralPath $temporary -Destination $zip -Force
 $hash=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-[IO.File]::WriteAllText((Join-Path $repo 'outputs\SHA256SUMS-0.12.1-beta.1.txt'),$hash+'  '+[IO.Path]::GetFileName($zip)+"`n")
+[IO.File]::WriteAllText((Join-Path $repo 'outputs\SHA256SUMS-0.12.2-beta.1.txt'),$hash+'  '+[IO.Path]::GetFileName($zip)+"`n")
 Get-Item -LiteralPath $zip | Select-Object Name,Length
