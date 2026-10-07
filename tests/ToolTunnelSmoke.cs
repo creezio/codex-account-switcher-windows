@@ -35,8 +35,10 @@ internal static class ToolTunnelSmoke
             var catalog=tunnel.Discover(args[0],CancellationToken.None).GetAwaiter().GetResult();
             if(args.Length>2&&args[2]=="plugin-context"){
                 var accounts=new AccountService(Path.GetDirectoryName(store.Root));var owner=NamedInstances.Resolve(accounts,args[0]);var client=accounts.Data.Instances.First(i=>!i.Archived&&i.Id!=owner.Id&&!String.IsNullOrEmpty(i.AccountKey));
-                var matching=catalog.Where(t=>t.Group.IndexOf("Certivan",StringComparison.OrdinalIgnoreCase)>=0).ToArray();
+                if(args.Length<4||String.IsNullOrWhiteSpace(args[3]))throw new Exception("Provide the exact plugin name with -PluginName");
+                var matching=catalog.Where(t=>String.Equals(t.Group,args[3],StringComparison.OrdinalIgnoreCase)).ToArray();
                 if(matching.Length==0)throw new Exception("Target plugin not present on this account");
+                if(matching.Select(InstanceResources.PluginKey).Distinct().Count()!=1)throw new Exception("Ambiguous plugin name");
                 var key=InstanceResources.PluginKey(matching[0]);var before=ToolTunnel.Hash(Json.Read<object>(Json.Write(tunnel.Grants())));
                 var pluginState=new PluginAccess(store).Load(owner.Id,owner.AccountKey,accounts.Instances.Home(owner),client.Id,accounts.Instances.Home(client),client.AccountKey,key,CancellationToken.None).GetAwaiter().GetResult();
                 if(pluginState.Tools.Any(t=>InstanceResources.PluginKey(t)!=key))throw new Exception("Mixed plugin context");

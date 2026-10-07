@@ -112,7 +112,7 @@ Correction 0.11.1 : le parcours complet depuis la fiche d’un plugin est testé
 clic jusqu’à l’enregistrement, avec vérification du propriétaire, du destinataire,
 de la liste exclusive des actions, des filtres et du maintien du brouillon des
 ressources. Le formulaire avancé ne propose plus systématiquement Site/Page.
-Recette réelle en lecture seule : Certivan — V5 expose 57 actions dont 25 lectures,
+Recette réelle en lecture seule : un plugin métier expose 57 actions dont 25 lectures,
 toutes avec un libellé fournisseur. Aucune action métier ni permission réelle n’a
 été modifiée pendant cette vérification.
 
