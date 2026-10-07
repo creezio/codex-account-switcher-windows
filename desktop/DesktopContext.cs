@@ -13,6 +13,13 @@ namespace Creezio.Switcher.Desktop
         internal readonly bool Fixture;
         internal Func<DesktopInstance,InstanceState> InstanceStateFixture;
         internal Func<string,Task<string>> InstanceWindowFixture;
+        internal Func<string,bool,InstanceState,Task<string>> InstanceLifecycleFixture;
+        internal async Task<string> CloseOrRestartInstance(string id,bool restart,InstanceState expected)
+        {
+            if(Fixture)return await (InstanceLifecycleFixture?.Invoke(id,restart,expected)??Task.FromException<string>(new InvalidOperationException("Gestion non configurée dans cette recette.")));
+            await gate.WaitAsync();
+            try{return await DesktopWindows.CloseOrRestart(Accounts(),id,restart,expected,CancellationToken.None);}finally{gate.Release();}
+        }
         internal InstanceState InstanceState(AccountService accounts,DesktopInstance instance)=>Fixture?(InstanceStateFixture?.Invoke(instance)??new InstanceState{Running=false,Phase="stopped"}):accounts.Instances.Runtime.Probe(instance);
         internal async Task<string> OpenOrShowInstance(string id)
         {

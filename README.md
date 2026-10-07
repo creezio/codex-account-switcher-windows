@@ -3,7 +3,7 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.12.0-beta.1 — consulter les Pages par le tunnel.** Windows 10/11 x64, interface en
+**Version 0.12.1-beta.1 — ouvrir, fermer et redémarrer les instances.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
@@ -29,6 +29,12 @@ affichées sur la fiche. Les accès en cours de modification sont conservés.
 
 Pour une instance ouverte, **Afficher la fenêtre** ramène son Codex au premier
 plan, y compris la session principale. **Ouvrir Codex** lance une instance fermée.
+Si sa fenêtre a été fermée mais que Codex reste actif, l’état devient
+**En arrière-plan** et **Rouvrir la fenêtre** réactive le même profil sans arrêter
+ses tâches. **Fermer** et **Redémarrer** sont visibles au-dessus des onglets ;
+une confirmation rappelle que ces deux actions interrompent les tâches de
+l’instance sélectionnée. Le compte et les conversations sont conservés.
+[Fonctionnement et validation du cycle des instances](docs/INSTANCE-LIFECYCLE.md).
 L’onglet **Activité** affiche l’outil appelé et le motif des blocages.
 
 La version 0.11.3 corrige un faux refus d’écriture du tunnel : les empreintes JSON
@@ -344,10 +350,10 @@ pas déplacés ni supprimés.
 Depuis PowerShell à la racine du dépôt :
 
 ```powershell
-.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.12.0-beta.1
+.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.12.1-beta.1
 .\scripts\test.ps1 -TestDirectory work\framework-validation
 dotnet run --project tests\Core.Net10.csproj -c Release -- work\net10-validation
-.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.12.0-beta.1
+.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.12.1-beta.1
 ```
 
 La compilation de l'interface exige le SDK .NET 10 ; le moteur utilise le

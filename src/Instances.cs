@@ -56,6 +56,7 @@ namespace Creezio.Switcher
         public bool NetworkWarning { get; set; }
         public bool Running { get; set; }
         public string AppToolsPipe { get; set; }
+        public string Caption { get { return Phase=="unknown"?"État à vérifier":Phase=="stopping"?"Fermeture en cours":!Running?"Fermée":WindowReady?"Ouverte":Phase=="starting"?"Démarrage en cours":"En arrière-plan"; } }
     }
     public sealed class DesktopPackage
     {
@@ -156,11 +157,42 @@ namespace Creezio.Switcher
             try {
                 var state=File.Exists(path)?Json.Read<InstanceState>(SafeFiles.ReadText(path)):new InstanceState {Phase="stopped"};
                 bool held=InstanceLease.Busy(folder);
-                state.Running=held || SameProcess(state.DesktopPid,state.DesktopStartTicks);
-                if(!state.Running && state.Phase!="error") state.Phase="stopped";
-                if(held && state.Phase=="stopped") state.Phase="starting";
+                bool desktop=SameProcess(state.DesktopPid,state.DesktopStartTicks);
+                bool window=false;
+                if(desktop)using(var process=Process.GetProcessById(state.DesktopPid))window=process.MainWindowHandle!=IntPtr.Zero;
+                Reconcile(state,held,desktop,window);
                 return state;
             } catch {return new InstanceState {Running=true,Phase="unknown",Message="État indéterminé : aucune modification de cette instance n'est autorisée."};}
+        }
+        internal static void Reconcile(InstanceState state,bool held,bool desktop,bool window)
+        {
+            state.Running=held||desktop;state.WindowReady=desktop&&window;
+            if(!state.Running){if(state.Phase!="error")state.Phase="stopped";state.AppToolsPipe=null;return;}
+            if(state.Phase=="stopping"||state.Phase=="error"||state.Phase=="unknown")return;
+            // Old hosts report "starting" forever after the user closes the last window.
+            bool started=state.DesktopStartTicks>0&&DateTime.UtcNow.Ticks-state.DesktopStartTicks>TimeSpan.FromSeconds(45).Ticks;
+            state.Phase=window?"running":desktop&&(started||state.Phase=="running"||state.Phase=="background")?"background":"starting";
+        }
+        internal static string HostExecutable()
+        {
+            string host=System.Reflection.Assembly.GetExecutingAssembly().Location;
+#if NETCOREAPP
+            host=Path.ChangeExtension(host,".exe");
+#endif
+            return host;
+        }
+        internal static Task ActivatePackage(DesktopPackage package,string command,string args,CancellationToken token)
+        {
+            return RunPowerShell("$ErrorActionPreference='Stop'; Invoke-CommandInDesktopPackage -PackageFamilyName "+QuotePS(package.Family)+" -AppId "+QuotePS(package.AppId)+" -Command "+QuotePS(command)+" -Args "+QuotePS(args)+" -PreventBreakaway",token);
+        }
+        internal async Task Reopen(DesktopInstance instance,CancellationToken token)
+        {
+            var state=Probe(instance);
+            if(instance.IsLocal||!state.Running||state.Phase=="unknown"||state.Phase=="stopping"||!SameProcess(state.HostPid,state.HostStartTicks))
+                throw new InvalidOperationException("L’instance ne peut pas être réactivée dans cet état. Actualisez son état avant de réessayer.");
+            var package=await FindPackage(token);
+            string path=Path.Combine(InstancePaths.Folder(root,instance.Id),"launch.json");
+            await ActivatePackage(package,HostExecutable(),"--instance-show \""+path+"\" "+state.LaunchId,token);
         }
         public async Task Start(DesktopInstance instance,CancellationToken token)
         {
@@ -173,11 +205,7 @@ namespace Creezio.Switcher
             using(var lease=new InstanceLease(folder)) {
                 SafeFiles.AtomicWrite(Path.Combine(folder,"launch.json"),Encoding.UTF8.GetBytes(Json.Write(request)));
             }
-            string host=System.Reflection.Assembly.GetExecutingAssembly().Location;
-#if NETCOREAPP
-            // The assembly is a DLL on modern .NET; activation requires its executable apphost.
-            host=Path.ChangeExtension(host,".exe");
-#endif
+            string host=HostExecutable();
             string hostArgs="--instance-host \""+Path.Combine(folder,"launch.json")+"\"";
             string command="$ErrorActionPreference='Stop'; Invoke-CommandInDesktopPackage -PackageFamilyName "+QuotePS(package.Family)+" -AppId "+QuotePS(package.AppId)+" -Command "+QuotePS(host)+" -Args "+QuotePS(hostArgs)+" -PreventBreakaway";
             try {
@@ -200,7 +228,7 @@ namespace Creezio.Switcher
         }
         public async Task Stop(DesktopInstance instance,CancellationToken token)
         {
-            if(instance.IsLocal) throw new InvalidOperationException("La session habituelle ne peut pas être fermée depuis le switcher.");
+            if(instance.IsLocal){await DesktopWindows.StopLocal(root,token);return;}
             var state=Probe(instance);
             if(!state.Running) return;
             if(String.IsNullOrEmpty(state.LaunchId) || !SameProcess(state.HostPid,state.HostStartTicks))

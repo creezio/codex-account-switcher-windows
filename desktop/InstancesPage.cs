@@ -19,6 +19,9 @@ namespace Creezio.Switcher.Desktop
         private readonly Button[] tabButtons=new Button[3];
         private readonly ComboBox compactChoice=new ComboBox{DisplayMemberPath="Title",Visibility=Visibility.Collapsed};
         private readonly Button rename;
+        private readonly WrapPanel lifecycle=new WrapPanel();
+        private readonly Dictionary<string,string> operations=new Dictionary<string,string>();
+        internal Func<string,string,bool> ConfirmLifecycle;
         private readonly TextBlock verification=Ui.Text("",13);
         private readonly Dictionary<string,Verification> verifications=new Dictionary<string,Verification>();
         private sealed class Verification { public bool Busy; public string Message; }
@@ -43,6 +46,8 @@ namespace Creezio.Switcher.Desktop
             foreach(string property in new[]{"Title","Summary","State"}){var text=new FrameworkElementFactory(typeof(TextBlock));text.SetBinding(TextBlock.TextProperty,new Binding(property));text.SetValue(TextBlock.MarginProperty,new Thickness(0,0,0,6));text.SetValue(TextBlock.TextWrappingProperty,TextWrapping.Wrap);text.SetValue(TextBlock.FontSizeProperty,property=="Title"?16d:12d);if(property=="Title")text.SetValue(TextBlock.FontWeightProperty,FontWeights.SemiBold);if(property=="State")text.SetResourceReference(TextBlock.ForegroundProperty,"AccentTextBrush");panel.AppendChild(text);}template.VisualTree=panel;List.ItemTemplate=template;
             var right=new DockPanel();Grid.SetColumn(right,2);split.Children.Add(right);var header=new StackPanel();header.Children.Add(compactChoice);header.Children.Add(heading);header.Children.Add(accountLine);
             var management=Ui.Actions(header);management.Margin=new Thickness(0,0,0,4);rename=Ui.AsyncButton("Renommer l’instance",Rename,Error);rename.IsEnabled=false;management.Children.Add(rename);
+            header.Children.Add(lifecycle);
+            ConfirmLifecycle=(text,title)=>Ui.Confirm(Shell,text,title);
             verification.Visibility=Visibility.Collapsed;System.Windows.Automation.AutomationProperties.SetName(verification,"Résultat de la vérification");System.Windows.Automation.AutomationProperties.SetLiveSetting(verification,System.Windows.Automation.AutomationLiveSetting.Polite);header.Children.Add(verification);
             header.Children.Add(tabs);DockPanel.SetDock(header,Dock.Top);right.Children.Add(header);right.Children.Add(detail);
             System.Windows.Automation.AutomationProperties.SetName(compactChoice,"Instance sélectionnée");
@@ -57,24 +62,46 @@ namespace Creezio.Switcher.Desktop
         {
             var data=await Context.Read(a=>a.Data.Instances.Where(i=>archived||!i.Archived).Select(i=>{
                 var state=Context.InstanceState(a,i);var profile=a.Data.Profiles.FirstOrDefault(p=>p.Key==i.AccountKey);var info=new Info{Instance=i,Account=profile,State=state,Active=Context.Fixture?i.AccountKey:a.Instances.ActiveKey(i),Integration=RelayIntegration.Status(Context.Store,a.Instances.Home(i))};
-                return new ItemRow{Id=i.Id,Title=i.Name,Summary=profile?.Email??"Compte à connecter",State=i.Archived?"Archivée":i.AccountKey!=null&&info.Active!=i.AccountKey?"À reconnecter":state.Running?"Ouverte":i.IsLocal?"Session actuelle":"Fermée",Value=info};}).ToArray());
+                return new ItemRow{Id=i.Id,Title=i.Name,Summary=profile?.Email??"Compte à connecter",State=i.Archived?"Archivée":i.AccountKey!=null&&info.Active!=i.AccountKey?"À reconnecter":state.Caption,Value=info};}).ToArray());
             bool dirty=resources?.Dirty==true;
             // Metadata can change while access edits are pending; only an identity change would destroy that draft.
             if(dirty&&!data.Any(r=>r.Id==selected&&Identity(r)==identity))return;
             var rows=data.Where(r=>(r.Title+" "+r.Summary).IndexOf(search.Text,StringComparison.CurrentCultureIgnoreCase)>=0||(dirty&&r.Id==selected)).ToArray();
             string fingerprint=Json.Write(rows.Select(r=>new{r.Id,r.Title,r.Summary,r.State}));
             if(fingerprint!=listStamp){listStamp=fingerprint;changing=true;List.ItemsSource=rows;List.SelectedItem=rows.FirstOrDefault(r=>r.Id==selected)??rows.FirstOrDefault();compactChoice.ItemsSource=rows;compactChoice.SelectedItem=List.SelectedItem;changing=false;}
-            if(List.SelectedItem is ItemRow chosen)await Select(rows.First(r=>r.Id==chosen.Id));else if(selected!=null){resources?.Dispose();resources=null;selected=null;identity=null;current=null;heading.Text="Aucune instance";accountLine.Text="Créez une instance ou modifiez votre recherche.";detail.Content=null;rename.IsEnabled=false;UpdateVerification();}
+            if(List.SelectedItem is ItemRow chosen)await Select(rows.First(r=>r.Id==chosen.Id));else if(selected!=null){resources?.Dispose();resources=null;selected=null;identity=null;current=null;heading.Text="Aucune instance";accountLine.Text="Créez une instance ou modifiez votre recherche.";detail.Content=null;rename.IsEnabled=false;UpdateVerification();RenderLifecycle();}
         }
         private static string Identity(ItemRow row){var info=(Info)row.Value;return row.Id+"/"+info.Instance.AccountKey+"/"+info.Instance.Archived;}
         private async Task Select(ItemRow row)
         {
             current=(Info)row.Value;string stamp=Identity(row);rename.IsEnabled=true;
             bool changed=identity!=stamp;identity=stamp;heading.Text=row.Title;accountLine.Text=(current.Account?.Email??"Compte à connecter")+" · "+(current.Account?.Plan??"Connexion requise")+" · "+row.State;
-            if(changed){resources?.Dispose();resources=null;selected=row.Id;if(current.Instance.AccountKey!=null&&!current.Instance.Archived)resources=new InstanceResourcesView(Context,Shell,current.Instance);ShowTab(tab);}
+            if(changed){Notice.Text="";resources?.Dispose();resources=null;selected=row.Id;if(current.Instance.AccountKey!=null&&!current.Instance.Archived)resources=new InstanceResourcesView(Context,Shell,current.Instance);ShowTab(tab);}
             else if(tab==0)RenderAccount();
-            resources?.UpdateOwnerName(current.Instance.Name);UpdateVerification();
+            resources?.UpdateOwnerName(current.Instance.Name);UpdateVerification();RenderLifecycle();
             if(resources!=null)await resources.Discover();
+        }
+        private void RenderLifecycle()
+        {
+            lifecycle.Children.Clear();if(current==null||current.Instance.Archived)return;
+            var info=current;var state=info.State;bool busy=operations.TryGetValue(info.Instance.Id,out var progress);
+            bool blocked=busy||state.Phase=="unknown"||state.Phase=="stopping"||state.Phase=="starting";
+            var open=Ui.AsyncButton(busy?progress:state.WindowReady?"Afficher la fenêtre":state.Running?"Rouvrir la fenêtre":"Ouvrir Codex",()=>ManageInstance(info,"open"),Error,true);
+            open.IsEnabled=!blocked;lifecycle.Children.Add(open);
+            if(state.Running){
+                var restart=Ui.AsyncButton("Redémarrer",()=>ManageInstance(info,"restart"),Error);restart.IsEnabled=!busy&&state.Phase!="unknown"&&state.Phase!="stopping";lifecycle.Children.Add(restart);
+                var close=Ui.AsyncButton("Fermer",()=>ManageInstance(info,"close"),Error);close.IsEnabled=restart.IsEnabled;lifecycle.Children.Add(close);
+            }
+            if(!busy&&state.Running&&!state.WindowReady)lifecycle.Children.Add(Ui.Text(state.Phase=="background"?"La fenêtre est fermée ; Codex fonctionne encore en arrière-plan.":state.Message??state.Caption,12,true));
+        }
+        private async Task ManageInstance(Info info,string action)
+        {
+            string id=info.Instance.Id;if(operations.ContainsKey(id))return;
+            if(action!="open"&&!ConfirmLifecycle((action=="restart"?"Redémarrer":"Fermer")+" « "+info.Instance.Name+" » ? Ses tâches en cours seront interrompues. Enregistrez vos modifications avant de continuer. Son compte et ses conversations seront conservés.",action=="restart"?"Redémarrer l’instance":"Fermer l’instance"))return;
+            operations[id]=action=="open"?"Ouverture en cours…":action=="restart"?"Redémarrage en cours…":"Fermeture en cours…";
+            Notice.Text=operations[id]+" · "+info.Instance.Name;RenderLifecycle();
+            try {Notice.Text=action=="open"?await Context.OpenOrShowInstance(id):await Context.CloseOrRestartInstance(id,action=="restart",info.State);}
+            finally {operations.Remove(id);await Refresh();RenderLifecycle();}
         }
         private async Task Rename()
         {
@@ -134,7 +161,6 @@ namespace Creezio.Switcher.Desktop
             var actions=Ui.Actions(account);
             if(i.Archived)actions.Children.Add(Ui.AsyncButton("Restaurer l’instance",()=>Change(a=>{a.Instances.Archive(a.Data.Instances.Single(x=>x.Id==i.Id),false);return Task.CompletedTask;}),Error,true));
             else if(i.AccountKey==null)actions.Children.Add(Ui.AsyncButton("Connecter un compte",async()=>{await InstanceWizard.Open(Context,Shell,i.Id);await Refresh();},Error,true));
-            if(!i.Archived&&(i.AccountKey!=null||info.State.Running))actions.Children.Add(Ui.AsyncButton(info.State.Running?"Afficher la fenêtre":"Ouvrir Codex",async()=>{Notice.Text=await Context.OpenOrShowInstance(i.Id);await Refresh();},Error,true));
             body.Children.Add(Ui.Card(account));
             if(info.Account!=null){
                 var limits=new StackPanel();limits.Children.Add(Ui.Text("Limites d’utilisation",18));
@@ -148,7 +174,7 @@ namespace Creezio.Switcher.Desktop
             var links=Ui.Actions(integration);links.Children.Add(Ui.Button("Consulter les Pages reçues",()=>SharedPagesWindow.Open(Context,Shell,i)));links.Children.Add(Ui.Button("Voir les ressources",()=>ShowTab(1),true));
             var verify=Ui.AsyncButton(verifying?"Vérification en cours…":"Vérifier l’intégration",()=>Verify(info),Error);System.Windows.Automation.AutomationProperties.SetName(verify,"Vérifier l’intégration");verify.IsEnabled=!verifying&&!i.Archived;links.Children.Add(verify);body.Children.Add(Ui.Card(integration));
             body.Children.Add(Ui.Text("Dans Codex : « Délègue cette mission à "+i.Name+" » ou « Utilise les ressources de "+i.Name+" ».",14,true));
-            var extra=new StackPanel();if(!i.IsLocal&&!i.Archived){extra.Children.Add(Ui.AsyncButton(info.State.Running?"Fermer cette instance…":"Archiver cette instance…",async()=>{if(!Ui.Confirm(Shell,info.State.Running?"Fermer cette instance et interrompre ses tâches en cours ?":"Archiver cette instance en conservant ses données ?","Gérer l’instance"))return;await Change(async a=>{var target=a.Data.Instances.Single(x=>x.Id==i.Id);if(info.State.Running)await a.Instances.Runtime.Stop(target,CancellationToken.None);else a.Instances.Archive(target,true);});},Error));}
+            var extra=new StackPanel();if(!i.IsLocal&&!i.Archived&&!info.State.Running){extra.Children.Add(Ui.AsyncButton("Archiver cette instance…",async()=>{if(!Ui.Confirm(Shell,"Archiver cette instance en conservant ses données ?","Gérer l’instance"))return;await Change(a=>{a.Instances.Archive(a.Data.Instances.Single(x=>x.Id==i.Id),true);return Task.CompletedTask;});},Error));}
             if(info.State.NetworkWarning||info.State.Phase=="error")extra.Children.Add(Ui.Text(info.State.Message,13,true));body.Children.Add(new Expander{Header="Gestion de l’instance",Content=extra,Margin=new Thickness(0,12,0,0)});
             var scroll=renderedAccount==i.Id&&detail.Content is ScrollViewer existing&&existing.Tag!=null?existing:new ScrollViewer();
             scroll.Content=body;scroll.Tag=stamp;renderedAccount=i.Id;detail.Content=scroll;

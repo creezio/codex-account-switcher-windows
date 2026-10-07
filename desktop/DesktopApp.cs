@@ -15,6 +15,12 @@ namespace Creezio.Switcher.Desktop
         {
             if (args.Length == 2 && args[0] == "--instance-host")
                 return InstanceHost.Run(args[1]);
+            if (args.Length == 3 && args[0] == "--instance-show")
+                return InstanceHost.Activate(args[1],args[2]);
+            if (args.Length == 3 && args[0] == "--lifecycle-test")
+                return InstanceLifecycleValidation.Run(args[1],Path.GetFullPath(args[2]));
+            if (args.Length == 4 && args[0] == "--lifecycle-test" && args[3] == "--open-only")
+                return InstanceLifecycleValidation.Run(args[1],Path.GetFullPath(args[2]),true);
             if (args.Length == 1 && args[0] == "--relay")
                 return RelayCommand.Run();
             if (args.Length == 2 && args[0] == "--instance-test")

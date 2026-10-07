@@ -124,12 +124,12 @@ namespace Creezio.Switcher
         public Settings Settings;
         public readonly InstanceManager Instances;
         private readonly ResetController resets=new ResetController();
-        public AccountService(string root)
+        public AccountService(string root,IInstanceRuntime runtime=null)
         {
             Vault=new Vault(root); Data=Vault.Load(); Settings=Vault.LoadSettings();
             if(String.IsNullOrWhiteSpace(Settings.CodexHome)) Settings.CodexHome=CodexEnvironment.DefaultHome();
             if(String.IsNullOrWhiteSpace(Settings.CodexExecutable) || !File.Exists(Settings.CodexExecutable)) Settings.CodexExecutable=CodexEnvironment.FindExecutable();
-            Instances=new InstanceManager(this);
+            Instances=new InstanceManager(this,runtime);
         }
         public void Save() { Vault.Save(Data); }
         public Profile Import(string auth, string label)

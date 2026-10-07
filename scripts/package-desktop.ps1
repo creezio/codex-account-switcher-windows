@@ -1,12 +1,12 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param([switch]$SkipBuild,[string]$BinaryDirectory)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.12.0-beta.1'}
+$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.12.1-beta.1'}
 if(-not $SkipBuild){& (Join-Path $PSScriptRoot 'build-desktop.ps1') -OutputDirectory $bin -Portable}
 foreach($required in @('CodexAccountSwitcher.exe','CodexAccountSwitcher.dll','CodexAccountSwitcher.runtimeconfig.json','coreclr.dll','PresentationFramework.dll','CreezioRelay.exe','plugins')){if(-not(Test-Path -LiteralPath (Join-Path $bin $required))){throw "Livraison autonome incomplète : $required"}}
 $instructions=@'
-CODEX ACCOUNT SWITCHER — 0.12.0-beta.1 — WINDOWS X64
+CODEX ACCOUNT SWITCHER — 0.12.1-beta.1 — WINDOWS X64
 
 Extraire TOUT le ZIP et lancer CodexAccountSwitcher.exe.
 Garder les DLL, fichiers JSON, exécutables et dossier plugins ensemble.
@@ -28,6 +28,9 @@ Instances > Compte : limites, réinitialisations et état de l'intégration.
 Renommer l'instance reste disponible au-dessus de tous les onglets.
 Vérifier l'intégration affiche la progression puis un résultat daté ou une erreur.
 Afficher la fenêtre amène le Codex de cette instance au premier plan.
+Rouvrir la fenêtre réactive une instance restée en arrière-plan après le clic X.
+Fermer et Redémarrer sont accessibles au-dessus des onglets, avec confirmation.
+Ces deux actions interrompent les tâches de la cible et conservent ses données.
 Activité affiche l'outil appelé et le motif exact de son éventuel blocage.
 0.12 : Consulter les Pages reçues, lecture et édition par le tunnel.
 Les anciennes cartes Pages natives restent soumises aux droits du compte.
@@ -66,8 +69,8 @@ https://github.com/creezio/codex-account-switcher-windows
 '@
 [IO.File]::WriteAllText((Join-Path $bin 'LIRE-MOI.txt'),$instructions,[Text.UTF8Encoding]::new($false))
 Copy-Item -LiteralPath (Join-Path $repo 'LICENSE') -Destination (Join-Path $bin 'LICENSE.txt') -Force
-foreach($name in @('SHARED-PAGES.md','SHARED-PAGES-VALIDATION.md','INSTANCE-RESOURCES.md','TOOL-TUNNEL.md','SIMPLE-INSTANCES.md','UI-VALIDATION.md','UI-REBUILD-PLAN.md','RELAY.md','WINDOWS-CONSOLE.md','WINDOWS-CONSOLE-VALIDATION.md')){Copy-Item -LiteralPath (Join-Path $repo ('docs\'+$name)) -Destination $bin -Force}
-$zip=Join-Path $repo 'outputs\CodexAccountSwitcher-0.12.0-beta.1-windows-x64.zip'
+foreach($name in @('INSTANCE-LIFECYCLE.md','SHARED-PAGES.md','SHARED-PAGES-VALIDATION.md','INSTANCE-RESOURCES.md','TOOL-TUNNEL.md','SIMPLE-INSTANCES.md','UI-VALIDATION.md','UI-REBUILD-PLAN.md','RELAY.md','WINDOWS-CONSOLE.md','WINDOWS-CONSOLE-VALIDATION.md')){Copy-Item -LiteralPath (Join-Path $repo ('docs\'+$name)) -Destination $bin -Force}
+$zip=Join-Path $repo 'outputs\CodexAccountSwitcher-0.12.1-beta.1-windows-x64.zip'
 # All published runtime assemblies are required. Test helpers and debug symbols are not shipped.
 $items=Get-ChildItem -LiteralPath $bin | Where-Object {$_.Name -notmatch '(Smoke|Tests|\.pdb$)' } | ForEach-Object FullName
 Compress-Archive -LiteralPath $items -DestinationPath $zip -Force
@@ -79,5 +82,5 @@ try{
   }
 }finally{$archive.Dispose()}
 $hash=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-[IO.File]::WriteAllText((Join-Path $repo 'outputs\SHA256SUMS-0.12.0-beta.1.txt'),$hash+'  '+[IO.Path]::GetFileName($zip)+"`n")
+[IO.File]::WriteAllText((Join-Path $repo 'outputs\SHA256SUMS-0.12.1-beta.1.txt'),$hash+'  '+[IO.Path]::GetFileName($zip)+"`n")
 Get-Item -LiteralPath $zip | Select-Object Name,Length
