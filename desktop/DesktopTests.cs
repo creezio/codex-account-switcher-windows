@@ -27,7 +27,7 @@ namespace Creezio.Switcher.Desktop
         {
             int passed = 0;
             var report = new List<string>();
-            Action<bool, string> assert = (ok, name) => { if (!ok) throw new Exception(name); passed++; report.Add("PASS " + name); };
+            Action<bool, string> assert = (ok, name) => { File.AppendAllText(Path.Combine(root,"progress.txt"),(ok?"PASS ":"FAIL ")+name+"\n"); if (!ok) throw new Exception(name); passed++; report.Add("PASS " + name); };
             Directory.CreateDirectory(root);
             var dataRoot = Path.Combine(root, "data");
             string marker = Path.Combine(root, ".switcher-ui-fixture");
@@ -50,7 +50,11 @@ namespace Creezio.Switcher.Desktop
                 service.Data.Profiles.Add(new Profile { Key = AuthIdentity.Parse(auth).Key, AuthJson = auth, Label = new[] { "Compte personnel", "Équipe produit", "Compte de test", "Un nom très long pour vérifier la disposition des comptes et des champs" }[n], Email = "compte-" + n + "@example.com", Plan = "Plus", QuotaTimeUtc = DateTime.UtcNow.ToString("o"), Quotas = new List<QuotaBucket> { new QuotaBucket { Name = "codex", Primary = new QuotaWindow { Minutes = 300, Remaining = 83 - n * 20 }, Secondary = new QuotaWindow { Minutes = 10080, Remaining = 67 - n * 20 } } }, ResetCredits = new ResetCredits { AvailableCount = n % 2 } });
             }
             service.Save();
+            var toolOwner=service.Instances.Create("Propriétaire démo");service.Instances.BindAccount(toolOwner,service.Data.Profiles[0]);
+            var toolClient=service.Instances.Create("Développement démo");service.Instances.BindAccount(toolClient,service.Data.Profiles[1]);
             var context = new DesktopContext(dataRoot, true);
+            var toolFixture=new TunnelGrant{Id="cccccccccccccccccccccccccccccccc",Name="Pages via Propriétaire démo",Instance=toolOwner.Id,InstanceName=toolOwner.Name,Account=toolOwner.AccountKey,Home=service.Instances.Home(toolOwner),Enabled=true,Revision="fixture",ResourceField="page_id",ResourceValue="page_demo",Sources=new Dictionary<string,string>{{service.Instances.Home(toolClient),toolClient.AccountKey}},Tools=new List<TunnelTool>{new TunnelTool{Server="codex_apps",Name="chatgpt_space.read_page",Group="Pages",ReadOnly=true,Schema=Json.Read<object>("{\"type\":\"object\",\"properties\":{\"page_id\":{\"type\":\"string\"}}}")}}};
+            context.Store.WriteRecord("tool-grants.dpapi",new List<TunnelGrant>{toolFixture});
             var policy = new RelayPolicy();
             policy.Projects.Add(new RelayProject { Id = "projet-demo", Name = "Application de démonstration", Workspace = dataRoot });
             foreach (string id in new[] { "developpement", "revue" })
@@ -90,6 +94,21 @@ namespace Creezio.Switcher.Desktop
                         assert(shell.CurrentPage == page && Object.Equals(shell.Navigation.SelectedItem, page), "page active et sidebar : " + page);
                         Capture(shell, Path.Combine(root, page + ".png"));
                     }
+                    var shared=(ToolSharingPage)shell.Pages["Outils partagés"];
+                    shell.Navigate("Outils partagés");await shared.Refresh();shell.UpdateLayout();
+                    assert(shared.List.Items.Count==1&&Descendants(shared).OfType<TextBlock>().Any(t=>t.Text.Contains("page_demo")),"outils partagés affichent le propriétaire et la ressource autorisée");
+                    var inspectShare=shell.Dispatcher.BeginInvoke(new Action(()=>{
+                        var form=Application.Current.Windows.OfType<EditWindow>().Single(w=>w.Title=="Configurer le partage");
+                        try{
+                            form.UpdateLayout();var ownerChoice=Descendants(form).OfType<ComboBox>().Single(c=>c.DisplayMemberPath=="Key");
+                            assert(Descendants(ownerChoice).OfType<TextBlock>().Any(t=>t.Text=="Propriétaire démo"),"sélecteur affiche réellement le nom de l’instance plutôt que son type technique");
+                            assert(!form.Dirty(),"ouvrir un partage existant ne crée pas de faux changement");
+                            assert(Descendants(form).OfType<CheckBox>().Any(c=>System.Windows.Automation.AutomationProperties.GetName(c).Contains("Développement démo")&&c.IsChecked==true),"partage conserve les instances clientes choisies");
+                            assert(Descendants(form).OfType<TextBox>().Any(t=>t.Text=="page_demo"),"partage conserve la restriction de ressource");
+                            Capture(form,Path.Combine(root,"Partage-outils.png"));form.Dirty=()=>false;
+                        }finally{form.Dirty=()=>false;form.Close();}
+                    }),DispatcherPriority.ContextIdle);
+                    await shared.Edit(toolFixture);await inspectShare.Task;
                     shell.Navigate("Comptes");
                     var assistance=(AssistancePage)shell.Pages["Assistance"];
                     shell.Navigate("Assistance");await assistance.Refresh();shell.UpdateLayout();

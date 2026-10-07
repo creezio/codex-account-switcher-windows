@@ -58,7 +58,7 @@ namespace Creezio.Switcher.Desktop
             var footer = new StackPanel { Margin = new Thickness(8, 14, 0, 0) };
             footer.Children.Add(status);
             advancedNavigation = Ui.Check("Réglages avancés", context.Store.ReadRecord<AppearanceSettings>("appearance.dpapi").Advanced, footer);
-            footer.Children.Add(Ui.Text("0.9 bêta · Instances nommées", 11, true));
+            footer.Children.Add(Ui.Text("0.10 bêta · Outils partagés", 11, true));
             DockPanel.SetDock(footer, Dock.Bottom);
             side.Children.Add(footer);
             side.Children.Add(Navigation);
@@ -67,6 +67,7 @@ namespace Creezio.Switcher.Desktop
             Pages.Add("Accueil", new HomePage(context, this));
             Pages.Add("Comptes", new AccountsPage(context, this));
             Pages.Add("Instances", new InstancesPage(context, this));
+            Pages.Add("Outils partagés", new ToolSharingPage(context, this));
             Pages.Add("Agents", new ConfigurationPage(context, this, true));
             Pages.Add("Projets", new ConfigurationPage(context, this, false));
             Pages.Add("Tâches", new JobsPage(context, this));
@@ -160,7 +161,7 @@ namespace Creezio.Switcher.Desktop
             Navigation.SelectedItem = page;
         }
         private void UpdateNavigation()
-        { Navigation.ItemsSource = new[]{"Accueil","Instances","Tâches","Comptes","Assistance","PC distants","Agents","Projets","Paramètres"}.Where(p=>advancedNavigation.IsChecked==true||(p!="Agents"&&p!="Projets")).ToArray(); }
+        { Navigation.ItemsSource = new[]{"Accueil","Instances","Outils partagés","Tâches","Comptes","Assistance","PC distants","Agents","Projets","Paramètres"}.Where(p=>advancedNavigation.IsChecked==true||(p!="Agents"&&p!="Projets")).ToArray(); }
         internal void ExitForTest()
         {
             exit = true;

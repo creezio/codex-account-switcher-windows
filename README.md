@@ -3,7 +3,7 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.9.0-beta.2 — instances nommées et préparation automatique.** Windows 10/11 x64, interface en
+**Version 0.10.0-beta.1 — outils partagés entre instances.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
@@ -12,6 +12,35 @@ français et livraison portable incluant le runtime .NET 10, sans droits adminis
 · [Validation](docs/VALIDATION.md)
 
 ![Gestion des instances, avec des comptes fictifs](assets/screenshot.png)
+
+## Utiliser les plugins d’un autre compte sans envoyer de prompt
+
+Dans **Outils partagés → Partager des outils**, choisissez l’instance propriétaire,
+chargez ses plugins, cochez les opérations utiles et les instances clientes.
+Vous pouvez limiter le partage à un Site (`project_id`), une Page (`page_id`),
+ou un identifiant propre au plugin. Aucun outil n’est partagé par défaut.
+
+Dans Codex, dites : **« Utilise les outils Pages de Principal pour mettre à jour
+cette page »**. Le skill `use-shared-tools` lit les partages autorisés, appelle
+directement les outils et récupère leur réponse dans le même chat. Le propriétaire
+ne reçoit aucun prompt et aucun deuxième modèle n’est lancé.
+
+Codex reste ouvert. Le transport utilise l’app-server officiel avec le profil
+propriétaire et un contexte technique éphémère. Les résultats sont chiffrés,
+un identifiant stable empêche les doubles envois, et un appel incertain n’est
+jamais répété automatiquement. L’historique indique « Réponse reçue » ; l’agent
+vérifie ensuite le reçu du service ou le statut final de publication.
+
+Les demandes interactives du connecteur ne sont pas approuvées automatiquement.
+**Limite de cette bêta :** les transferts natifs de fichiers sont indisponibles,
+donc la publication d’une nouvelle version Sites est bloquée. Les modifications
+textuelles Pages/Space ont été vérifiées entre deux comptes ; les opérations
+Sites sans fichier et les outils MCP compatibles restent utilisables. Les jetons
+renvoyés par un outil ne sont pas conservés dans les résultats enregistrés.
+Le partage concerne les instances locales Windows, pas les invitations de PC
+distants. [Fonctionnement, plan et validation du tunnel](docs/TOOL-TUNNEL.md).
+
+![Configuration d’un partage avec des données fictives](assets/tool-sharing.png)
 
 ## Relais entre comptes
 
@@ -69,7 +98,7 @@ expurgé et vérification des versions publiées.
 
 - Relais local : nouvelles conversations, réponses automatiques et poursuite dans le même chat.
 - Moteur séparé de la fenêtre, file persistante et arrêt manuel conservé.
-- Plugin intégré : trois skills et seize outils MCP, installation par profil et mise à jour idempotente.
+- Plugin intégré : quatre skills et vingt outils MCP, installation par profil et mise à jour idempotente.
 - Délégation explicite par défaut ; routage selon les règles de chaque utilisateur.
 - Ressources liées à leurs canaux autorisés, limites par compte, dépendances et concurrence bornée.
 - Contrôle des permissions du nouveau chat avant transmission du travail ; réutilisation de chats terminés configurable.
@@ -279,10 +308,10 @@ pas déplacés ni supprimés.
 Depuis PowerShell à la racine du dépôt :
 
 ```powershell
-.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.9.0-beta.2
+.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.10.0-beta.1
 .\scripts\test.ps1 -TestDirectory work\framework-validation
 dotnet run --project tests\Core.Net10.csproj -c Release -- work\net10-validation
-.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.9.0-beta.2
+.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.10.0-beta.1
 ```
 
 La compilation de l'interface exige le SDK .NET 10 ; le moteur utilise le

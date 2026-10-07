@@ -50,11 +50,12 @@ internal static class IntegrationSmoke
                     Rpc(process,1,"initialize",new{clientInfo=new{name="creezio_integration_test",version=RelayWorker.Version},capabilities=new{experimentalApi=true}});
                     process.StandardInput.WriteLine(Json.Write(new{method="initialized"}));process.StandardInput.Flush();
                     var skills=Rpc(process,2,"skills/list",new{cwds=new[]{root},forceReload=true});
-                    var names=RelayIntegration.Objects(skills).Select(x=>Json.Str(Json.Get(x,"name"))).Where(x=>x.EndsWith("delegate-task")||x.EndsWith("execute-relay-task")).Distinct().ToArray();
-                    Console.WriteLine(Json.Write(new{skills=names}));if(names.Length!=2)throw new Exception("Both relay skills must load in Codex");
+                    var names=RelayIntegration.Objects(skills).Select(x=>Json.Str(Json.Get(x,"name"))).Where(x=>new[]{"delegate-task","execute-relay-task","request-assistance","use-shared-tools"}.Any(n=>x.EndsWith(n))).Distinct().ToArray();
+                    Console.WriteLine(Json.Write(new{skills=names}));if(names.Length!=4)throw new Exception("All four relay skills must load in Codex");
                     var servers=Rpc(process,3,"mcpServerStatus/list",new{detail="toolsAndAuthOnly"});
-                    var tools=RelayIntegration.Objects(servers).Select(x=>Json.Str(Json.Get(x,"name"))).Where(x=>new[]{"get_setup","list_agents","list_instances","delegate_to_instance","submit_job","get_job","read_result","report_result","await_children","reconcile_job","wait_job","list_jobs","cancel_job"}.Contains(x)).Distinct().ToArray();
-                    Console.WriteLine(Json.Write(new{loadedTools=tools}));if(tools.Length!=13)throw new Exception("Relay MCP tools must load in Codex");
+                    var expected=RelayMcp.Tools().Select(t=>Json.Str(Json.Get(Json.Read<object>(Json.Write(t)),"name"))).ToArray();
+                    var tools=RelayIntegration.Objects(servers).Select(x=>Json.Str(Json.Get(x,"name"))).Where(x=>expected.Contains(x)).Distinct().ToArray();
+                    Console.WriteLine(Json.Write(new{loadedTools=tools}));if(tools.Length!=20||expected.Except(tools).Any())throw new Exception("All twenty relay MCP tools must load in Codex");
                 }finally{try{process.StandardInput.Close();if(!process.WaitForExit(3000))process.Kill();}catch{}}
             }
             return 0;

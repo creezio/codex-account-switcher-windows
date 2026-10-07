@@ -1,7 +1,7 @@
 {
   "name": "creezio-relay",
-  "version": "0.9.0-beta.2+codex.20261007",
-  "description": "Delegate tasks to configured Codex agents and request assistance through Account Switcher.",
+  "version": "0.10.0-beta.1+codex.20261007",
+  "description": "Use shared tools, delegate tasks to named Codex instances and request assistance through Account Switcher.",
   "author": {
     "name": "Creezio"
   },
@@ -9,11 +9,11 @@
   "interface": {
     "displayName": "Creezio Relay",
     "shortDescription": "Use Creezio Relay in Codex.",
-    "longDescription": "Configurable delegation to local or shared Windows Codex agents, assistance requests and durable task results for Account Switcher.",
+    "longDescription": "Direct calls to explicitly shared tools of local Windows Codex instances, configurable task delegation, assistance and durable results. Native file uploads are not supported by the direct tool transport.",
     "developerName": "Creezio",
     "category": "Productivity",
     "capabilities": [],
-    "defaultPrompt": "Show my configured agents and project delegation rules."
+    "defaultPrompt": "Show my named instances, available shared tools and configured delegation rules."
   },
   "mcpServers": "./.mcp.json"
 }

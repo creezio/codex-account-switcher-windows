@@ -52,6 +52,7 @@ internal static class TestRunner
             ResetTests.RunAll(Check);
             InstanceTests.RunAll(Check,sandbox,a,b);
             SimpleWorkflowTests.RunAll(Check,sandbox,a,b);
+            ToolTunnelTests.RunAll(Check,sandbox);
             RelayTests.RunAll(Check,sandbox);
             GeneralRelayTests.RunAll(Check,sandbox);
             ProductTests.RunAll(Check,sandbox);
