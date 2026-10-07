@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -13,6 +13,14 @@ namespace Creezio.Switcher.Desktop
 {
     internal static class DesktopTests
     {
+        private static async Task<EditWindow> WaitDialog(string title)
+        {
+            for(int attempt=0;attempt<500;attempt++){
+                var form=Application.Current.Windows.OfType<EditWindow>().FirstOrDefault(w=>w.Title==title&&w.IsLoaded);
+                if(form!=null)return form;await Task.Delay(10);
+            }
+            throw new Exception("Dialog did not load: "+title);
+        }
         internal static IEnumerable<DependencyObject> Descendants(DependencyObject parent)
         {
             for (int n = 0; n < VisualTreeHelper.GetChildrenCount(parent); n++)
@@ -55,6 +63,13 @@ namespace Creezio.Switcher.Desktop
             var context = new DesktopContext(dataRoot, true);
             var toolFixture=new TunnelGrant{Id="cccccccccccccccccccccccccccccccc",Name="Pages via Propriétaire démo",Instance=toolOwner.Id,InstanceName=toolOwner.Name,Account=toolOwner.AccountKey,Home=service.Instances.Home(toolOwner),Enabled=true,Revision="fixture",ResourceField="page_id",ResourceValue="page_demo",Sources=new Dictionary<string,string>{{service.Instances.Home(toolClient),toolClient.AccountKey}},Tools=new List<TunnelTool>{new TunnelTool{Server="codex_apps",Name="chatgpt_space.read_page",Group="Pages",ReadOnly=true,Schema=Json.Read<object>("{\"type\":\"object\",\"properties\":{\"page_id\":{\"type\":\"string\"}}}")}}};
             context.Store.WriteRecord("tool-grants.dpapi",new List<TunnelGrant>{toolFixture});
+            var pagesKey=InstanceResources.PluginKey(toolFixture.Tools[0]);
+            var catalog=new InstanceInventory{Instance=toolOwner.Id,Account=toolOwner.AccountKey,Home=service.Instances.Home(toolOwner),Updated=DateTime.UtcNow.ToString("o")};
+            catalog.Plugins.Add(new InstancePlugin{Key=pagesKey,Name="Pages",Tools=12,State="ready"});
+            catalog.Plugins.Add(new InstancePlugin{Key="sites",Name="Sites",Tools=35,State="ready"});
+            catalog.Plugins.Add(new InstancePlugin{Key="private",Name="Outils de l’équipe",Tools=4,State="unsupported",Message="Ce plugin ne propose pas de catalogue de ressources. Choisissez les opérations à partager."});
+            foreach(var r in new[]{new InstanceResource{Title="Feuille de route produit",Kind="Page",Plugin=pagesKey,Field="page_id",Value="page_roadmap",CanModify=true,Access="Modification autorisée"},new InstanceResource{Title="Portail client",Kind="Site",Plugin="sites",Field="project_id",Value="site_portal",CanModify=true,Access="Propriétaire"},new InstanceResource{Title="Budget prévisionnel",Kind="Tableur",Plugin=pagesKey,Field="page_id",Value="page_sheet",NativeEditor=true,Access="Lecture"}}){r.Key=InstanceResources.ResourceKey(r.Plugin,r.Field,r.Value);catalog.Resources.Add(r);}
+            context.Store.WriteRecord(InstanceResources.CacheName(toolOwner.Id),catalog);
             var policy = new RelayPolicy();
             policy.Projects.Add(new RelayProject { Id = "projet-demo", Name = "Application de démonstration", Workspace = dataRoot });
             foreach (string id in new[] { "developpement", "revue" })
@@ -74,17 +89,21 @@ namespace Creezio.Switcher.Desktop
             {
                 try
                 {
-                    assert(!shell.Navigation.Items.Contains("Agents")&&!shell.Navigation.Items.Contains("Projets"),"parcours simple sans canaux ni projets dans la navigation");
-                    var inspectInstance=shell.Dispatcher.BeginInvoke(new Action(()=>{
-                        var form=Application.Current.Windows.OfType<EditWindow>().Single(w=>w.Title=="Votre instance Codex");
+                    assert(!shell.Navigation.Items.Contains("Agents")&&!shell.Navigation.Items.Contains("Projets")&&!shell.Navigation.Items.Contains("Comptes")&&!shell.Navigation.Items.Contains("Outils partagés"),"navigation simple centrée sur les instances");
+                    var inspectInstanceDone=new TaskCompletionSource<bool>();
+                    _=shell.Dispatcher.BeginInvoke(new Action(async()=>{
+                      try{
+                        var form=await WaitDialog("Votre instance Codex");
                         try{
                             assert(Descendants(form).OfType<ComboBox>().Single(c=>System.Windows.Automation.AutomationProperties.GetName(c)=="Compte permanent").Items.Count==5,"création propose connexion ou comptes existants");
                             assert(Descendants(form).OfType<Button>().Any(b=>Object.Equals(b.Content,"Préparer et ouvrir")),"création expose une action unique de préparation");
                             assert(!Descendants(form).OfType<TextBox>().Any(t=>System.Windows.Automation.AutomationProperties.GetName(t).Contains("canal")),"création ne demande aucun canal");
                             Capture(form,Path.Combine(root,"Creation-instance.png"));
                         }finally{form.Close();}
+                        inspectInstanceDone.SetResult(true);
+                      }catch(Exception e){inspectInstanceDone.SetException(e);}
                     }),DispatcherPriority.ContextIdle);
-                    await InstanceWizard.Open(context,shell);await inspectInstance.Task;
+                    await InstanceWizard.Open(context,shell);await inspectInstanceDone.Task;
                     foreach (string page in shell.Pages.Keys)
                     {
                         shell.Navigate(page);
@@ -109,6 +128,27 @@ namespace Creezio.Switcher.Desktop
                         }finally{form.Dirty=()=>false;form.Close();}
                     }),DispatcherPriority.ContextIdle);
                     await shared.Edit(toolFixture);await inspectShare.Task;
+                    var instances=(InstancesPage)shell.Pages["Instances"];await instances.Open(toolOwner.Id);shell.UpdateLayout();
+                    var advancedToggle=Descendants(shell).OfType<CheckBox>().Single(c=>System.Windows.Automation.AutomationProperties.GetName(c)=="Réglages avancés");advancedToggle.IsChecked=false;advancedToggle.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+                    var resources=Descendants(instances).OfType<InstanceResourcesView>().Single();
+                    assert(Descendants(instances).OfType<TextBlock>().Any(t=>t.Text.Contains("compte-0@example.com")),"instance affiche son compte permanent");
+                    assert(!Descendants(resources).OfType<TextBlock>().Any(t=>t.Text.Contains("page_roadmap")),"ressources présentées par nom sans identifiant technique");
+                    var share=Descendants(resources).OfType<CheckBox>().Single(c=>System.Windows.Automation.AutomationProperties.GetName(c)=="Partager Feuille de route produit");
+                    assert(share.IsEnabled&&!share.IsChecked.Value,"ressource détectée décochée par défaut");
+                    assert(!Descendants(resources).OfType<CheckBox>().Single(c=>System.Windows.Automation.AutomationProperties.GetName(c)=="Partager Budget prévisionnel").IsEnabled,"éditeur natif indisponible signalé sans faux partage");
+                    share.IsChecked=true;assert(resources.Dirty,"cocher prépare un changement explicite");
+                    resources.Search.Text="portail";shell.UpdateLayout();resources.Search.Text="";shell.UpdateLayout();
+                    assert(Descendants(resources).OfType<CheckBox>().Single(c=>System.Windows.Automation.AutomationProperties.GetName(c)=="Partager Feuille de route produit").IsChecked==true,"filtrage conserve les ressources cochées");
+                    await instances.Refresh();assert(resources.Dirty,"actualisation périodique conserve le brouillon");
+                    resources.ConfirmDiscard=()=>false;shell.Navigate("Accueil");assert(shell.CurrentPage=="Instances","navigation protège les changements de partage");
+                    instances.ShowTab(0);shell.UpdateLayout();Capture(shell,Path.Combine(root,"Instance-compte.png"));instances.ShowTab(1);shell.UpdateLayout();
+                    assert(resources.Dirty,"onglets Compte et Ressources conservent le brouillon");
+                    Capture(shell,Path.Combine(root,"Instance-ressources.png"));shell.Theme("Sombre");shell.UpdateLayout();Capture(shell,Path.Combine(root,"Instance-ressources-dark.png"));shell.Theme("Clair");
+                    double width=shell.Width,height=shell.Height;shell.Width=800;shell.Height=550;await Task.Delay(50);shell.UpdateLayout();
+                    assert(((ItemRow)Descendants(instances).OfType<ComboBox>().Single(c=>System.Windows.Automation.AutomationProperties.GetName(c)=="Instance sélectionnée").SelectedItem).Id==toolOwner.Id,"sélecteur compact reflète exactement l’instance active");
+                    var saveResources=Descendants(resources).OfType<Button>().Single(b=>Object.Equals(b.Content,"Enregistrer les accès"));var savePosition=saveResources.TranslatePoint(new Point(),shell);
+                    assert(savePosition.Y>=0&&savePosition.Y+saveResources.ActualHeight<=shell.ActualHeight,"enregistrement des accès accessible en petite fenêtre");Capture(shell,Path.Combine(root,"Instance-ressources-compact.png"));shell.Width=width;shell.Height=height;
+                    resources.ConfirmDiscard=()=>true;shell.Navigate("Accueil");assert(shell.CurrentPage=="Accueil"&&!resources.Dirty,"abandon confirmé restaure les autorisations précédentes");
                     shell.Navigate("Comptes");
                     var assistance=(AssistancePage)shell.Pages["Assistance"];
                     shell.Navigate("Assistance");await assistance.Refresh();shell.UpdateLayout();

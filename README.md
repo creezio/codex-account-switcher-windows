@@ -1,9 +1,9 @@
-# Codex Account Switcher pour Windows
+﻿# Codex Account Switcher pour Windows
 
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.10.0-beta.1 — outils partagés entre instances.** Windows 10/11 x64, interface en
+**Version 0.11.0-beta.1 — comptes et ressources réunis par instance.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
@@ -15,10 +15,17 @@ français et livraison portable incluant le runtime .NET 10, sans droits adminis
 
 ## Utiliser les plugins d’un autre compte sans envoyer de prompt
 
-Dans **Outils partagés → Partager des outils**, choisissez l’instance propriétaire,
-chargez ses plugins, cochez les opérations utiles et les instances clientes.
-Vous pouvez limiter le partage à un Site (`project_id`), une Page (`page_id`),
-ou un identifiant propre au plugin. Aucun outil n’est partagé par défaut.
+Dans **Instances**, choisissez votre espace Codex. L’onglet **Compte** présente son
+compte permanent, ses limites et l’état de son intégration. Dans **Ressources & accès**,
+les plugins connectés, Sites et Pages sont détectés automatiquement auprès du compte.
+Choisissez **Partager avec**, cochez les ressources par leur nom, sélectionnez
+**Lecture** ou **Lecture et modification**, puis **Enregistrer les accès**.
+
+Chaque instance cliente conserve ses propres droits. Décocher révoque l’accès au
+prochain appel après enregistrement. Les futures ressources restent décochées.
+Les plugins sans catalogue pris en charge affichent cette limite et un accès aux
+opérations avancées. Aucun partage n’est créé par la simple détection.
+[Guide et validation du nouveau parcours](docs/INSTANCE-RESOURCES.md).
 
 Dans Codex, dites : **« Utilise les outils Pages de Principal pour mettre à jour
 cette page »**. Le skill `use-shared-tools` lit les partages autorisés, appelle
@@ -40,7 +47,7 @@ renvoyés par un outil ne sont pas conservés dans les résultats enregistrés.
 Le partage concerne les instances locales Windows, pas les invitations de PC
 distants. [Fonctionnement, plan et validation du tunnel](docs/TOOL-TUNNEL.md).
 
-![Configuration d’un partage avec des données fictives](assets/tool-sharing.png)
+![Ressources d’une instance, avec des données fictives](assets/instance-resources.png)
 
 ## Relais entre comptes
 
@@ -308,10 +315,10 @@ pas déplacés ni supprimés.
 Depuis PowerShell à la racine du dépôt :
 
 ```powershell
-.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.10.0-beta.1
+.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.11.0-beta.1
 .\scripts\test.ps1 -TestDirectory work\framework-validation
 dotnet run --project tests\Core.Net10.csproj -c Release -- work\net10-validation
-.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.10.0-beta.1
+.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.11.0-beta.1
 ```
 
 La compilation de l'interface exige le SDK .NET 10 ; le moteur utilise le

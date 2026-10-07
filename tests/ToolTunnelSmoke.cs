@@ -25,11 +25,35 @@ internal static class ToolTunnelSmoke
     {
         try{
             var store=new RelayStore(RelayStore.DefaultRoot);var tunnel=new ToolTunnel(store);
+            if(args.Length>2&&args[2]=="resources"){
+                var before=ToolTunnel.Hash(Json.Read<object>(Json.Write(tunnel.Grants())));
+                var data=new InstanceResources(store).Discover(args[0],CancellationToken.None).GetAwaiter().GetResult();
+                if(before!=ToolTunnel.Hash(Json.Read<object>(Json.Write(tunnel.Grants()))))throw new Exception("Discovery changed grants");
+                Console.WriteLine(Json.Write(new{plugins=data.Plugins.Count,resources=data.Resources.Count,types=data.Resources.GroupBy(r=>r.Kind).Select(g=>new{kind=g.Key,count=g.Count()}),states=data.Plugins.Select(p=>new{plugin=p.Name,state=p.State,message=p.State=="error"?p.Message:null})}));
+                Console.WriteLine("PASS metadata discovery; no model turn; existing permissions preserved");return 0;
+            }
             var catalog=tunnel.Discover(args[0],CancellationToken.None).GetAwaiter().GetResult();
             var wanted=new[]{"chatgpt_space.list_pages","chatgpt_space.create_page","chatgpt_space.read_page","chatgpt_space.edit_page","sites.create_site","sites.save_site_version","sites.save_version_and_deploy_private","sites.deploy_site_version","sites.get_site","sites.create_source_repository_write_credential","sites.get_deployment_status","sites.list_site_versions"};
             var tools=catalog.Where(t=>wanted.Contains(t.Name)).ToArray();
             File.WriteAllText(args[1],Json.Write(tools));Console.WriteLine("PASS official app-server inventory: "+catalog.Length+" tools; saved "+tools.Length+" selected schemas (no credentials)");
             if(args.Length<3||String.IsNullOrWhiteSpace(args[2]))return 0;
+            if(args[2]=="resources-read"){
+                var sessionTest=RelaySessions.Bind(store,null,CancellationToken.None).GetAwaiter().GetResult();
+                var service=new InstanceResources(store);var owner=tunnel.Owner(args[0]);
+                var inventory=service.Cached(owner.Id,owner.Account,owner.Home);
+                if(!InstanceResources.Fresh(inventory))inventory=service.Discover(owner.Id,CancellationToken.None).GetAwaiter().GetResult();
+                var page=inventory.Resources.Single(r=>r.Kind=="Page"&&r.Title=="Validation du tunnel Account Switcher");
+                string client="acceptance-"+Guid.NewGuid().ToString("N"),initial=ToolTunnel.Hash(Json.Read<object>(Json.Write(tunnel.Grants())));
+                try{
+                    service.Save(inventory,client,sessionTest.Home,sessionTest.Account,new Dictionary<string,string>{{page.Key,"read"}},service.Revision(owner.Id,client),CancellationToken.None).GetAwaiter().GetResult();
+                    var selected=tunnel.Grants().Single(g=>g.CatalogClient==client);
+                    if(selected.ResourceValues.Count!=1||selected.ResourceLabels[page.Value]!=page.Title)throw new Exception("Incorrect named allowlist");
+                    Call(tunnel,sessionTest,selected,"chatgpt_space.read_page",new{page_id=page.Value,include_content=false});
+                    Console.WriteLine("PASS catalog selection -> named scoped grant -> real cross-account metadata read");
+                }finally{service.Save(inventory,client,sessionTest.Home,sessionTest.Account,new Dictionary<string,string>(),service.Revision(owner.Id,client),CancellationToken.None).GetAwaiter().GetResult();}
+                if(initial!=ToolTunnel.Hash(Json.Read<object>(Json.Write(tunnel.Grants()))))throw new Exception("Existing permissions changed");
+                Console.WriteLine("PASS test access revoked; previous permissions preserved");return 0;
+            }
             if(args[2]=="integration-status"){
                 var accounts=new AccountService(Path.GetDirectoryName(store.Root));
                 foreach(var instance in accounts.Data.Instances.Where(i=>!i.Archived)){

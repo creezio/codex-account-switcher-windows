@@ -2,11 +2,11 @@
 param([switch]$SkipBuild,[string]$BinaryDirectory)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.10.0-beta.1'}
+$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.11.0-beta.1'}
 if(-not $SkipBuild){& (Join-Path $PSScriptRoot 'build-desktop.ps1') -OutputDirectory $bin -Portable}
 foreach($required in @('CodexAccountSwitcher.exe','CodexAccountSwitcher.dll','CodexAccountSwitcher.runtimeconfig.json','coreclr.dll','PresentationFramework.dll','CreezioRelay.exe','plugins')){if(-not(Test-Path -LiteralPath (Join-Path $bin $required))){throw "Livraison autonome incomplète : $required"}}
 $instructions=@'
-CODEX ACCOUNT SWITCHER — 0.10.0-beta.1 — WINDOWS X64
+CODEX ACCOUNT SWITCHER — 0.11.0-beta.1 — WINDOWS X64
 
 Extraire TOUT le ZIP et lancer CodexAccountSwitcher.exe.
 Garder les DLL, fichiers JSON, exécutables et dossier plugins ensemble.
@@ -16,12 +16,13 @@ Le moteur de relais utilise .NET Framework 4.8, présent sur Windows 10/11.
 Instances : donner un nom, connecter un compte permanent, préparer et ouvrir.
 Le plugin et les skills sont installés et vérifiés automatiquement.
 Dans Codex : « Délègue cette mission à Léa ». Le résultat revient dans ce chat.
-Outils partagés : sélectionner un propriétaire, des outils et des clients.
+Instances > Ressources & accès : choisir le destinataire, cocher les ressources
+par leur nom, choisir Lecture ou Lecture et modification, enregistrer.
 Dans Codex : « Utilise les outils Pages de Principal pour modifier cette page ».
 Aucun prompt envoyé au propriétaire. Codex doit rester ouvert sur les deux côtés.
 Les fichiers joints ne sont pas transférés : publication de nouvelles versions
 Sites indisponible dans le tunnel. Lire TOOL-TUNNEL.md pour les possibilités.
-Comptes : consulter les limites et configurer leurs réinitialisations.
+Instances > Compte : limites, réinitialisations et état de l'intégration.
 Réglages avancés : anciens canaux, projets, ressources et règles facultatives.
 Tâches : envoyer un prompt vers un chat nouveau ou ciblé et lire sa réponse.
 PC distants : partager des canaux avec invitations et droits révocables.
@@ -55,8 +56,8 @@ https://github.com/creezio/codex-account-switcher-windows
 '@
 [IO.File]::WriteAllText((Join-Path $bin 'LIRE-MOI.txt'),$instructions,[Text.UTF8Encoding]::new($false))
 Copy-Item -LiteralPath (Join-Path $repo 'LICENSE') -Destination (Join-Path $bin 'LICENSE.txt') -Force
-foreach($name in @('TOOL-TUNNEL.md','SIMPLE-INSTANCES.md','UI-VALIDATION.md','UI-REBUILD-PLAN.md','RELAY.md','WINDOWS-CONSOLE.md','WINDOWS-CONSOLE-VALIDATION.md')){Copy-Item -LiteralPath (Join-Path $repo ('docs\'+$name)) -Destination $bin -Force}
-$zip=Join-Path $repo 'outputs\CodexAccountSwitcher-0.10.0-beta.1-windows-x64.zip'
+foreach($name in @('INSTANCE-RESOURCES.md','TOOL-TUNNEL.md','SIMPLE-INSTANCES.md','UI-VALIDATION.md','UI-REBUILD-PLAN.md','RELAY.md','WINDOWS-CONSOLE.md','WINDOWS-CONSOLE-VALIDATION.md')){Copy-Item -LiteralPath (Join-Path $repo ('docs\'+$name)) -Destination $bin -Force}
+$zip=Join-Path $repo 'outputs\CodexAccountSwitcher-0.11.0-beta.1-windows-x64.zip'
 # All published runtime assemblies are required. Test helpers and debug symbols are not shipped.
 $items=Get-ChildItem -LiteralPath $bin | Where-Object {$_.Name -notmatch '(Smoke|Tests|\.pdb$)' } | ForEach-Object FullName
 Compress-Archive -LiteralPath $items -DestinationPath $zip -Force
@@ -68,5 +69,5 @@ try{
   }
 }finally{$archive.Dispose()}
 $hash=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-[IO.File]::WriteAllText((Join-Path $repo 'outputs\SHA256SUMS-0.10.0-beta.1.txt'),$hash+'  '+[IO.Path]::GetFileName($zip)+"`n")
+[IO.File]::WriteAllText((Join-Path $repo 'outputs\SHA256SUMS-0.11.0-beta.1.txt'),$hash+'  '+[IO.Path]::GetFileName($zip)+"`n")
 Get-Item -LiteralPath $zip | Select-Object Name,Length

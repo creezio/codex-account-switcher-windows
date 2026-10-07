@@ -34,8 +34,8 @@ namespace Creezio.Switcher.Desktop
             if(row.Value is TunnelGrant g){
                 var owner=Context.Accounts().Data.Instances.FirstOrDefault(i=>i.Id==g.Instance);
                 Details.Children.Add(Ui.Text("Propriétaire : "+(owner?.Name??g.Instance)));
-                Details.Children.Add(Ui.Text(String.IsNullOrEmpty(g.ResourceField)?"Périmètre : contenu accessible aux outils sélectionnés.":"Périmètre : "+g.ResourceField+" = "+g.ResourceValue,13,true));
-                var actions=Ui.Actions(Details);actions.Children.Add(Ui.AsyncButton("Configurer",()=>Edit(g),Error));
+                Details.Children.Add(Ui.Text(String.IsNullOrEmpty(g.ResourceField)?"Périmètre : contenu accessible aux outils sélectionnés.":g.ResourceValues?.Count>0?"Périmètre : "+g.ResourceValues.Count+" ressources sélectionnées":"Périmètre : "+g.ResourceField+" = "+g.ResourceValue,13,true));
+                var actions=Ui.Actions(Details);actions.Children.Add(Ui.AsyncButton("Configurer",()=>String.IsNullOrEmpty(g.CatalogClient)?Edit(g):((InstancesPage)Shell.Pages["Instances"]).Open(g.Instance),Error));
                 actions.Children.Add(Ui.AsyncButton("Désactiver",async delegate{Tunnel.Disable(g.Id);await Refresh();},Error));
                 Details.Children.Add(Ui.Text("Dans Codex : « Utilise les outils de "+(owner?.Name??"cette instance")+" pour… »",14));
                 foreach(var t in g.Tools)Details.Children.Add(Ui.Text((t.ReadOnly?"Lecture · ":"Action · ")+t.Name,13,true));
@@ -45,14 +45,14 @@ namespace Creezio.Switcher.Desktop
                 Details.Children.Add(Ui.Text("Le chat émetteur peut récupérer la réponse avec read_shared_tool_result. Une réponse reçue ne confirme pas à elle seule la publication : l’agent vérifie aussi le reçu du service.",13,true));
             }
         }
-        internal Task Edit(TunnelGrant old)
+        internal Task Edit(TunnelGrant old,string ownerId=null)
         {
             var accounts=Context.Accounts();var instances=accounts.Data.Instances.Where(i=>!i.Archived&&!String.IsNullOrEmpty(i.AccountKey)).ToArray();
             if(instances.Length<2)throw new InvalidOperationException("Préparez au moins deux instances avec un compte permanent.");
             var d=new EditWindow(Shell,old==null?"Partager les outils d’une instance":"Configurer le partage");
             var label=Ui.Input("Nom du partage",old?.Name??"",d.Fields);
             d.Fields.Children.Add(Ui.Text("Instance propriétaire",13));
-            var owner=new ComboBox{ItemsSource=instances.Select(i=>new KeyValuePair<string,DesktopInstance>(i.Name,i)).ToArray(),DisplayMemberPath="Key",SelectedValuePath="Value",SelectedValue=instances.FirstOrDefault(i=>i.Id==old?.Instance)??instances[0]};d.Fields.Children.Add(owner);
+            var owner=new ComboBox{ItemsSource=instances.Select(i=>new KeyValuePair<string,DesktopInstance>(i.Name,i)).ToArray(),DisplayMemberPath="Key",SelectedValuePath="Value",SelectedValue=instances.FirstOrDefault(i=>i.Id==(old?.Instance??ownerId))??instances[0]};d.Fields.Children.Add(owner);
             var info=Ui.Text("Chargez les plugins disponibles sur le compte propriétaire.",13,true);d.Fields.Children.Add(info);
             var group=Ui.Select("Plugin",new string[0],null,d.Fields);
             var write=Ui.Check("Afficher aussi les outils qui modifient ou publient",old?.Tools.Any(t=>!t.ReadOnly)??false,d.Fields);

@@ -24,6 +24,7 @@ namespace Creezio.Switcher.Desktop
         private readonly HashSet<string> refreshing = new HashSet<string>();
         private CheckBox advancedNavigation;
         private string themeMode = "Système";
+        private static readonly string[] AdvancedPages={"Agents","Projets","Comptes","Outils partagés"};
         private readonly HashSet<string> notified = new HashSet<string>(), lowNotified = new HashSet<string>();
         internal string CurrentPage
         {
@@ -58,7 +59,7 @@ namespace Creezio.Switcher.Desktop
             var footer = new StackPanel { Margin = new Thickness(8, 14, 0, 0) };
             footer.Children.Add(status);
             advancedNavigation = Ui.Check("Réglages avancés", context.Store.ReadRecord<AppearanceSettings>("appearance.dpapi").Advanced, footer);
-            footer.Children.Add(Ui.Text("0.10 bêta · Outils partagés", 11, true));
+            footer.Children.Add(Ui.Text("0.11 bêta · Instances & ressources", 11, true));
             DockPanel.SetDock(footer, Dock.Bottom);
             side.Children.Add(footer);
             side.Children.Add(Navigation);
@@ -76,8 +77,8 @@ namespace Creezio.Switcher.Desktop
             Pages.Add("Paramètres", new PreferencesPage(context, this));
             UpdateNavigation();
             advancedNavigation.Click += delegate {
-                if(advancedNavigation.IsChecked!=true && (CurrentPage=="Agents"||CurrentPage=="Projets") && !Pages[CurrentPage].CanLeave()){advancedNavigation.IsChecked=true;return;}
-                string previous=CurrentPage; UpdateNavigation(); Navigate(previous=="Agents"||previous=="Projets" ? "Instances" : previous??"Accueil");
+                if(advancedNavigation.IsChecked!=true && AdvancedPages.Contains(CurrentPage) && !Pages[CurrentPage].CanLeave()){advancedNavigation.IsChecked=true;return;}
+                string previous=CurrentPage; UpdateNavigation(); Navigate(AdvancedPages.Contains(previous) ? "Instances" : previous??"Accueil");
                 var appearance=context.Store.ReadRecord<AppearanceSettings>("appearance.dpapi");appearance.Advanced=advancedNavigation.IsChecked==true;context.Store.WriteRecord("appearance.dpapi",appearance);
             };
             System.Windows.Automation.AutomationProperties.SetName(Navigation, "Navigation principale");
@@ -157,11 +158,11 @@ namespace Creezio.Switcher.Desktop
         }
         internal void Navigate(string page)
         {
-            if((page=="Agents"||page=="Projets")&&advancedNavigation.IsChecked!=true){advancedNavigation.IsChecked=true;UpdateNavigation();}
+            if(AdvancedPages.Contains(page)&&advancedNavigation.IsChecked!=true){advancedNavigation.IsChecked=true;UpdateNavigation();}
             Navigation.SelectedItem = page;
         }
         private void UpdateNavigation()
-        { Navigation.ItemsSource = new[]{"Accueil","Instances","Outils partagés","Tâches","Comptes","Assistance","PC distants","Agents","Projets","Paramètres"}.Where(p=>advancedNavigation.IsChecked==true||(p!="Agents"&&p!="Projets")).ToArray(); }
+        { Navigation.ItemsSource = new[]{"Accueil","Instances","Tâches","Assistance","PC distants","Comptes","Outils partagés","Agents","Projets","Paramètres"}.Where(p=>advancedNavigation.IsChecked==true||!AdvancedPages.Contains(p)).ToArray(); }
         internal void ExitForTest()
         {
             exit = true;

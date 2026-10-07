@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -36,6 +36,9 @@ namespace Creezio.Switcher
         public List<TunnelTool> Tools {get;set;}
         public string ResourceField {get;set;}
         public string ResourceValue {get;set;}
+        public List<string> ResourceValues {get;set;}
+        public Dictionary<string,string> ResourceLabels {get;set;}
+        public string CatalogClient {get;set;}
         public TunnelGrant(){Sources=new Dictionary<string,string>();Tools=new List<TunnelTool>();}
     }
     public sealed class TunnelCall
@@ -43,6 +46,7 @@ namespace Creezio.Switcher
         public string Id {get;set;}
         public string Grant {get;set;}
         public string GrantName {get;set;}
+        public string Instance {get;set;}
         public string Revision {get;set;}
         public string SourceThread {get;set;}
         public string SourceHome {get;set;}
@@ -128,9 +132,16 @@ namespace Creezio.Switcher
                 foreach(var t in tools)t.Signature=Signature(t);return tools;
             }
         }
+        internal TunnelOwner Owner(string instance){return resolveOwner(instance);}
+        internal IToolTunnelConnection Connection(TunnelOwner owner){return connect(owner);}
         internal static void CheckOwner(TunnelOwner expected,TunnelOwner actual)
         {if(expected.Id!=actual.Id||expected.Account!=actual.Account||!RelayStore.SamePath(expected.Home,actual.Home))throw new InvalidOperationException("L'identité de l'instance propriétaire a changé.");}
         public void SaveGrant(TunnelGrant grant)
+        {
+            PrepareGrant(grant);
+            using(store.Lease("tool-grants")){var grants=Grants();grants.RemoveAll(g=>g.Id==grant.Id);grants.Add(grant);WriteGrants(grants);}
+        }
+        internal void PrepareGrant(TunnelGrant grant)
         {
             RelayStore.MessageId(grant.Id);Bound(grant.Name,120,"Nom du partage");
             var owner=resolveOwner(grant.Instance);grant.Instance=owner.Id;grant.InstanceName=owner.Name;grant.Account=owner.Account;grant.Home=owner.Home;
@@ -140,14 +151,18 @@ namespace Creezio.Switcher
             foreach(var t in grant.Tools){Bound(t.Name,200,"Outil");if(!AllowedServer(t.Server)||t.Schema==null)throw new InvalidOperationException("Outil non exportable.");t.Signature=Signature(t);}
             grant.ResourceField=(grant.ResourceField??"").Trim();grant.ResourceValue=(grant.ResourceValue??"").Trim();
             if(grant.ResourceField.Length>0){
-                Bound(grant.ResourceField,100,"Champ de ressource");Bound(grant.ResourceValue,512,"Identifiant de ressource");
+                Bound(grant.ResourceField,100,"Champ de ressource");
+                if(grant.ResourceValues!=null&&grant.ResourceValues.Count>0){if(grant.ResourceValues.Count>10000)throw new InvalidOperationException("Trop de ressources dans ce partage.");foreach(string value in grant.ResourceValues)Bound(value,512,"Identifiant de ressource");grant.ResourceValues=grant.ResourceValues.Distinct(StringComparer.Ordinal).OrderBy(v=>v,StringComparer.Ordinal).ToList();}
+                else Bound(grant.ResourceValue,512,"Identifiant de ressource");
                 if(grant.Tools.Any(t=>!Json.Obj(Json.Get(t.Schema,"properties")).ContainsKey(grant.ResourceField)))throw new InvalidOperationException("Certains outils ne prennent pas le champ de ressource choisi. Retirez-les pour conserver cette restriction.");
-            }else if(grant.ResourceValue.Length>0)throw new InvalidOperationException("Indiquez le champ de ressource.");
+            }else if(grant.ResourceValue.Length>0||(grant.ResourceValues!=null&&grant.ResourceValues.Count>0))throw new InvalidOperationException("Indiquez le champ de ressource.");
             foreach(var source in grant.Sources){Bound(source.Key,1024,"Profil client");Bound(source.Value,300,"Compte client");if(RelayStore.SamePath(source.Key,owner.Home))throw new InvalidOperationException("Choisissez une instance cliente différente du propriétaire.");}
+            if(grant.ResourceLabels!=null)foreach(var label in grant.ResourceLabels){if(grant.ResourceValues==null||!grant.ResourceValues.Contains(label.Key))throw new InvalidOperationException("Libellé sans ressource autorisée.");Bound(label.Value,240,"Nom de ressource");}
             grant.Revision=Guid.NewGuid().ToString("N");
             if(Encoding.UTF8.GetByteCount(Json.Write(grant))>3000000)throw new InvalidOperationException("Partage trop volumineux. Sélectionnez moins d'outils.");
-            using(store.Lease("tool-grants")){var grants=Grants();grants.RemoveAll(g=>g.Id==grant.Id);grants.Add(grant);if(grants.Count>100||Encoding.UTF8.GetByteCount(Json.Write(grants))>3500000)throw new InvalidOperationException("La configuration des partages est trop volumineuse. Réduisez les outils sélectionnés.");store.WriteRecord("tool-grants.dpapi",grants);}
         }
+        internal void WriteGrants(List<TunnelGrant> grants)
+        {if(grants.Count>100||Encoding.UTF8.GetByteCount(Json.Write(grants))>3500000)throw new InvalidOperationException("La configuration des partages est trop volumineuse. Réduisez les outils sélectionnés.");store.WriteRecord("tool-grants.dpapi",grants);}
         public void Disable(string id)
         {using(store.Lease("tool-grants")){var all=Grants();var g=all.Single(x=>x.Id==id);g.Enabled=false;g.Revision=Guid.NewGuid().ToString("N");store.WriteRecord("tool-grants.dpapi",all);}}
         internal static bool CanUse(TunnelGrant g,RelaySession s)
@@ -157,10 +172,10 @@ namespace Creezio.Switcher
         public object List(RelaySession session)
         {
             verifySource(session);
-            return Grants().Where(g=>CanUse(g,session)).Select(g=>new{id=g.Id,name=g.Name,instance=g.Instance,instanceName=g.InstanceName,resourceField=g.ResourceField,resourceValue=g.ResourceValue,tools=g.Tools.Select(t=>new{server=t.Server,name=t.Name,group=t.Group,readOnly=t.ReadOnly,limitation=Limitation(t)}).ToArray()}).ToArray();
+            return Grants().Where(g=>CanUse(g,session)).Select(g=>new{id=g.Id,name=g.Name,instance=g.Instance,instanceName=g.InstanceName,resourceField=g.ResourceField,resourceValue=g.ResourceValue,resourceValues=g.ResourceValues,resourceLabels=g.ResourceLabels,tools=g.Tools.Select(t=>new{server=t.Server,name=t.Name,group=t.Group,readOnly=t.ReadOnly,limitation=Limitation(t)}).ToArray()}).ToArray();
         }
         public object Describe(RelaySession session,string grantId,string server,string name)
-        {var g=Authorize(session,grantId);var tool=g.Tools.Single(t=>t.Server==server&&t.Name==name);return new{instance=g.Instance,instanceName=g.InstanceName,resourceField=g.ResourceField,resourceValue=g.ResourceValue,limitation=Limitation(tool),fileTransfer="Native local-file uploads are unavailable; credentials are returned once and redacted from storage.",tool=tool};}
+        {var g=Authorize(session,grantId);var tool=g.Tools.Single(t=>t.Server==server&&t.Name==name);return new{instance=g.Instance,instanceName=g.InstanceName,resourceField=g.ResourceField,resourceValue=g.ResourceValue,resourceValues=g.ResourceValues,resourceLabels=g.ResourceLabels,limitation=Limitation(tool),fileTransfer="Native local-file uploads are unavailable; credentials are returned once and redacted from storage.",tool=tool};}
         private string Record(string id){RelayStore.MessageId(id);return "tool-call-"+id+".dpapi";}
         private void Persist(TunnelCall call)
         {
@@ -181,7 +196,7 @@ namespace Creezio.Switcher
             var array=value as IEnumerable;if(array!=null&&!(value is string)){var items=new List<object>();foreach(var item in array)items.Add(Redact(item,ref sensitive));return items.ToArray();}return value;
         }
         internal static void CheckResource(TunnelGrant g,object args)
-        {if(!(args is IDictionary<string,object>))throw new InvalidOperationException("Les arguments doivent être un objet JSON.");if(!String.IsNullOrEmpty(g.ResourceField)&&Json.Str(Json.Get(args,g.ResourceField))!=g.ResourceValue)throw new InvalidOperationException("Cette ressource n'est pas autorisée par le partage.");}
+        {if(!(args is IDictionary<string,object>))throw new InvalidOperationException("Les arguments doivent être un objet JSON.");if(!String.IsNullOrEmpty(g.ResourceField)){string value=Json.Get(args,g.ResourceField) as string;if(value==null||((g.ResourceValues!=null&&g.ResourceValues.Count>0)?!g.ResourceValues.Contains(value,StringComparer.Ordinal):value!=g.ResourceValue))throw new InvalidOperationException("Cette ressource n'est pas autorisée par le partage.");}}
         internal static void SameCaller(TunnelCall c,RelaySession s)
         {if(c.Id==null||c.SourceThread!=s.Thread||c.SourceAccount!=s.Account||!RelayStore.SamePath(c.SourceHome,s.Home))throw new InvalidOperationException("Cet appel appartient à un autre chat.");}
         public TunnelCall Read(RelaySession session,string id)
@@ -197,7 +212,7 @@ namespace Creezio.Switcher
             using(store.Lease("tool-call-"+id)){
                 var existing=store.ReadRecord<TunnelCall>(Record(id));
                 if(existing.Id!=null){SameCaller(existing,session);if(existing.Fingerprint!=hash)throw new InvalidOperationException("Cet identifiant a déjà été utilisé avec d'autres arguments.");return existing;}
-                var call=new TunnelCall{Id=id,Grant=grant.Id,GrantName=grant.Name,Revision=grant.Revision,SourceThread=session.Thread,SourceHome=session.Home,SourceAccount=session.Account,Fingerprint=hash,Tool=server+"/"+name,State="preparing",Created=DateTime.UtcNow.ToString("o")};Persist(call);
+                var call=new TunnelCall{Id=id,Grant=grant.Id,GrantName=grant.Name,Instance=grant.Instance,Revision=grant.Revision,SourceThread=session.Thread,SourceHome=session.Home,SourceAccount=session.Account,Fingerprint=hash,Tool=server+"/"+name,State="preparing",Created=DateTime.UtcNow.ToString("o")};Persist(call);
                 bool sent=false;
                 try{
                     string limitation=Limitation(chosen);if(limitation.Length>0)throw new InvalidOperationException(limitation);CheckTransport(chosen.Schema,args);

@@ -1,5 +1,10 @@
 # Appels d’outils entre instances — plan et contrat
 
+Depuis la version 0.11, le parcours principal est **Instances → Ressources & accès** :
+détection des Sites et Pages, choix du destinataire et cases à cocher par nom.
+Les instructions de sélection manuelle d’outils ci-dessous restent valables pour
+les réglages avancés. Voir [le guide des ressources](INSTANCE-RESOURCES.md).
+
 ## Étapes
 
 1. Vérifier `mcpServer/tool/call` sans tour de modèle. Lecture Sites et Pages

@@ -53,6 +53,13 @@ namespace Creezio.Switcher.Desktop
             panel.Children.Add(field);
             return field;
         }
+        internal static Grid SearchField(TextBox input,string hint)
+        {
+            var grid=new Grid();grid.Children.Add(input);
+            var watermark=Text(hint,13,true);watermark.Margin=new Thickness(11,0,12,10);watermark.VerticalAlignment=VerticalAlignment.Center;watermark.IsHitTestVisible=false;grid.Children.Add(watermark);
+            input.TextChanged+=delegate{watermark.Visibility=String.IsNullOrEmpty(input.Text)?Visibility.Visible:Visibility.Collapsed;};
+            AutomationProperties.SetName(input,hint);return grid;
+        }
         public static ComboBox Select(string label, IEnumerable<string> values, string selected, Panel panel)
         {
             panel.Children.Add(Text(label, 13));
@@ -165,6 +172,7 @@ namespace Creezio.Switcher.Desktop
         protected readonly TextBlock Notice = Ui.Text("", 13, true);
         protected readonly DockPanel Body = new DockPanel();
         protected readonly WrapPanel Commands = new WrapPanel();
+        protected readonly StackPanel Header = new StackPanel();
         public string Title
         {
             get; private set;
@@ -179,7 +187,7 @@ namespace Creezio.Switcher.Desktop
             RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             RowDefinitions.Add(new RowDefinition());
-            var head = new StackPanel();
+            var head = Header;
             head.Children.Add(Ui.Text(title, 28));
             head.Children.Add(Ui.Text(description, 14, true));
             Children.Add(head);
@@ -187,6 +195,7 @@ namespace Creezio.Switcher.Desktop
             Children.Add(Commands);
             SetRow(Notice, 2);
             Notice.Margin = new Thickness(0, 8, 0, 10);
+            var noticeStyle=new Style(typeof(TextBlock));var empty=new Trigger{Property=TextBlock.TextProperty,Value=""};empty.Setters.Add(new Setter(VisibilityProperty,Visibility.Collapsed));noticeStyle.Triggers.Add(empty);Notice.Style=noticeStyle;
             Children.Add(Notice);
             SetRow(Body, 3);
             Children.Add(Body);
