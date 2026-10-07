@@ -1,9 +1,9 @@
-﻿# Codex Account Switcher pour Windows
+# Codex Account Switcher pour Windows
 
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.11.3-beta.1 — comptes et ressources réunis par instance.** Windows 10/11 x64, interface en
+**Version 0.12.0-beta.1 — consulter les Pages par le tunnel.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
@@ -36,6 +36,15 @@ calculées par l’interface .NET 10 et le relais .NET Framework pouvaient diff�
 pour une définition d’outil identique. Le contrôle compare désormais les deux
 définitions dans le même runtime, sans élargir les autorisations existantes.
 Après la mise à jour, ouvrir un nouveau chat pour charger le relais corrigé.
+
+La version 0.12 ajoute **Consulter les Pages reçues** dans chaque instance cliente.
+Cette vue lit la Page originale via le compte propriétaire, permet de modifier
+un bloc ou d'ajouter du texte selon les droits cochés, et garde le brouillon en
+cas de conflit. **Ouvrir chez le propriétaire** donne accès à son éditeur natif.
+Le plugin fournit aussi un panneau MCP pour les hôtes compatibles et évite les
+liens natifs inaccessibles dans les nouvelles réponses. Les anciennes cartes ne
+changent pas. Voir [Pages partagées](docs/SHARED-PAGES.md) et
+[preuves et limites de validation](docs/SHARED-PAGES-VALIDATION.md).
 
 Chaque instance cliente conserve ses propres droits. Décocher révoque l’accès au
 prochain appel après enregistrement. Les futures ressources restent décochées.
@@ -335,10 +344,10 @@ pas déplacés ni supprimés.
 Depuis PowerShell à la racine du dépôt :
 
 ```powershell
-.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.11.3-beta.1
+.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.12.0-beta.1
 .\scripts\test.ps1 -TestDirectory work\framework-validation
 dotnet run --project tests\Core.Net10.csproj -c Release -- work\net10-validation
-.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.11.3-beta.1
+.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.12.0-beta.1
 ```
 
 La compilation de l'interface exige le SDK .NET 10 ; le moteur utilise le

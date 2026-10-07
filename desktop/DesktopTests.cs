@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -438,6 +438,7 @@ namespace Creezio.Switcher.Desktop
                     foreach (double scale in new[] { 1.25, 1.5, 2.0 })
                         Capture(shell, Path.Combine(root, "scale-" + ((int)(scale * 100)) + ".png"), scale);
                     assert(Descendants(shell).OfType<Button>().Where(b => b.IsVisible).All(b => b.Focusable), "actions accessibles au clavier");
+                    await SharedPageUi(shell,root,assert);
                     report.Add(passed + " tests UI réussis");
                     File.WriteAllLines(Path.Combine(root, "results.txt"), report);
                     shell.ExitForTest();
@@ -456,6 +457,43 @@ namespace Creezio.Switcher.Desktop
                 throw new Exception("Interopérabilité inverse incorrecte");
             File.WriteAllText(Path.Combine(root, "compatibility-ok.txt"), "PASS .NET 10 relit le coffre, la configuration et le contrat d’outil Framework ; une vraie dérive reste refusée");
             return 0;
+        }
+        private static async Task SharedPageUi(Window shell,string root,Action<bool,string> assert)
+        {
+            var doc=new SharedPageDocument{Share="share",Page="page-1",Title="Page de démonstration",Owner="Compte propriétaire",ReadId="read-1",ReadAt=DateTime.UtcNow.ToString("o"),CanEdit=true,Blocks=new[]{new SharedPageBlock{Id="block",Hash="hash",Kind="markdown",Markdown="# Une Page accessible\n\nTexte **partagé** avec une autre instance.\n- Même document\n- Aucun second prompt"},new SharedPageBlock{Id="instructions",Kind="agent_instructions",Hash="h2",Markdown="Instructions conservées en lecture seule."}}};
+            int writes=0,opens=0;bool conflict=true;
+            var window=new SharedPagesWindow(shell,"Instance cliente",()=>Task.FromResult(new[]{new SharedPageEntry{Share="share",Page="page-1",Title=doc.Title,Owner=doc.Owner,CanEdit=true}}),e=>Task.FromResult(doc),
+                (d,id,block,text,readId)=>{writes++;assert(readId=="read-1"&&block=="block"&&System.Text.RegularExpressions.Regex.IsMatch(id,"^[a-f0-9]{32}$"),"visionneuse transmet identité de lecture, bloc et identifiant stable");if(conflict)return Task.FromResult(new SharedPageSave{State="tool_error",Message="Conflit · brouillon conservé"});doc.Blocks[0].Markdown=text;return Task.FromResult(new SharedPageSave{State="saved",Message="Enregistrement confirmé",Document=doc});},d=>{opens++;return Task.CompletedTask;});
+            window.ConfirmDiscard=()=>true;window.Show();await Until(()=>Descendants(window).OfType<ListBox>().Single().Items.Count==1);
+            Descendants(window).OfType<ListBox>().Single().SelectedIndex=0;await Until(()=>window.Current!=null);window.UpdateLayout();
+            Button FindButton(string name)=>Descendants(window).OfType<Button>().Single(b=>Object.Equals(b.Content,name));
+            TextBox Draft()=>Descendants(window).OfType<TextBox>().Single(t=>System.Windows.Automation.AutomationProperties.GetName(t)=="Brouillon de la Page");
+            assert(Descendants(window).OfType<Button>().Count(b=>Object.Equals(b.Content,"Modifier ce bloc"))==1,"instructions visibles sans bouton de modification");
+            Capture(window,Path.Combine(root,"Shared-page-reader.png"));
+            FindButton("Modifier ce bloc").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));Draft().Text="Mon brouillon éà😀";window.UpdateLayout();assert(window.Dirty&&!FindButton("Actualiser").IsEnabled,"brouillon protégé contre actualisation");
+            FindButton("Enregistrer sur la Page").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>writes==1);assert(window.Dirty&&Draft().Text=="Mon brouillon éà😀"&&!FindButton("Enregistrer sur la Page").IsEnabled,"conflit conserve le brouillon et bloque un renvoi");Capture(window,Path.Combine(root,"Shared-page-conflict.png"));
+            FindButton("Annuler").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));conflict=false;FindButton("Modifier ce bloc").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));Draft().Text="Modification confirmée";FindButton("Enregistrer sur la Page").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>writes==2);assert(!window.Dirty&&window.Current.Blocks[0].Markdown=="Modification confirmée","sauvegarde confirmée et vue actualisée");
+            FindButton("Ouvrir chez le propriétaire").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>opens==1);assert(opens==1,"navigation propriétaire explicite sans second prompt");
+            doc.CanEdit=false;window.Show(doc);window.UpdateLayout();assert(!FindButton("Ajouter du texte").IsEnabled&&!Descendants(window).OfType<Button>().Any(b=>Object.Equals(b.Content,"Modifier ce bloc")),"lecture seule retire les contrôles de modification");
+            window.Width=740;window.Height=560;window.UpdateLayout();Capture(window,Path.Combine(root,"Shared-page-compact.png"));assert(FindButton("Ouvrir chez le propriétaire").IsVisible,"navigation propriétaire accessible en petite fenêtre");window.Close();
+        }
+        internal static int SharedPagesLive(Application app,string instanceId,string root)
+        {
+            Directory.CreateDirectory(root);var service=new SharedPages(new RelayStore(RelayStore.DefaultRoot));var session=service.DesktopSession(instanceId);
+            var window=new SharedPagesWindow(null,"Recette lecture réelle",()=>Task.Run(()=>service.List(session)),e=>Task.Run(()=>service.Read(session,e.Share,e.Page,System.Threading.CancellationToken.None)),
+                (d,id,b,text,r)=>throw new InvalidOperationException("Read-only acceptance"),d=>Task.Run(()=>service.OpenOwner(session,d.Share,d.Page,System.Threading.CancellationToken.None)));
+            window.Loaded+=async delegate{
+                try{
+                    await Until(()=>Descendants(window).OfType<ListBox>().Single().Items.Count>0);
+                    var list=Descendants(window).OfType<ListBox>().Single();list.SelectedItem=list.Items.Cast<SharedPageEntry>().FirstOrDefault(e=>e.Title=="dgd")??list.Items[0];
+                    for(int i=0;i<900&&window.Current==null;i++)await Task.Delay(100);
+                    if(window.Current==null)throw new Exception("Live Page did not render");window.UpdateLayout();Capture(window,Path.Combine(root,"shared-page-live.png"));
+                    if(!Descendants(window).OfType<FlowDocumentScrollViewer>().Any())throw new Exception("No rendered text blocks");
+                    File.WriteAllText(Path.Combine(root,"live-ui-result.txt"),"PASS original shared Page rendered in WPF; "+window.Current.Blocks.Length+" blocks; no write or second model turn");
+                    window.Close();app.Shutdown(0);
+                }catch(Exception e){File.WriteAllText(Path.Combine(root,"live-ui-result.txt"),"FAIL "+e.Message);app.Shutdown(1);}
+            };
+            return app.Run(window);
         }
         private static void Capture(Window window, string path, double scale = 1)
         {

@@ -7,6 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../src/*.cs"/><Compile Include="../desktop/JsonCompatibility.cs"/><Compile Include="../desktop/AssemblyInfo.cs"/>
-    <Compile Include="TestRunner.cs;ResetTests.cs;InstanceTests.cs;SimpleWorkflowTests.cs;ToolTunnelTests.cs;ResourceCatalogTests.cs;RelayTests.cs;GeneralRelayTests.cs;ProductTests.cs;ConsoleTests.cs;RemoteTests.cs;AssistanceTests.cs"/>
+    <Compile Include="TestRunner.cs;ResetTests.cs;InstanceTests.cs;SimpleWorkflowTests.cs;ToolTunnelTests.cs;SharedPagesTests.cs;ResourceCatalogTests.cs;RelayTests.cs;GeneralRelayTests.cs;ProductTests.cs;ConsoleTests.cs;RemoteTests.cs;AssistanceTests.cs"/>
   </ItemGroup>
 </Project>

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -47,7 +47,7 @@ namespace Creezio.Switcher.Desktop
             state.Text=String.IsNullOrEmpty(inventory.Updated)?"Ouvrez Codex pour détecter les ressources de ce compte.":$"Dernier inventaire · {inventory.Plugins.Count} plugins · {inventory.Resources.Count} ressources";
             ConfirmDiscard=()=>Ui.Confirm(shell,"Abandonner les changements d'accès non enregistrés ?","Accès en cours de modification");
             RowDefinitions.Add(new RowDefinition());RowDefinitions.Add(new RowDefinition{Height=GridLength.Auto});
-            var content=new StackPanel();var top=new StackPanel();content.Children.Add(top);
+            var content=new StackPanel();var top=new StackPanel();content.Children.Add(top);top.Children.Add(Ui.Button("Consulter les Pages reçues",()=>SharedPagesWindow.Open(context,shell,owner)));
             var title=new DockPanel();top.Children.Add(title);
             refresh=Ui.AsyncButton("Actualiser",()=>Discover(true),e=>state.Text=Program.SafeError(e));title.Children.Add(refresh);
             DockPanel.SetDock(refresh,Dock.Right);state.VerticalAlignment=VerticalAlignment.Center;title.Children.Add(state);

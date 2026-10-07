@@ -15,6 +15,18 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: viewer/package-lock.json
+      - name: Build and verify shared Page MCP App
+        shell: powershell
+        run: |
+          npm ci --prefix viewer
+          node viewer/build.mjs
+          git diff --exit-code -- plugins/creezio-relay/ui
+          node viewer/test.mjs
       - name: Build portable app
         shell: powershell
         run: ./scripts/build-desktop.ps1 -Portable -OutputDirectory $env:DELIVERY_DIRECTORY
@@ -47,3 +59,4 @@ jobs:
             work/desktop-validation/*.png
             work/desktop-validation/results.txt
             work/desktop-validation/data/compatibility-ok.txt
+            work/viewer-validation/*.png

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -55,10 +55,14 @@ internal static class IntegrationSmoke
                     var servers=Rpc(process,3,"mcpServerStatus/list",new{detail="toolsAndAuthOnly"});
                     var expected=RelayMcp.Tools().Select(t=>Json.Str(Json.Get(Json.Read<object>(Json.Write(t)),"name"))).ToArray();
                     var tools=RelayIntegration.Objects(servers).Select(x=>Json.Str(Json.Get(x,"name"))).Where(x=>expected.Contains(x)).Distinct().ToArray();
-                    Console.WriteLine(Json.Write(new{loadedTools=tools}));if(tools.Length!=20||expected.Except(tools).Any())throw new Exception("All twenty relay MCP tools must load in Codex");
+                    Console.WriteLine(Json.Write(new{loadedTools=tools}));if(tools.Length!=expected.Length||expected.Except(tools).Any())throw new Exception("All declared relay MCP tools must load in Codex");
+                    var resource=Rpc(process,4,"mcpServer/resource/read",new{server=RelayIntegration.Name,uri=RelayMcp.ViewerUri});
+                    var content=RelayIntegration.Objects(resource).FirstOrDefault(o=>Json.Str(Json.Get(o,"mimeType"))=="text/html;profile=mcp-app");
+                    if(content==null||!Json.Str(Json.Get(content,"text")).Contains("Pages partagées")||!Json.Write(Json.Get(content,"_meta")).Contains("fullscreen"))throw new Exception("Codex did not load the viewer resource and display metadata");
+                    Console.WriteLine("PASS Codex app-server loads the bundled MCP App resource with fullscreen metadata");
                 }finally{try{process.StandardInput.Close();if(!process.WaitForExit(3000))process.Kill();}catch{}}
             }
             return 0;
-        }catch(Exception e){Console.WriteLine(e.GetType().Name+": "+e.Message);return 1;}
+        }catch(Exception e){Console.WriteLine(e.GetType().Name+": "+e.Message+"\n"+e.StackTrace);return 1;}
     }
 }

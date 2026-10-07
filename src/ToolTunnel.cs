@@ -176,9 +176,9 @@ namespace Creezio.Switcher
         {using(store.Lease("tool-grants")){var all=Grants();var g=all.Single(x=>x.Id==id);g.Enabled=false;g.Revision=Guid.NewGuid().ToString("N");store.WriteRecord("tool-grants.dpapi",all);}}
         internal static bool CanUse(TunnelGrant g,RelaySession s)
         {return g.Enabled&&g.Sources!=null&&g.Sources.Any(p=>RelayStore.SamePath(p.Key,s.Home)&&p.Value==s.Account);}
-        private TunnelGrant Authorize(RelaySession session,string id)
+        internal TunnelGrant Authorize(RelaySession session,string id)
         {verifySource(session);var g=Grants().SingleOrDefault(x=>x.Id==id);if(g==null||!CanUse(g,session))throw new InvalidOperationException("Ce partage d'outils est absent, désactivé ou interdit à cette instance.");return g;}
-        private string CurrentName(TunnelGrant grant)
+        internal string CurrentName(TunnelGrant grant)
         {
             var instance=new Vault(Path.GetDirectoryName(store.Root)).Load().Instances.FirstOrDefault(i=>i.Id==grant.Instance);
             return instance==null?grant.InstanceName:instance.Name;
