@@ -56,7 +56,7 @@ namespace Creezio.Switcher.Desktop
         public override async Task Refresh()
         {
             var data=await Context.Read(a=>a.Data.Instances.Where(i=>archived||!i.Archived).Select(i=>{
-                var state=Context.Fixture?new InstanceState{Running=false,Phase="stopped"}:a.Instances.Runtime.Probe(i);var profile=a.Data.Profiles.FirstOrDefault(p=>p.Key==i.AccountKey);var info=new Info{Instance=i,Account=profile,State=state,Active=Context.Fixture?i.AccountKey:a.Instances.ActiveKey(i),Integration=RelayIntegration.Status(Context.Store,a.Instances.Home(i))};
+                var state=Context.InstanceState(a,i);var profile=a.Data.Profiles.FirstOrDefault(p=>p.Key==i.AccountKey);var info=new Info{Instance=i,Account=profile,State=state,Active=Context.Fixture?i.AccountKey:a.Instances.ActiveKey(i),Integration=RelayIntegration.Status(Context.Store,a.Instances.Home(i))};
                 return new ItemRow{Id=i.Id,Title=i.Name,Summary=profile?.Email??"Compte à connecter",State=i.Archived?"Archivée":i.AccountKey!=null&&info.Active!=i.AccountKey?"À reconnecter":state.Running?"Ouverte":i.IsLocal?"Session actuelle":"Fermée",Value=info};}).ToArray());
             bool dirty=resources?.Dirty==true;
             // Metadata can change while access edits are pending; only an identity change would destroy that draft.
@@ -121,7 +121,7 @@ namespace Creezio.Switcher.Desktop
             else{
                 var activity=new StackPanel();var grants=new ToolTunnel(Context.Store).Grants();var calls=new ToolTunnel(Context.Store).Recent().Where(c=>c.Instance==selected||grants.Any(g=>g.Id==c.Grant&&g.Instance==selected)).Take(30).ToArray();
                 activity.Children.Add(Ui.Text("Derniers appels aux outils de cette instance",18));
-                foreach(var call in calls){var card=new StackPanel();card.Children.Add(Ui.Text(call.GrantName,15));card.Children.Add(Ui.Text(ToolSharingPage.State(call.State),13,true));card.Children.Add(Ui.Text(call.Updated,12,true));activity.Children.Add(Ui.Card(card));}
+                foreach(var call in calls){var card=new StackPanel();card.Children.Add(Ui.Text(call.GrantName,15));card.Children.Add(Ui.Text(call.Tool,12,true));card.Children.Add(Ui.Text(ToolSharingPage.State(call.State),13,true));if(!String.IsNullOrEmpty(call.Error))card.Children.Add(Ui.Text(call.Error,13));card.Children.Add(Ui.Text(DateTime.TryParse(call.Updated,out var when)?when.ToLocalTime().ToString("dd/MM à HH:mm:ss"):call.Updated,12,true));activity.Children.Add(Ui.Card(card));}
                 if(calls.Length==0)activity.Children.Add(Ui.Text("Aucun appel enregistré pour cette instance.",14,true));detail.Content=new ScrollViewer{Content=activity};
             }
         }
@@ -134,7 +134,7 @@ namespace Creezio.Switcher.Desktop
             var actions=Ui.Actions(account);
             if(i.Archived)actions.Children.Add(Ui.AsyncButton("Restaurer l’instance",()=>Change(a=>{a.Instances.Archive(a.Data.Instances.Single(x=>x.Id==i.Id),false);return Task.CompletedTask;}),Error,true));
             else if(i.AccountKey==null)actions.Children.Add(Ui.AsyncButton("Connecter un compte",async()=>{await InstanceWizard.Open(Context,Shell,i.Id);await Refresh();},Error,true));
-            else if(!i.IsLocal)actions.Children.Add(Ui.AsyncButton(info.State.Running?"Instance ouverte":"Ouvrir Codex",async()=>{if(info.State.Running)return;await Context.MaintainIntegrations(false,i.Id);await Change(a=>a.Instances.Start(a.Data.Instances.Single(x=>x.Id==i.Id),CancellationToken.None));},Error,true));
+            if(!i.Archived&&(i.AccountKey!=null||info.State.Running))actions.Children.Add(Ui.AsyncButton(info.State.Running?"Afficher la fenêtre":"Ouvrir Codex",async()=>{Notice.Text=await Context.OpenOrShowInstance(i.Id);await Refresh();},Error,true));
             body.Children.Add(Ui.Card(account));
             if(info.Account!=null){
                 var limits=new StackPanel();limits.Children.Add(Ui.Text("Limites d’utilisation",18));

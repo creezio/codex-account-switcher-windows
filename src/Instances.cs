@@ -151,7 +151,7 @@ namespace Creezio.Switcher
         }
         public InstanceState Probe(DesktopInstance instance)
         {
-            if(instance.IsLocal) return new InstanceState {Running=CodexEnvironment.ClientsRunning(),Phase="external",Message="Session habituelle · ouverture et fermeture dans Codex"};
+            if(instance.IsLocal) return DesktopWindows.LocalState(root);
             string folder=InstancePaths.Folder(root,instance.Id), path=Path.Combine(folder,"state.json");
             try {
                 var state=File.Exists(path)?Json.Read<InstanceState>(SafeFiles.ReadText(path)):new InstanceState {Phase="stopped"};

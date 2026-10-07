@@ -25,6 +25,28 @@ internal static class ToolTunnelSmoke
     {
         try{
             var store=new RelayStore(RelayStore.DefaultRoot);var tunnel=new ToolTunnel(store);
+            if(args.Length>2&&(args[2]=="window-status"||args[2]=="window-focus")){
+                var accounts=new AccountService(Path.GetDirectoryName(store.Root));
+                foreach(var instance in accounts.Data.Instances.Where(i=>!i.Archived)){
+                    var window=DesktopWindows.Find(accounts.Vault.Root,instance);
+                    if(window==null)throw new Exception("Desktop window missing for "+instance.Name);
+                    Console.WriteLine(Json.Write(new{instance=instance.Name,id=instance.Id,pid=window.Pid}));
+                    if(args[2]=="window-focus"&&instance.Id==args[0])Console.WriteLine("Focus result: "+DesktopWindows.Focus(window));
+                }
+                Console.WriteLine("PASS exact desktop window resolution; no instance started or closed");return 0;
+            }
+            if(args.Length>2&&args[2]=="diagnostics"){
+                foreach(var call in tunnel.Recent().Take(8))Console.WriteLine(Json.Write(new{call.Id,call.Grant,call.Tool,call.State,call.Error,call.Created,call.Updated}));
+                var failed=tunnel.Recent().First(c=>c.State=="blocked"&&c.Error!=null&&c.Error.Contains("contrat"));
+                var diagnosticGrant=tunnel.Grants().Single(g=>g.Id==failed.Grant);
+                Console.WriteLine(Json.Write(new{grant=diagnosticGrant.Id,owner=diagnosticGrant.Instance,ownerName=diagnosticGrant.InstanceName,resources=diagnosticGrant.ResourceLabels==null?new string[0]:diagnosticGrant.ResourceLabels.Values.ToArray(),tools=diagnosticGrant.Tools.Select(t=>t.Name).ToArray()}));
+                var live=tunnel.Discover(diagnosticGrant.Instance,CancellationToken.None).GetAwaiter().GetResult();
+                foreach(var chosen in diagnosticGrant.Tools){
+                    var tool=live.SingleOrDefault(t=>t.Server==chosen.Server&&t.Name==chosen.Name);
+                    Console.WriteLine(Json.Write(new{tool=chosen.Name,present=tool!=null,signatureMatches=tool!=null&&ToolTunnel.Signature(tool)==chosen.Signature,acceptedByCurrentEngine=ToolTunnel.SameContract(chosen,tool),differences=tool==null?new string[0]:Differences(Json.Read<object>(Json.Write(chosen)),Json.Read<object>(Json.Write(tool)),"").ToArray()}));
+                }
+                Console.WriteLine("PASS read-only diagnostic; no provider mutation or permission change");return 0;
+            }
             if(args.Length>2&&args[2]=="resources"){
                 var before=ToolTunnel.Hash(Json.Read<object>(Json.Write(tunnel.Grants())));
                 var data=new InstanceResources(store).Discover(args[0],CancellationToken.None).GetAwaiter().GetResult();
@@ -151,5 +173,12 @@ internal static class ToolTunnelSmoke
             }
             return 0;
         }catch(Exception e){Console.WriteLine("FAIL "+e.Message);return 1;}
+    }
+    private static IEnumerable<string> Differences(object before,object after,string path)
+    {
+        if(ToolTunnel.Canonical(before)==ToolTunnel.Canonical(after))yield break;
+        var left=before as IDictionary<string,object>;var right=after as IDictionary<string,object>;
+        if(left!=null&&right!=null){foreach(string key in left.Keys.Union(right.Keys).OrderBy(k=>k))foreach(string result in Differences(Json.Get(before,key),Json.Get(after,key),path+"/"+key))yield return result;}
+        else yield return path;
     }
 }

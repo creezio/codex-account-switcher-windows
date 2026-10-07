@@ -20,7 +20,7 @@ namespace Creezio.Switcher
     }
     internal static class RelayWorker
     {
-        internal const string Version="0.11.2-beta.1";
+        internal const string Version="0.11.3-beta.1";
         public static RelayWorkerState Status(RelayStore store){var state=store.ReadRecord<RelayWorkerState>("worker.dpapi");state.Paused=Paused(store);return state;}
         public static bool Running(RelayStore store){var s=Status(store);return DesktopRuntime.SameProcess(s.Pid,s.Started);}
         public static bool Paused(RelayStore store){return store.ReadRecord<RelayWorkerState>("worker-stop.dpapi").Paused;}

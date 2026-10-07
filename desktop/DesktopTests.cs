@@ -140,6 +140,7 @@ namespace Creezio.Switcher.Desktop
             var toolOwner=service.Instances.Create("Propriétaire démo");service.Instances.BindAccount(toolOwner,service.Data.Profiles[0]);
             var toolClient=service.Instances.Create("Développement démo");service.Instances.BindAccount(toolClient,service.Data.Profiles[1]);
             var context = new DesktopContext(dataRoot, true);
+            var contract=CompatibilitySmoke.Contract();contract.Signature=ToolTunnel.Signature(contract);context.Store.WriteRecord("compat-contract.dpapi",contract);
             var toolFixture=new TunnelGrant{Id="cccccccccccccccccccccccccccccccc",Name="Pages via Propriétaire démo",Instance=toolOwner.Id,InstanceName=toolOwner.Name,Account=toolOwner.AccountKey,Home=service.Instances.Home(toolOwner),Enabled=true,Revision="fixture",ResourceField="page_id",ResourceValue="page_demo",Sources=new Dictionary<string,string>{{service.Instances.Home(toolClient),toolClient.AccountKey}},Tools=new List<TunnelTool>{new TunnelTool{Server="codex_apps",Name="chatgpt_space.read_page",Group="Pages",ReadOnly=true,Schema=Json.Read<object>("{\"type\":\"object\",\"properties\":{\"page_id\":{\"type\":\"string\"}}}")}}};
             context.Store.WriteRecord("tool-grants.dpapi",new List<TunnelGrant>{toolFixture});
             var pagesKey=InstanceResources.PluginKey(toolFixture.Tools[0]);
@@ -264,6 +265,24 @@ namespace Creezio.Switcher.Desktop
                     assert(Descendants(instances).OfType<TextBlock>().Single(t=>System.Windows.Automation.AutomationProperties.GetName(t)=="Résultat de la vérification").Visibility==Visibility.Collapsed,"résultat d’une instance absent de la fiche d’une autre instance");
                     await instances.Open(toolOwner.Id,false);shell.UpdateLayout();
                     assert(Descendants(instances).OfType<TextBlock>().Any(t=>t.Text.StartsWith("Vérification réussie")),"résultat retrouvé en revenant sur l’instance vérifiée");
+                    var windowCalls=new List<string>();var openWindows=new HashSet<string>{"local"};
+                    context.InstanceStateFixture=i=>new InstanceState{Running=openWindows.Contains(i.Id),Phase=openWindows.Contains(i.Id)?"running":"stopped"};
+                    context.InstanceWindowFixture=id=>{windowCalls.Add(id);openWindows.Add(id);return Task.FromResult("Fenêtre affichée : "+id);};
+                    await instances.Open(toolOwner.Id,false);instances.ShowTab(0);shell.UpdateLayout();
+                    Descendants(instances).OfType<Button>().Single(b=>Object.Equals(b.Content,"Ouvrir Codex")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    await Until(()=>{instances.UpdateLayout();return Descendants(instances).OfType<Button>().Any(b=>Object.Equals(b.Content,"Afficher la fenêtre"));});
+                    assert(windowCalls.SequenceEqual(new[]{toolOwner.Id}),"ouvrir une instance fermée cible uniquement son identité puis propose Afficher la fenêtre");
+                    Descendants(instances).OfType<Button>().Single(b=>Object.Equals(b.Content,"Afficher la fenêtre")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>windowCalls.Count==2);
+                    await instances.Open("local",false);instances.ShowTab(0);shell.UpdateLayout();
+                    Descendants(instances).OfType<Button>().Single(b=>Object.Equals(b.Content,"Afficher la fenêtre")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>windowCalls.Count==3);
+                    assert(windowCalls[1]==toolOwner.Id&&windowCalls[2]=="local"&&!Descendants(instances).OfType<Button>().Any(b=>Object.Equals(b.Content,"Instance ouverte")),"les deux fenêtres ouvertes ont une vraie action ciblée sans bouton d’état inerte");
+                    context.InstanceWindowFixture=id=>throw new InvalidOperationException("Fenêtre indisponible pour ce test");
+                    await Task.Delay(30);Descendants(instances).OfType<Button>().Single(b=>Object.Equals(b.Content,"Afficher la fenêtre")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    await Until(()=>Descendants(instances).OfType<TextBlock>().Any(t=>t.Text=="Fenêtre indisponible pour ce test"));assert(true,"activation impossible expliquée dans la fiche");
+                    context.Store.WriteRecord("tool-call-dddddddddddddddddddddddddddddddd.dpapi",new TunnelCall{Id="dddddddddddddddddddddddddddddddd",Instance=toolOwner.Id,Grant=toolFixture.Id,GrantName="Page de recette",Tool="codex_apps/chatgpt_space.edit_page",State="blocked",Error="Définition de l’outil modifiée : contrôle requis.",Updated=DateTime.UtcNow.ToString("o")});
+                    await instances.Open(toolOwner.Id,false);instances.ShowTab(2);shell.UpdateLayout();
+                    assert(Descendants(instances).OfType<TextBlock>().Any(t=>t.Text=="Définition de l’outil modifiée : contrôle requis.")&&Descendants(instances).OfType<TextBlock>().Any(t=>t.Text=="codex_apps/chatgpt_space.edit_page"),"activité expose le nom de l’outil et le motif exact du blocage");Capture(shell,Path.Combine(root,"Instance-activity-error.png"));
+                    context.InstanceStateFixture=null;context.InstanceWindowFixture=null;
                     shell.Navigate("Comptes");
                     var assistance=(AssistancePage)shell.Pages["Assistance"];
                     shell.Navigate("Assistance");await assistance.Refresh();shell.UpdateLayout();
@@ -432,9 +451,10 @@ namespace Creezio.Switcher.Desktop
         {
             var service = new AccountService(Path.GetFullPath(root));
             var store = new RelayStore(Path.Combine(root, "relay"));
+            CompatibilitySmoke.CheckContract(store);
             if (service.Data.Profiles.Count != 4 || service.Data.Profiles[0].Label != "Framework → .NET 10" || RelayPolicies.Load(store).Projects.Single().Name != "Framework compatible" || store.Messages().Count != 57)
                 throw new Exception("Interopérabilité inverse incorrecte");
-            File.WriteAllText(Path.Combine(root, "compatibility-ok.txt"), "PASS .NET 10 relit le coffre et la configuration écrits par Framework");
+            File.WriteAllText(Path.Combine(root, "compatibility-ok.txt"), "PASS .NET 10 relit le coffre, la configuration et le contrat d’outil Framework ; une vraie dérive reste refusée");
             return 0;
         }
         private static void Capture(Window window, string path, double scale = 1)

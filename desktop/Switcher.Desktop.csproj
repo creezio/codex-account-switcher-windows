@@ -18,5 +18,6 @@
   <ItemGroup>
     <Compile Include="../src/*.cs" Link="Engine/%(Filename)%(Extension)" />
     <Compile Include="../tests/InstanceSmoke.cs" Link="Validation/InstanceSmoke.cs" />
+    <Compile Include="../tests/CompatibilitySmoke.cs" Link="Validation/CompatibilitySmoke.cs" />
   </ItemGroup>
 </Project>

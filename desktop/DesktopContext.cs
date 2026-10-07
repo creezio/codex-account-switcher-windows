@@ -11,6 +11,15 @@ namespace Creezio.Switcher.Desktop
         internal readonly string Root;
         internal readonly RelayStore Store;
         internal readonly bool Fixture;
+        internal Func<DesktopInstance,InstanceState> InstanceStateFixture;
+        internal Func<string,Task<string>> InstanceWindowFixture;
+        internal InstanceState InstanceState(AccountService accounts,DesktopInstance instance)=>Fixture?(InstanceStateFixture?.Invoke(instance)??new InstanceState{Running=false,Phase="stopped"}):accounts.Instances.Runtime.Probe(instance);
+        internal async Task<string> OpenOrShowInstance(string id)
+        {
+            if(Fixture)return await (InstanceWindowFixture?.Invoke(id)??Task.FromException<string>(new InvalidOperationException("Activation non configurée dans cette recette.")));
+            await gate.WaitAsync();
+            try{return await DesktopWindows.OpenOrShow(Accounts(),id,CancellationToken.None);}finally{gate.Release();}
+        }
         private readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
         private DateTime lastFullRefresh = DateTime.MinValue;
         private readonly SemaphoreSlim integrationGate = new SemaphoreSlim(1, 1);

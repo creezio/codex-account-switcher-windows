@@ -109,6 +109,13 @@ namespace Creezio.Switcher
         {using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(Canonical(value)))).Replace("-","").ToLowerInvariant();}
         internal static string Signature(TunnelTool tool)
         {return Hash(Json.Read<object>(Json.Write(new{tool.Server,tool.Name,tool.Description,tool.Schema,tool.ReadOnly,tool.ConnectorId,tool.Annotations})));}
+        internal static bool SameContract(TunnelTool saved,TunnelTool live)
+        {
+            // The immutable DPAPI snapshot is the authorization contract. .NET 10 and
+            // Framework escape JSON strings differently, so a saved serializer hash
+            // cannot be compared to a live hash produced by the other runtime.
+            return saved!=null&&live!=null&&Signature(saved)==Signature(live);
+        }
         internal static string Limitation(TunnelTool tool)
         {
             if(tool.Server=="codex_apps"&&(tool.Name=="sites.save_site_version"||tool.Name=="sites.save_version_and_deploy_private"))return "Publication d'une nouvelle version Sites indisponible : le transport direct ne transfère pas l'archive. Utilisez la publication native dans Codex.";
@@ -171,13 +178,18 @@ namespace Creezio.Switcher
         {return g.Enabled&&g.Sources!=null&&g.Sources.Any(p=>RelayStore.SamePath(p.Key,s.Home)&&p.Value==s.Account);}
         private TunnelGrant Authorize(RelaySession session,string id)
         {verifySource(session);var g=Grants().SingleOrDefault(x=>x.Id==id);if(g==null||!CanUse(g,session))throw new InvalidOperationException("Ce partage d'outils est absent, désactivé ou interdit à cette instance.");return g;}
+        private string CurrentName(TunnelGrant grant)
+        {
+            var instance=new Vault(Path.GetDirectoryName(store.Root)).Load().Instances.FirstOrDefault(i=>i.Id==grant.Instance);
+            return instance==null?grant.InstanceName:instance.Name;
+        }
         public object List(RelaySession session)
         {
             verifySource(session);
-            return Grants().Where(g=>CanUse(g,session)).Select(g=>new{id=g.Id,name=g.Name,instance=g.Instance,instanceName=g.InstanceName,resourceField=g.ResourceField,resourceValue=g.ResourceValue,resourceValues=g.ResourceValues,resourceLabels=g.ResourceLabels,tools=g.Tools.Select(t=>new{server=t.Server,name=t.Name,group=t.Group,readOnly=t.ReadOnly,limitation=Limitation(t)}).ToArray()}).ToArray();
+            return Grants().Where(g=>CanUse(g,session)).Select(g=>new{id=g.Id,name=g.Name,instance=g.Instance,instanceName=CurrentName(g),resourceField=g.ResourceField,resourceValue=g.ResourceValue,resourceValues=g.ResourceValues,resourceLabels=g.ResourceLabels,tools=g.Tools.Select(t=>new{server=t.Server,name=t.Name,group=t.Group,readOnly=t.ReadOnly,limitation=Limitation(t)}).ToArray()}).ToArray();
         }
         public object Describe(RelaySession session,string grantId,string server,string name)
-        {var g=Authorize(session,grantId);var tool=g.Tools.Single(t=>t.Server==server&&t.Name==name);return new{instance=g.Instance,instanceName=g.InstanceName,resourceField=g.ResourceField,resourceValue=g.ResourceValue,resourceValues=g.ResourceValues,resourceLabels=g.ResourceLabels,limitation=Limitation(tool),fileTransfer="Native local-file uploads are unavailable; credentials are returned once and redacted from storage.",tool=tool};}
+        {var g=Authorize(session,grantId);var tool=g.Tools.Single(t=>t.Server==server&&t.Name==name);return new{instance=g.Instance,instanceName=CurrentName(g),resourceField=g.ResourceField,resourceValue=g.ResourceValue,resourceValues=g.ResourceValues,resourceLabels=g.ResourceLabels,limitation=Limitation(tool),fileTransfer="Native local-file uploads are unavailable; credentials are returned once and redacted from storage.",tool=tool};}
         private string Record(string id){RelayStore.MessageId(id);return "tool-call-"+id+".dpapi";}
         private void Persist(TunnelCall call)
         {
@@ -223,7 +235,7 @@ namespace Creezio.Switcher
                     using(store.Lease("tool-owner-"+Hash(owner.Account).Substring(0,32)))
                     using(var connection=connect(owner)){
                         var inventory=await connection.Inventory(token).ConfigureAwait(false);var live=inventory.SingleOrDefault(t=>t.Server==server&&t.Name==name);
-                        if(live==null||Signature(live)!=chosen.Signature)throw new InvalidOperationException("L'outil ou son contrat a changé. Actualisez ce partage dans le switcher.");
+                        if(!SameContract(chosen,live))throw new InvalidOperationException("La définition de cet outil a changé depuis l'autorisation. Rouvrez ses accès dans le switcher et enregistrez-les à nouveau.");
                         var current=Authorize(session,grantId);if(current.Revision!=grant.Revision)throw new InvalidOperationException("Le partage a été modifié ou révoqué avant l'envoi.");
                         CheckOwner(pinned,resolveOwner(owner.Id));token.ThrowIfCancellationRequested();call.State="executing";Persist(call);sent=true;
                         var result=await connection.Invoke(server,name,args,token).ConfigureAwait(false);CheckOwner(pinned,resolveOwner(owner.Id));

@@ -1,4 +1,4 @@
-# Instances, comptes, plugins et ressources — 0.11.2
+# Instances, comptes, plugins et ressources — 0.11.3
 
 ## Parcours
 
@@ -134,3 +134,26 @@ d’intégration testent une réponse lente, le double clic, une intégration d�
 l’erreur persistée par la maintenance, une exception et le changement d’instance
 pendant le contrôle. Le résultat reste attaché à l’instance vérifiée ; la fiche
 conserve son défilement. Les tests isolés utilisent des comptes fictifs.
+
+Correction 0.11.3 : un partage créé par l’interface .NET 10 pouvait produire une
+empreinte différente de celle recalculée par le worker .NET Framework à cause de
+l’échappement JSON. La lecture fonctionnait mais certaines écritures étaient
+refusées avant tout appel fournisseur, même avec les mêmes schémas et les mêmes
+droits. Le worker recalcule les deux empreintes depuis les définitions enregistrée
+et courante dans le même runtime. Les vrais changements de schéma, description,
+connecteur ou annotations restent bloqués. Aucun partage n’est élargi, réenregistré
+ou rejoué automatiquement. Les noms retournés au chat suivent les renommages.
+
+L’onglet Activité présente l’opération et son erreur, avec l’heure locale.
+Le bouton d’état inerte devient **Afficher la fenêtre** pour toute instance ouverte,
+y compris la principale. La sélection utilise le PID et sa date de démarrage ;
+la fenêtre principale exclut les instances gérées et refuse un choix ambigu.
+Une instance fermée conserve **Ouvrir Codex** ; la principale utilise l’activation
+Windows normale. Si Windows refuse le premier plan, l’icône est signalée dans la
+barre des tâches et un message l’explique. Les fenêtres Codex ne sont pas fermées.
+
+Recette 0.11.3 : 93 tests WPF ; échange de contrats comportant accents, caractères
+spéciaux et emoji entre les deux runtimes, avec reproduction des empreintes
+différentes et vérification du refus d’une modification réelle. Résolution et mise
+au premier plan réussies sur les deux fenêtres Codex existantes. Le diagnostic
+réel compare uniquement les métadonnées : aucun texte de Page n’est modifié.

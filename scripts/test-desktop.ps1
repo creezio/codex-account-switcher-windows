@@ -5,7 +5,7 @@ $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $bundledSdk=Join-Path $env:LOCALAPPDATA 'Creezio\tools\dotnet'
 # Development builds may use the SDK's private runtime; portable delivery includes its own.
 if(Test-Path -LiteralPath (Join-Path $bundledSdk 'dotnet.exe')){$env:DOTNET_ROOT=$bundledSdk}
-$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.11.2-beta.1'}
+$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.11.3-beta.1'}
 $exe=Join-Path $bin 'CodexAccountSwitcher.exe'
 $fixture=Join-Path $repo 'work\desktop-validation'
 $p=Start-Process -FilePath $exe -ArgumentList @('--ui-test',('"'+$fixture+'"')) -WindowStyle Hidden -PassThru -Wait
