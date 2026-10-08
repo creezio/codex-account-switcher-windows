@@ -464,6 +464,7 @@ namespace Creezio.Switcher.Desktop
                         Capture(shell, Path.Combine(root, "scale-" + ((int)(scale * 100)) + ".png"), scale);
                     assert(Descendants(shell).OfType<Button>().Where(b => b.IsVisible).All(b => b.Focusable), "actions accessibles au clavier");
                     await SharedPageUi(shell,root,assert);
+                    await InstanceWizardUi(shell,root,assert);
                     report.Add(passed + " tests UI réussis");
                     File.WriteAllLines(Path.Combine(root, "results.txt"), report);
                     shell.ExitForTest();
@@ -472,6 +473,61 @@ namespace Creezio.Switcher.Desktop
                 catch (Exception e) { report.Add("FAIL " + e); File.WriteAllLines(Path.Combine(root, "results.txt"), report); foreach(var view in Descendants(shell).OfType<InstanceResourcesView>())view.ConfirmDiscard=()=>true; app.Shutdown(1); }
             };
             return app.Run(shell);
+        }
+        private static async Task InstanceWizardUi(ShellWindow shell,string root,Action<bool,string> assert)
+        {
+            var context=new DesktopContext(Path.Combine(root,"wizard-data"),true);
+            var initial=new AccountService(context.Root);initial.Vault.Save(new VaultData());
+            initial=new AccountService(context.Root);initial.Settings.CodexHome=Path.Combine(context.Root,"home");Directory.CreateDirectory(initial.Settings.CodexHome);initial.Vault.SaveSettings(initial.Settings);
+            var existing=initial.Import(FakeAuth(20),"Compte de recette");
+            async Task Run(string name,int index,Func<EditWindow,Task> action,Func<System.Threading.CancellationToken,Task<string>> login=null,string instanceId=null)
+            {
+                var done=new TaskCompletionSource<bool>();
+                _=shell.Dispatcher.BeginInvoke(new Action(async()=>{
+                    EditWindow form=null;
+                    try{form=await WaitDialog("Votre instance Codex");Descendants(form).OfType<TextBox>().Single().Text=name;Descendants(form).OfType<ComboBox>().Single().SelectedIndex=index;await action(form);done.SetResult(true);}
+                    catch(Exception e){done.SetException(e);}finally{if(form!=null&&!form.Saved)form.Close();}
+                }),DispatcherPriority.ContextIdle);
+                await InstanceWizard.Open(context,shell,instanceId,login);await done.Task;
+            }
+            async Task Click(EditWindow form)
+            {
+                form.SaveButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                await Until(()=>form.Saved||form.SaveButton.IsEnabled);
+            }
+            string Error(EditWindow form)=>String.Join(" | ",Descendants(form).OfType<TextBlock>().Where(t=>Equals(t.Foreground,Brushes.Firebrick)).Select(t=>t.Text));
+            await Run("Nouvelle instance existante",1,async form=>{
+                await Click(form);assert(form.Saved,"création réelle depuis le bouton avec compte existant : "+Error(form));
+            });
+            var saved=new AccountService(context.Root);var created=saved.Data.Instances.Single(i=>i.Name=="Nouvelle instance existante");
+            assert(created.AccountKey==existing.Key&&created.AccountLocked,"création lie durablement le compte choisi");
+            int logins=0;
+            await Run("Certivan de recette",0,async form=>{
+                await Click(form);assert(form.Saved,"création avec une connexion asynchrone : "+Error(form));
+            },async token=>{logins++;await Task.Delay(20,token);return FakeAuth(21);});
+            saved=new AccountService(context.Root);var fresh=saved.Data.Instances.Single(i=>i.Name=="Certivan de recette");
+            assert(logins==1&&fresh.AccountLocked&&fresh.AccountKey==AuthIdentity.Parse(FakeAuth(21)).Key,"nouveau compte importé et associé à la bonne instance");
+            int count=saved.Data.Instances.Count;
+            await Run("  CERTIVAN DE RECETTE  ",0,async form=>{
+                await Click(form);assert(!form.Saved&&Error(form).Contains("nom existe déjà"),"nom déjà utilisé expliqué avant la connexion");
+            },token=>{logins++;throw new Exception("Connexion indésirable");});
+            assert(logins==1&&new AccountService(context.Root).Data.Instances.Count==count,"doublon ne lance ni connexion ni création");
+            await Run("",0,async form=>{await Click(form);assert(!form.Saved&&Error(form).Contains("Donnez un nom"),"nom vide refusé sans perdre le formulaire");});
+            await Run("Connexion annulée",0,async form=>{
+                form.SaveButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                var cancel=Descendants(form).OfType<Button>().Single(b=>Equals(b.Content,"Annuler la connexion"));await Until(()=>cancel.IsVisible);
+                assert(!form.SaveButton.IsEnabled,"double soumission bloquée pendant la connexion");
+                cancel.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>form.SaveButton.IsEnabled);
+                assert(!form.Saved&&cancel.Visibility==Visibility.Collapsed&&Descendants(form).OfType<TextBox>().Single().Text=="Connexion annulée","annulation conserve le nom et permet une nouvelle tentative");
+                Descendants(form).OfType<ComboBox>().Single().SelectedIndex=1;await Click(form);assert(form.Saved,"nouvel essai avec un compte existant après annulation");
+            },async token=>{await Task.Delay(30000,token);return FakeAuth(22);});
+            assert(new AccountService(context.Root).Data.Profiles.Count==2,"annulation n’importe aucun compte incomplet");
+            int attempts=0;
+            await Run("Connexion à réessayer",0,async form=>{
+                await Click(form);assert(!form.Saved&&Error(form).Contains("Échec simulé"),"échec de connexion affiché sans création d’instance");
+                assert(!new AccountService(context.Root).Data.Instances.Any(i=>i.Name=="Connexion à réessayer"),"connexion échouée ne laisse pas d’instance partielle");
+                await Click(form);assert(form.Saved,"connexion réussie au second essai sans rouvrir le formulaire");
+            },async token=>{await Task.Delay(10,token);if(++attempts==1)throw new InvalidOperationException("Échec simulé de connexion");return FakeAuth(23);});
         }
         internal static int VerifyCompatibility(string root)
         {

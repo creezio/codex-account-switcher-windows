@@ -10,7 +10,7 @@ namespace Creezio.Switcher.Desktop
 {
     internal static class InstanceWizard
     {
-        internal static async Task Open(DesktopContext context,ShellWindow shell,string instanceId=null)
+        internal static async Task Open(DesktopContext context,ShellWindow shell,string instanceId=null,Func<CancellationToken,Task<string>> loginFixture=null)
         {
             var snapshot=await context.Read(a=>new {Profiles=a.Data.Profiles.ToArray(),Instance=a.Data.Instances.FirstOrDefault(i=>i.Id==instanceId)});
             var form=new EditWindow(shell,"Votre instance Codex","Préparer et ouvrir");
@@ -27,22 +27,32 @@ namespace Creezio.Switcher.Desktop
             string prepared=instanceId;string connectedKey=null;
             bool bound=snapshot.Instance?.AccountLocked==true;
             form.Save=async delegate {
-                if(String.IsNullOrWhiteSpace(name.Text))throw new InvalidOperationException("Donnez un nom à votre instance.");
-                if(prepared==null&&await context.Read(a=>a.Data.Instances.Any(i=>!i.Archived&&String.Equals(i.Name,name.Text.Trim(),StringComparison.OrdinalIgnoreCase))))throw new InvalidOperationException("Ce nom existe déjà. Choisissez un autre nom.");
+                // Read WPF controls on their dispatcher before any background query
+                // or login await. Keep this submission stable until it completes.
+                string instanceName=name.Text.Trim();int selectedAccount=choices.SelectedIndex;
+                name.IsReadOnly=true;choices.IsEnabled=false;
+                try {
+                if(String.IsNullOrWhiteSpace(instanceName))throw new InvalidOperationException("Donnez un nom à votre instance.");
+                if(selectedAccount<0||selectedAccount>snapshot.Profiles.Length)throw new InvalidOperationException("Choisissez un compte ou connectez un nouveau compte.");
+                if(prepared==null&&await context.Read(a=>a.Data.Instances.Any(i=>!i.Archived&&String.Equals(i.Name,instanceName,StringComparison.CurrentCultureIgnoreCase))))throw new InvalidOperationException("Ce nom existe déjà. Choisissez un autre nom.");
                 if(!bound){
                     if(connectedKey==null){
-                        if(choices.SelectedIndex==0){
+                        if(selectedAccount==0){
                             login=new CancellationTokenSource(TimeSpan.FromMinutes(5));cancel.Visibility=Visibility.Visible;status.Text="Terminez la connexion dans votre navigateur…";
                             try {
                                 var service=await context.Read(a=>a);
-                                string auth=await service.LoginAuth(url=>Process.Start(new ProcessStartInfo(url){UseShellExecute=true}),login.Token);
+                                string auth=context.Fixture
+                                    ? await (loginFixture?.Invoke(login.Token)??Task.FromException<string>(new InvalidOperationException("Connexion non configurée dans cette recette.")))
+                                    : await service.LoginAuth(url=>Process.Start(new ProcessStartInfo(url){UseShellExecute=true}),login.Token);
+                                login.Token.ThrowIfCancellationRequested();
                                 await context.Mutate(a=>{connectedKey=a.Import(auth,null).Key;return Task.CompletedTask;});
-                            }finally {login.Dispose();login=null;cancel.Visibility=Visibility.Collapsed;}
-                        }else connectedKey=snapshot.Profiles[choices.SelectedIndex-1].Key;
+                            }catch(OperationCanceledException){throw new InvalidOperationException("Connexion annulée ou expirée. Vous pouvez réessayer ; le nom est conservé.");}
+                            finally {login.Dispose();login=null;cancel.Visibility=Visibility.Collapsed;}
+                        }else connectedKey=snapshot.Profiles[selectedAccount-1].Key;
                     }
                     status.Text="Association du compte permanent…";
                     await context.Mutate(a=>{
-                        var instance=prepared==null?a.Instances.Create(name.Text):a.Data.Instances.Single(i=>i.Id==prepared);prepared=instance.Id;
+                        var instance=prepared==null?a.Instances.Create(instanceName):a.Data.Instances.Single(i=>i.Id==prepared);prepared=instance.Id;
                         a.Instances.BindAccount(instance,a.Data.Profiles.Single(p=>p.Key==connectedKey));return Task.CompletedTask;
                     });
                     bound=true;
@@ -53,6 +63,7 @@ namespace Creezio.Switcher.Desktop
                 if(!context.Fixture){var state=await context.Read(a=>RelayIntegration.Status(context.Store,a.Instances.Home(a.Data.Instances.Single(i=>i.Id==prepared))));if(!state.Healthy)throw new InvalidOperationException("L'instance est enregistrée. "+state.Status+" Réessayez ici ou utilisez Vérifier et réparer dans sa fiche.");}
                 status.Text="Ouverture de votre instance…";
                 if(!context.Fixture)await context.Mutate(async a=>{var instance=a.Data.Instances.Single(i=>i.Id==prepared);if(!instance.IsLocal&&!a.Instances.Runtime.Probe(instance).Running)await a.Instances.Start(instance,CancellationToken.None);});
+                }finally{name.IsReadOnly=prepared!=null;choices.IsEnabled=!bound&&connectedKey==null;}
             };
             form.ShowDialog();
         }

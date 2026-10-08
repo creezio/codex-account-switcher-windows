@@ -3,7 +3,7 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.12.2-beta.1 — liens vers les ressources du compte propriétaire.** Windows 10/11 x64, interface en
+**Version 0.12.3-beta.1 — correction de la création des instances.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
@@ -42,6 +42,10 @@ calculées par l’interface .NET 10 et le relais .NET Framework pouvaient diff�
 pour une définition d’outil identique. Le contrôle compare désormais les deux
 définitions dans le même runtime, sans élargir les autorisations existantes.
 Après la mise à jour, ouvrir un nouveau chat pour charger le relais corrigé.
+
+La version 0.12.3 corrige une erreur WPF lors de la création d’une instance :
+la vérification du nom accédait au formulaire depuis un thread d’arrière-plan.
+Le nom et le compte sont désormais lus avant le traitement asynchrone.
 
 La version 0.12.2 retire le parcours d’édition des Pages dans le Switcher.
 Après une opération via le tunnel, le relais fournit un lien ordinaire avec le
@@ -350,10 +354,10 @@ pas déplacés ni supprimés.
 Depuis PowerShell à la racine du dépôt :
 
 ```powershell
-.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.12.2-beta.1
+.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.12.3-beta.1
 .\scripts\test.ps1 -TestDirectory work\framework-validation
 dotnet run --project tests\Core.Net10.csproj -c Release -- work\net10-validation
-.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.12.2-beta.1
+.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.12.3-beta.1
 ```
 
 La compilation de l'interface exige le SDK .NET 10 ; le moteur utilise le
