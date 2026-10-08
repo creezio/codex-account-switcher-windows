@@ -1,6 +1,6 @@
 {
   "name": "creezio-relay",
-  "version": "0.12.3-beta.1+codex.20261007",
+  "version": "0.12.4-beta.1+codex.20261007",
   "description": "Use shared tools, delegate tasks to named Codex instances and request assistance through Account Switcher.",
   "author": {
     "name": "Creezio"

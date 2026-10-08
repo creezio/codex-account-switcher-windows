@@ -3,7 +3,7 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.12.3-beta.1 — correction de la création des instances.** Windows 10/11 x64, interface en
+**Version 0.12.4-beta.1 — navigateur, profil et lien de connexion au choix.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
@@ -12,6 +12,26 @@ français et livraison portable incluant le runtime .NET 10, sans droits adminis
 · [Validation](docs/VALIDATION.md)
 
 ![Gestion des instances, avec des comptes fictifs](assets/screenshot.png)
+
+## Choisir le navigateur pour connecter un compte
+
+Dans **Créer une instance → Connecter un nouveau compte**, choisissez le
+**Navigateur pour la connexion** puis son **Profil** avant **Préparer et ouvrir**.
+Le dernier choix est conservé pour la prochaine connexion. Le même formulaire
+est disponible depuis **Comptes → Ajouter un compte**.
+
+Le **Lien de connexion** apparaît dès que Codex le fournit, avec **Copier le lien**.
+Pour ouvrir vous-même une session, choisissez **Copier le lien · sans ouverture
+automatique**. Collez le lien dans le navigateur souhaité **sur le même PC** et
+gardez la tentative ouverte dans le Switcher. Annuler ou dépasser cinq minutes
+termine la tentative ; relancez-la pour obtenir un nouveau lien.
+
+Chrome, Edge, Opera, Opera GX, Opera Air, Brave et Vivaldi sont recherchés dans
+leurs installations habituelles, avec leurs profils locaux existants. Les
+sessions privées, conteneurs et profils stockés dans des dossiers personnalisés
+ne sont pas détectés : utilisez la copie du lien. Le Switcher ne lit ni les
+cookies ni les mots de passe du navigateur, et ne change pas le navigateur par
+défaut de Windows. [Détails et validation](docs/LOGIN-BROWSER.md).
 
 ## Utiliser les plugins d’un autre compte sans envoyer de prompt
 
@@ -354,10 +374,10 @@ pas déplacés ni supprimés.
 Depuis PowerShell à la racine du dépôt :
 
 ```powershell
-.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.12.3-beta.1
+.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.12.4-beta.1
 .\scripts\test.ps1 -TestDirectory work\framework-validation
 dotnet run --project tests\Core.Net10.csproj -c Release -- work\net10-validation
-.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.12.3-beta.1
+.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.12.4-beta.1
 ```
 
 La compilation de l'interface exige le SDK .NET 10 ; le moteur utilise le

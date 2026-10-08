@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Threading;
@@ -12,18 +11,11 @@ namespace Creezio.Switcher.Desktop
 {
     internal sealed class AccountsPage : CollectionPage
     {
-        private CancellationTokenSource login; private readonly Button cancelLogin;
         public AccountsPage(DesktopContext c, ShellWindow s) : base(c, s, "Comptes", "Consultez les limites de vos comptes. Chaque instance conserve son compte permanent.")
         {
-            Command("Ajouter un compte", async delegate { cancelLogin.Visibility = Visibility.Visible; login = new CancellationTokenSource(TimeSpan.FromMinutes(5)); Notice.Text = "Terminez la connexion dans votre navigateur. Vous pouvez continuer à naviguer."; try { await Change(async a => { var p = await a.Login(url => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }), login.Token); await UsageCoordinator.Refresh(Context.Store, p.Key, false, login.Token); }); Notice.Text = "Compte ajouté."; } finally { login.Dispose(); login = null; cancelLogin.Visibility = Visibility.Collapsed; } }, true);
+            Command("Ajouter un compte", async delegate { string auth=await AccountLoginPanel.Open(Context,Shell);if(auth==null)return;await Change(async a=>{var p=a.Import(auth,null);if(!Context.Fixture)await UsageCoordinator.Refresh(Context.Store,p.Key,false,CancellationToken.None);});Notice.Text="Compte ajouté."; }, true);
             Command("Importer la session actuelle", () => Change(a => { a.ImportCurrent(); return Task.CompletedTask; }));
             Command("Actualiser les limites", async delegate { Notice.Text = "Lecture des limites…"; await Change(async a => { foreach (var p in a.Data.Profiles) await UsageCoordinator.Refresh(Context.Store, p.Key, false, CancellationToken.None); }); Notice.Text = "Limites actualisées."; });
-            cancelLogin = Command("Annuler la connexion", delegate
-            {
-                login?.Cancel();
-                return Task.CompletedTask;
-            });
-            cancelLogin.Visibility = Visibility.Collapsed;
             var more = new Button { Content = "Autres actions" };
             Commands.Children.Add(more);
             var menu = new ContextMenu();

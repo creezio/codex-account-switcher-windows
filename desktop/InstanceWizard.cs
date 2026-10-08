@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,7 +11,8 @@ namespace Creezio.Switcher.Desktop
     {
         internal static async Task Open(DesktopContext context,ShellWindow shell,string instanceId=null,Func<CancellationToken,Task<string>> loginFixture=null)
         {
-            var snapshot=await context.Read(a=>new {Profiles=a.Data.Profiles.ToArray(),Instance=a.Data.Instances.FirstOrDefault(i=>i.Id==instanceId)});
+            var snapshot=await context.Read(a=>new {Profiles=a.Data.Profiles.ToArray(),Instance=a.Data.Instances.FirstOrDefault(i=>i.Id==instanceId),a.Settings});
+            var browsers=await AccountLoginPanel.Catalog(context);
             var form=new EditWindow(shell,"Votre instance Codex","Préparer et ouvrir");
             form.Fields.Children.Add(Ui.Text("Un nom, un compte. Le switcher prépare le plugin et les skills automatiquement.",16,true));
             var name=Ui.Input("Nom à utiliser pour déléguer (ex. Léa, Relecture, Studio)",snapshot.Instance?.Name??"",form.Fields);
@@ -21,9 +21,9 @@ namespace Creezio.Switcher.Desktop
             form.Fields.Children.Add(Ui.Text("Compte permanent",13,true));form.Fields.Children.Add(choices);
             System.Windows.Automation.AutomationProperties.SetName(choices,"Compte permanent");
             form.Fields.Children.Add(Ui.Text("Ce compte restera associé à cette instance. Pour utiliser un autre compte, créez une autre instance.",14,true));
+            var connection=new AccountLoginPanel(context,snapshot.Settings,browsers);form.Fields.Children.Add(connection);
+            choices.SelectionChanged+=delegate{connection.Visibility=choices.SelectedIndex==0?Visibility.Visible:Visibility.Collapsed;};
             var status=Ui.Text("",14,true);form.Fields.Children.Add(status);
-            CancellationTokenSource login=null;
-            var cancel=Ui.Button("Annuler la connexion",()=>login?.Cancel());cancel.Visibility=Visibility.Collapsed;form.Fields.Children.Add(cancel);
             string prepared=instanceId;string connectedKey=null;
             bool bound=snapshot.Instance?.AccountLocked==true;
             form.Save=async delegate {
@@ -38,16 +38,8 @@ namespace Creezio.Switcher.Desktop
                 if(!bound){
                     if(connectedKey==null){
                         if(selectedAccount==0){
-                            login=new CancellationTokenSource(TimeSpan.FromMinutes(5));cancel.Visibility=Visibility.Visible;status.Text="Terminez la connexion dans votre navigateur…";
-                            try {
-                                var service=await context.Read(a=>a);
-                                string auth=context.Fixture
-                                    ? await (loginFixture?.Invoke(login.Token)??Task.FromException<string>(new InvalidOperationException("Connexion non configurée dans cette recette.")))
-                                    : await service.LoginAuth(url=>Process.Start(new ProcessStartInfo(url){UseShellExecute=true}),login.Token);
-                                login.Token.ThrowIfCancellationRequested();
-                                await context.Mutate(a=>{connectedKey=a.Import(auth,null).Key;return Task.CompletedTask;});
-                            }catch(OperationCanceledException){throw new InvalidOperationException("Connexion annulée ou expirée. Vous pouvez réessayer ; le nom est conservé.");}
-                            finally {login.Dispose();login=null;cancel.Visibility=Visibility.Collapsed;}
+                            string auth=await connection.Connect(loginFixture);
+                            await context.Mutate(a=>{connectedKey=a.Import(auth,null).Key;return Task.CompletedTask;});
                         }else connectedKey=snapshot.Profiles[selectedAccount-1].Key;
                     }
                     status.Text="Association du compte permanent…";
@@ -56,6 +48,7 @@ namespace Creezio.Switcher.Desktop
                         a.Instances.BindAccount(instance,a.Data.Profiles.Single(p=>p.Key==connectedKey));return Task.CompletedTask;
                     });
                     bound=true;
+                    connection.Visibility=Visibility.Collapsed;
                     name.IsReadOnly=true;choices.IsEnabled=false;
                 }
                 status.Text="Installation et vérification du plugin et des skills…";

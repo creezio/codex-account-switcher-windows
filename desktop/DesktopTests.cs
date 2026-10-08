@@ -465,6 +465,7 @@ namespace Creezio.Switcher.Desktop
                     assert(Descendants(shell).OfType<Button>().Where(b => b.IsVisible).All(b => b.Focusable), "actions accessibles au clavier");
                     await SharedPageUi(shell,root,assert);
                     await InstanceWizardUi(shell,root,assert);
+                    await AccountLoginUi(shell,root,assert);
                     report.Add(passed + " tests UI réussis");
                     File.WriteAllLines(Path.Combine(root, "results.txt"), report);
                     shell.ExitForTest();
@@ -485,7 +486,7 @@ namespace Creezio.Switcher.Desktop
                 var done=new TaskCompletionSource<bool>();
                 _=shell.Dispatcher.BeginInvoke(new Action(async()=>{
                     EditWindow form=null;
-                    try{form=await WaitDialog("Votre instance Codex");Descendants(form).OfType<TextBox>().Single().Text=name;Descendants(form).OfType<ComboBox>().Single().SelectedIndex=index;await action(form);done.SetResult(true);}
+                    try{form=await WaitDialog("Votre instance Codex");Descendants(form).OfType<TextBox>().Single(t=>System.Windows.Automation.AutomationProperties.GetName(t).StartsWith("Nom à utiliser")).Text=name;Descendants(form).OfType<ComboBox>().Single(c=>System.Windows.Automation.AutomationProperties.GetName(c)=="Compte permanent").SelectedIndex=index;await action(form);done.SetResult(true);}
                     catch(Exception e){done.SetException(e);}finally{if(form!=null&&!form.Saved)form.Close();}
                 }),DispatcherPriority.ContextIdle);
                 await InstanceWizard.Open(context,shell,instanceId,login);await done.Task;
@@ -518,8 +519,8 @@ namespace Creezio.Switcher.Desktop
                 var cancel=Descendants(form).OfType<Button>().Single(b=>Equals(b.Content,"Annuler la connexion"));await Until(()=>cancel.IsVisible);
                 assert(!form.SaveButton.IsEnabled,"double soumission bloquée pendant la connexion");
                 cancel.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>form.SaveButton.IsEnabled);
-                assert(!form.Saved&&cancel.Visibility==Visibility.Collapsed&&Descendants(form).OfType<TextBox>().Single().Text=="Connexion annulée","annulation conserve le nom et permet une nouvelle tentative");
-                Descendants(form).OfType<ComboBox>().Single().SelectedIndex=1;await Click(form);assert(form.Saved,"nouvel essai avec un compte existant après annulation");
+                assert(!form.Saved&&cancel.Visibility==Visibility.Collapsed&&Descendants(form).OfType<TextBox>().Single(t=>System.Windows.Automation.AutomationProperties.GetName(t).StartsWith("Nom à utiliser")).Text=="Connexion annulée","annulation conserve le nom et permet une nouvelle tentative");
+                Descendants(form).OfType<ComboBox>().Single(c=>System.Windows.Automation.AutomationProperties.GetName(c)=="Compte permanent").SelectedIndex=1;await Click(form);assert(form.Saved,"nouvel essai avec un compte existant après annulation");
             },async token=>{await Task.Delay(30000,token);return FakeAuth(22);});
             assert(new AccountService(context.Root).Data.Profiles.Count==2,"annulation n’importe aucun compte incomplet");
             int attempts=0;
@@ -528,6 +529,70 @@ namespace Creezio.Switcher.Desktop
                 assert(!new AccountService(context.Root).Data.Instances.Any(i=>i.Name=="Connexion à réessayer"),"connexion échouée ne laisse pas d’instance partielle");
                 await Click(form);assert(form.Saved,"connexion réussie au second essai sans rouvrir le formulaire");
             },async token=>{await Task.Delay(10,token);if(++attempts==1)throw new InvalidOperationException("Échec simulé de connexion");return FakeAuth(23);});
+            context.LoginAuthFixture=async(present,token)=>{present("https://auth.openai.com/authorize?state=wizard-fixture-only&code_challenge=not-a-real-login");await Task.Delay(30000,token);return FakeAuth(24);};
+            await Run("Instance avec lien manuel",0,async form=>{
+                var browser=Descendants(form).OfType<ComboBox>().Single(c=>System.Windows.Automation.AutomationProperties.GetName(c)=="Navigateur pour la connexion");browser.SelectedIndex=1;
+                form.SaveButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                var link=Descendants(form).OfType<TextBox>().Single(t=>System.Windows.Automation.AutomationProperties.GetName(t)=="Lien de connexion");await Until(()=>link.IsVisible);await Task.Delay(80);form.UpdateLayout();
+                var copy=Descendants(form).OfType<Button>().Single(b=>Equals(b.Content,"Copier le lien"));var scroller=Descendants(form).OfType<ScrollViewer>().First();
+                var point=copy.TransformToAncestor(scroller).Transform(new Point(0,0));
+                assert(point.Y>=0&&point.Y+copy.ActualHeight<=scroller.ActualHeight,"création affiche automatiquement le bouton Copier dans la zone visible");
+                Capture(form,Path.Combine(root,"Instance-login-link.png"));
+                Descendants(form).OfType<Button>().Single(b=>Equals(b.Content,"Annuler la connexion")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>form.SaveButton.IsEnabled);
+                assert(!form.Saved&&link.Text==""&&!new AccountService(context.Root).Data.Instances.Any(i=>i.Name=="Instance avec lien manuel"),"annulation du lien manuel ne crée aucune instance partielle");
+            });
+        }
+        private static async Task AccountLoginUi(ShellWindow shell,string root,Action<bool,string> assert)
+        {
+            var context=new DesktopContext(Path.Combine(root,"browser-login-data"),true);
+            var profiles=new[]{new LoginBrowserProfile{Directory="Default",Label="Personnel · Default"},new LoginBrowserProfile{Directory="Profile 2",Label="Studio · Profile 2"}};
+            var chrome=new LoginBrowser{Id="chrome",Label="Google Chrome",Executable="chrome.exe",Profiles=profiles};
+            var opera=new LoginBrowser{Id="opera",Label="Opera",Executable="opera.exe",Profiles=new[]{profiles[0]}};
+            context.LoginBrowsersFixture=LoginBrowsers.Basic().Concat(new[]{chrome,opera}).ToArray();
+            var form=new EditWindow(shell,"Connexion de recette");
+            var panel=new AccountLoginPanel(context,new Settings{LoginBrowserId="chrome",LoginBrowserProfile="Profile 2"},context.LoginBrowsersFixture);
+            form.Fields.Children.Add(panel);form.Show();form.UpdateLayout();
+            ComboBox Choice(string name)=>Descendants(form).OfType<ComboBox>().Single(c=>System.Windows.Automation.AutomationProperties.GetName(c)==name);
+            var browser=Choice("Navigateur pour la connexion");var profile=Choice("Profil du navigateur");
+            var link=Descendants(form).OfType<TextBox>().Single(t=>System.Windows.Automation.AutomationProperties.GetName(t)=="Lien de connexion");
+            var copy=Descendants(form).OfType<Button>().Single(b=>Equals(b.Content,"Copier le lien"));
+            var cancel=Descendants(form).OfType<Button>().Single(b=>Equals(b.Content,"Annuler la connexion"));
+            assert(((LoginBrowser)browser.SelectedItem).Id=="chrome"&&((LoginBrowserProfile)profile.SelectedItem).Directory=="Profile 2","connexion restaure navigateur et profil enregistrés");
+            browser.SelectedItem=opera;assert(profile.Items.Count==1&&((LoginBrowserProfile)profile.SelectedItem).Directory=="Default","changement de navigateur remplace la liste des profils");
+            browser.SelectedItem=chrome;profile.SelectedIndex=1;
+            const string url="https://auth.openai.com/authorize?state=ui-fixture-only&code_challenge=not-a-real-login";
+            var finish=new TaskCompletionSource<string>();LoginBrowserTarget received=null;int launches=0;string copied=null;
+            context.LoginAuthFixture=async (present,token)=>{await Task.Run(()=>present(url));return await finish.Task.WaitAsync(token);};
+            context.LoginOpenFixture=(target,value)=>{received=target;launches++;assert(value==url,"lien OAuth transmis intact au navigateur");};
+            panel.CopyText=value=>copied=value;
+            var connection=panel.Connect();await Until(()=>link.IsVisible);
+            assert(!browser.IsEnabled&&!profile.IsEnabled&&link.IsReadOnly&&link.Text==url,"connexion fige les choix et affiche un lien sélectionnable en lecture seule");
+            copy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));assert(copied==url&&received.ProfileDirectory=="Profile 2"&&received.Id=="chrome","copie exacte du lien et ouverture dans le profil choisi");
+            Capture(form,Path.Combine(root,"Browser-login.png"));
+            finish.SetResult(FakeAuth(31));await connection;
+            assert(link.Text==""&&!link.IsVisible&&browser.IsEnabled,"lien retiré après connexion et formulaire réutilisable");
+            var saved=new AccountService(context.Root).Settings;assert(saved.LoginBrowserId=="chrome"&&saved.LoginBrowserProfile=="Profile 2","préférence enregistrée pour la prochaine connexion");
+            browser.SelectedItem=context.LoginBrowsersFixture.Single(b=>b.Id=="manual");finish=new TaskCompletionSource<string>();
+            context.LoginOpenFixture=(target,value)=>{assert(target.StartInfo(value)==null,"mode manuel ne construit aucune ouverture navigateur");};
+            connection=panel.Connect();await Until(()=>link.IsVisible);copy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            assert(copied==url&&launches==1,"mode manuel fournit le lien sans lancer de navigateur");
+            cancel.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));bool cancelled=false;try{await connection;}catch(InvalidOperationException e){cancelled=e.Message.Contains("annulée");}
+            assert(cancelled&&link.Text==""&&!link.IsVisible&&browser.IsEnabled,"annulation masque l’ancien lien et permet de choisir une autre session");
+            browser.SelectedItem=chrome;context.LoginOpenFixture=(target,value)=>throw new Exception("Browser missing");
+            connection=panel.Connect();await Until(()=>link.IsVisible);
+            assert(Descendants(form).OfType<TextBlock>().Any(t=>t.Text.Contains("L’ouverture du navigateur a échoué"))&&copy.IsEnabled,"échec ouverture conserve la connexion et le bouton Copier");
+            finish.SetResult(FakeAuth(32));await connection;form.Close();
+            var missing=new EditWindow(shell,"Profil disparu");var missingPanel=new AccountLoginPanel(context,new Settings{LoginBrowserId="chrome",LoginBrowserProfile="Deleted"},context.LoginBrowsersFixture);missing.Fields.Children.Add(missingPanel);missing.Show();missing.UpdateLayout();
+            bool refused=false;try{await missingPanel.Connect();}catch(InvalidOperationException){refused=true;}
+            assert(refused&&Descendants(missing).OfType<ComboBox>().Single(c=>System.Windows.Automation.AutomationProperties.GetName(c)=="Profil du navigateur").SelectedIndex==-1,"profil disparu demande un choix explicite sans basculer sur un autre compte");missing.Close();
+            var unknown=new AccountLoginPanel(context,new Settings{LoginBrowserId="removed-browser"},context.LoginBrowsersFixture);
+            var manual=((StackPanel)unknown.Children[0]).Children.OfType<ComboBox>().Single();
+            assert(((LoginBrowser)manual.SelectedItem).Id=="manual","navigateur disparu propose la copie du lien au lieu du navigateur par défaut");
+            // Exercise the same dialog used by the Accounts page, including its real Save button.
+            context.LoginOpenFixture=(target,value)=>{};context.LoginAuthFixture=(present,token)=>{present(url);return Task.FromResult(FakeAuth(33));};
+            var done=new TaskCompletionSource<bool>();
+            _=shell.Dispatcher.BeginInvoke(new Action(async()=>{try{var dialog=await WaitDialog("Connecter un compte");dialog.SaveButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>dialog.Saved);done.SetResult(true);}catch(Exception e){done.SetException(e);}}),DispatcherPriority.ContextIdle);
+            string auth=await AccountLoginPanel.Open(context,shell);await done.Task;assert(auth==FakeAuth(33),"ajout d’un compte utilise le même formulaire et renvoie la connexion confirmée");
         }
         internal static int VerifyCompatibility(string root)
         {

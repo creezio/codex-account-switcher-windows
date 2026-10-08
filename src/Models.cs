@@ -222,6 +222,8 @@ namespace Creezio.Switcher
     {
         public string CodexExecutable { get; set; }
         public string CodexHome { get; set; }
+        public string LoginBrowserId { get; set; }
+        public string LoginBrowserProfile { get; set; }
         public bool AutoRefresh { get; set; }
         public bool Notifications { get; set; }
         public bool AutoResetCredits { get; set; }

@@ -11,6 +11,9 @@ namespace Creezio.Switcher.Desktop
         internal readonly string Root;
         internal readonly RelayStore Store;
         internal readonly bool Fixture;
+        internal LoginBrowser[] LoginBrowsersFixture;
+        internal Func<Action<string>,CancellationToken,Task<string>> LoginAuthFixture;
+        internal Action<LoginBrowserTarget,string> LoginOpenFixture;
         private ResourceLinkServer resourceLinks;
         internal void StopResourceLinks(){resourceLinks?.Dispose();resourceLinks=null;}
         internal Func<DesktopInstance,InstanceState> InstanceStateFixture;
