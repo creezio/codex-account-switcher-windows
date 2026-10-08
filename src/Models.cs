@@ -4,14 +4,21 @@ using System.Globalization;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+#if !NETCOREAPP
 using System.Web.Script.Serialization;
+#endif
 
 namespace Creezio.Switcher
 {
     internal static class Json
     {
+#if NETCOREAPP
+        public static string Write(object value) { return System.Text.Json.JsonSerializer.Serialize(value,Desktop.JsonCompatibility.Options); }
+        public static T Read<T>(string value) { if(value.Length>4194304)throw new InvalidOperationException("JSON trop volumineux.");return System.Text.Json.JsonSerializer.Deserialize<T>(value,Desktop.JsonCompatibility.Options); }
+#else
         public static string Write(object value) { return new JavaScriptSerializer { MaxJsonLength = 4194304 }.Serialize(value); }
         public static T Read<T>(string value) { return new JavaScriptSerializer { MaxJsonLength = 4194304 }.Deserialize<T>(value); }
+#endif
         public static Dictionary<string, object> Obj(object value) { return value as Dictionary<string, object> ?? new Dictionary<string, object>(); }
         public static object Get(object value, string key) { object result; return Obj(value).TryGetValue(key, out result) ? result : null; }
         public static string Str(object value) { return value as string ?? ""; }
@@ -172,9 +179,11 @@ namespace Creezio.Switcher
         public ResetCredits ResetCredits { get; set; }
         public ResetAttempt ResetAttempt { get; set; }
         public string ResetMessage { get; set; }
+        public double ResetThreshold {get;set;}
+        public string ResetWindow {get;set;}
         public bool AllInstances { get; set; }
         public List<string> InstanceIds { get; set; }
-        public Profile() { Quotas = new List<QuotaBucket>(); AllInstances = true; InstanceIds = new List<string>(); }
+        public Profile() { Quotas = new List<QuotaBucket>(); AllInstances = true; InstanceIds = new List<string>();ResetThreshold=1;ResetWindow="all"; }
         public bool Allows(string instanceId) { return AllInstances || (InstanceIds != null && InstanceIds.Contains(instanceId)); }
         public bool IsFresh
         {
@@ -204,6 +213,7 @@ namespace Creezio.Switcher
         public string Id { get; set; }
         public string Name { get; set; }
         public string AccountKey { get; set; }
+        public bool AccountLocked { get; set; }
         public string PreviousAuthJson { get; set; }
         public bool Archived { get; set; }
         public bool IsLocal { get { return Id == "local"; } }
@@ -212,10 +222,14 @@ namespace Creezio.Switcher
     {
         public string CodexExecutable { get; set; }
         public string CodexHome { get; set; }
+        public string LoginBrowserId { get; set; }
+        public string LoginBrowserProfile { get; set; }
         public bool AutoRefresh { get; set; }
         public bool Notifications { get; set; }
         public bool AutoResetCredits { get; set; }
-        public Settings() { AutoRefresh = false; Notifications = true; AutoResetCredits = true; }
+        public bool MaintainIntegration { get; set; }
+        public int IntegrationCheckMinutes { get; set; }
+        public Settings() { AutoRefresh = false; Notifications = true; AutoResetCredits = true; MaintainIntegration=true; IntegrationCheckMinutes=5; }
     }
     internal static class Quotas
     {

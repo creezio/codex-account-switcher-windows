@@ -50,6 +50,7 @@ namespace Creezio.Switcher
         public void SetScope(Profile profile,bool all,IEnumerable<string> ids)
         {
             var selected=ids.Distinct().ToList();
+            if(!all&&service.Data.Instances.Any(i=>i.AccountKey==profile.Key&&!selected.Contains(i.Id)))throw new InvalidOperationException("Un compte lié à une instance ne peut pas en être dissocié, même lorsque l'instance est fermée ou archivée.");
             if(selected.Any(id=>!service.Data.Instances.Any(i=>i.Id==id))) throw new InvalidOperationException("Une instance sélectionnée n'existe plus.");
             foreach(var instance in service.Data.Instances.Where(i=>!i.Archived))
                 if(!all && !selected.Contains(instance.Id) && ActiveKey(instance)==profile.Key && Runtime.Probe(instance).Running)
@@ -63,11 +64,12 @@ namespace Creezio.Switcher
             CodexEnvironment.CheckFileStorage(Home(instance));
             string auth=SafeFiles.ReadText(Path.Combine(Home(instance),"auth.json"));
             var identity=AuthIdentity.Parse(auth);
+            if(instance.AccountLocked&&instance.AccountKey!=identity.Key)throw new InvalidOperationException("Le compte connecté ne correspond plus au compte permanent de « "+instance.Name+" ». Reconnectez son compte d'origine dans Codex.");
             bool exists=service.Data.Profiles.Any(p=>p.Key==identity.Key);
             var profile=service.Import(auth,null);
             if(!exists) {profile.AllInstances=false;profile.InstanceIds=new List<string>{instance.Id};}
             else if(!profile.Allows(instance.Id)) profile.InstanceIds.Add(instance.Id);
-            instance.AccountKey=profile.Key;service.Save();return profile;
+            instance.AccountKey=profile.Key;instance.AccountLocked=true;service.Save();return profile;
         }
         public void SyncFreshAuth(Profile profile)
         {
@@ -110,11 +112,11 @@ namespace Creezio.Switcher
             InstanceRules.RequireAvailable(profile,instance);
             if(instance.IsLocal) {
                 new SwitchTransaction(Home(instance),CodexEnvironment.ClientsRunning).Execute(profile.AuthJson,previous=>{service.Data.PreviousAuthJson=previous;service.Save();},delegate{});
-                instance.AccountKey=profile.Key;service.Save();return;
+                instance.AccountKey=profile.Key;instance.AccountLocked=true;service.Save();return;
             }
             using(var lease=new InstanceLease(InstancePaths.Folder(service.Vault.Root,instance.Id))) {
                 new SwitchTransaction(Home(instance),()=>Runtime.Probe(instance).Running).Execute(profile.AuthJson,previous=>{instance.PreviousAuthJson=previous;service.Save();},delegate{});
-                instance.AccountKey=profile.Key;service.Save();
+                instance.AccountKey=profile.Key;instance.AccountLocked=true;service.Save();
             }
         }
         public async Task Start(DesktopInstance instance,CancellationToken token)
@@ -122,6 +124,8 @@ namespace Creezio.Switcher
             if(instance.Archived) throw new InvalidOperationException("Restaurez l'instance avant de l'ouvrir.");
             if(instance.IsLocal) throw new InvalidOperationException("Ouvrez la session habituelle avec son raccourci Codex.");
             string key=ActiveKey(instance);
+            if(!instance.AccountLocked&&key!=null)Capture(instance);
+            if(instance.AccountLocked&&key!=instance.AccountKey)throw new InvalidOperationException("Connexion absente ou différente du compte permanent. Reconnectez le compte d'origine ; aucune connexion n'a été remplacée.");
             if(key!=null) {
                 var profile=service.Data.Profiles.FirstOrDefault(p=>p.Key==key);
                 if(profile==null) throw new InvalidOperationException("Importez d'abord le compte configuré dans cette instance avec « Importer sa connexion ».");
@@ -130,10 +134,13 @@ namespace Creezio.Switcher
                 SyncFreshAuth(profile);
                 if(SafeFiles.ReadText(Path.Combine(Home(instance),"auth.json"))!=profile.AuthJson) Configure(instance,profile);
             } else if(File.Exists(Path.Combine(Home(instance),"auth.json"))) throw new InvalidOperationException("La connexion de cette instance n'est pas reconnue. Choisissez un compte valide avant de l'ouvrir.");
+            var relay=new RelayStore(Path.Combine(service.Vault.Root,"relay"));
+            if(RelayPolicies.Load(relay).AutoInstallManaged)await RelayIntegration.Install(relay,Home(instance),service.Settings.CodexExecutable,false,token);
             await Runtime.Start(instance,token);
         }
         public void Forget(Profile profile)
         {
+            if(service.Data.Instances.Any(i=>i.AccountKey==profile.Key))throw new InvalidOperationException("Ce compte est lié à une instance. Son association et ses conversations sont conservées.");
             service.Data.Profiles.Remove(profile);
             foreach(var instance in service.Data.Instances) {
                 if(instance.AccountKey==profile.Key) instance.AccountKey=null;
@@ -143,5 +150,20 @@ namespace Creezio.Switcher
             service.Save();
         }
         private static bool SameAuth(string auth,string key) {try{return auth!=null && AuthIdentity.Parse(auth).Key==key;}catch{return false;}}
+        // Adopt legacy profiles once. A detected identity change never replaces a locked binding.
+        public void AdoptAccounts()
+        {
+            foreach(var i in service.Data.Instances.Where(i=>!i.Archived&&!i.AccountLocked)) {
+                string key=ActiveKey(i);
+                if(key!=null)Capture(i);
+            }
+        }
+        public void BindAccount(DesktopInstance instance,Profile profile)
+        {
+            if(instance.AccountLocked&&instance.AccountKey!=profile.Key)throw new InvalidOperationException("Cette instance possède déjà son compte permanent.");
+            var previous=profile.InstanceIds.ToList();
+            if(!profile.Allows(instance.Id))profile.InstanceIds.Add(instance.Id);
+            try{Configure(instance,profile);}catch{profile.InstanceIds=previous;throw;}
+        }
     }
 }

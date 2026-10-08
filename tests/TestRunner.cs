@@ -12,7 +12,7 @@ internal static class TestRunner
     private static int passed;
     private static string sandbox;
     private static void Assert(bool condition,string message) {if(!condition) throw new Exception(message);}
-    private static void Check(string name,Action test) {test();passed++;Console.WriteLine("PASS " + name);}
+    private static void Check(string name,Action test) {try{test();}catch(Exception e){throw new Exception(name+": "+e.Message,e);}passed++;Console.WriteLine("PASS " + name);}
     private static void Throws(Action action) {try {action();} catch {return;} throw new Exception("Expected failure");}
     private static string Encode(object value) {return Convert.ToBase64String(Encoding.UTF8.GetBytes(Json.Write(value))).TrimEnd('=').Replace('+','-').Replace('/','_');}
     private static string FakeAuth(string user,string account)
@@ -50,8 +50,17 @@ internal static class TestRunner
             Check("previous API-key mode can be restored without accepting it as a profile",delegate {string home=Folder("api-restore");string api="{\"auth_mode\":\"apikey\",\"OPENAI_API_KEY\":\"fictional-api-key\"}";Throws(()=>new SwitchTransaction(home,()=>false).Execute(api,s=>{},delegate{}));new SwitchTransaction(home,()=>false,true).Execute(api,s=>{},delegate{});Assert(File.ReadAllText(Path.Combine(home,"auth.json"))==api,"API backup not restored");});
             Check("switch does not touch conversations",delegate {string home=Folder("history");Directory.CreateDirectory(Path.Combine(home,"sessions"));string history=Path.Combine(home,"sessions","conversation.jsonl");File.WriteAllText(history,"keep me");new SwitchTransaction(home,()=>false).Execute(a,s=>{},delegate{});Assert(File.ReadAllText(history)=="keep me","history changed");});
             ResetTests.RunAll(Check);
+            LoginBrowserTests.RunAll(Check,sandbox);
             InstanceTests.RunAll(Check,sandbox,a,b);
+            SimpleWorkflowTests.RunAll(Check,sandbox,a,b);
+            ToolTunnelTests.RunAll(Check,sandbox);SharedPagesTests.RunAll(Check,sandbox);ResourceLinksTests.RunAll(Check,sandbox);
+            ResourceCatalogTests.RunAll(Check,sandbox);
             RelayTests.RunAll(Check,sandbox);
+            GeneralRelayTests.RunAll(Check,sandbox);
+            ProductTests.RunAll(Check,sandbox);
+            ConsoleTests.RunAll(Check,sandbox);
+            RemoteTests.RunAll(Check,sandbox);
+            AssistanceTests.RunAll(Check,sandbox);
             Console.WriteLine(passed+" tests passed.");
             return 0;
         }

@@ -1,4 +1,12 @@
-# Validation de la version 0.4.0
+# Validation de la version 0.5.0-beta.1
+
+Vérifications du 3 octobre 2026 : **144 tests hors ligne réussis**, processus de
+moteur réellement démarré/arrêté/repris, installation idempotente du plugin,
+chargement réel des deux skills et des outils MCP par Codex, compilation et rendu
+des nouvelles fenêtres. Le détail, les preuves de recette entre comptes et les
+limites de qualification figurent dans [IMPLEMENTATION.md](IMPLEMENTATION.md).
+
+## Historique : version 0.4.0
 
 Vérifications du 2 octobre 2026, Windows et OpenAI.Codex 26.924.2738.0.
 
