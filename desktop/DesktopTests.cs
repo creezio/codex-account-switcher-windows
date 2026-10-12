@@ -278,7 +278,7 @@ namespace Creezio.Switcher.Desktop
                     Descendants(instances).OfType<Button>().Single(b=>Object.Equals(b.Content,"Afficher la fenêtre")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>windowCalls.Count==3);
                     assert(windowCalls[1]==toolOwner.Id&&windowCalls[2]=="local"&&!Descendants(instances).OfType<Button>().Any(b=>Object.Equals(b.Content,"Instance ouverte")),"les deux fenêtres ouvertes ont une vraie action ciblée sans bouton d’état inerte");
                     context.InstanceWindowFixture=id=>throw new InvalidOperationException("Fenêtre indisponible pour ce test");
-                    await Task.Delay(30);Descendants(instances).OfType<Button>().Single(b=>Object.Equals(b.Content,"Afficher la fenêtre")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    await Until(()=>{instances.UpdateLayout();return Descendants(instances).OfType<Button>().Any(b=>Object.Equals(b.Content,"Afficher la fenêtre")&&b.IsEnabled);});Descendants(instances).OfType<Button>().Single(b=>Object.Equals(b.Content,"Afficher la fenêtre")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     await Until(()=>Descendants(instances).OfType<TextBlock>().Any(t=>t.Text=="Fenêtre indisponible pour ce test"));assert(true,"activation impossible expliquée dans la fiche");
                     bool background=true;var lifecycleCalls=new List<string>();
                     context.InstanceStateFixture=i=>new InstanceState{Running=openWindows.Contains(i.Id),WindowReady=openWindows.Contains(i.Id)&&!(background&&i.Id==toolOwner.Id),Phase=!openWindows.Contains(i.Id)?"stopped":background&&i.Id==toolOwner.Id?"background":"running"};
@@ -467,6 +467,7 @@ namespace Creezio.Switcher.Desktop
                     await InstanceWizardUi(shell,root,assert);
                     await AccountLoginUi(shell,root,assert);
                     await ThreadCopyUi(shell,root,assert);
+                    await TransfersUi(shell,root,assert);
                     report.Add(passed + " tests UI réussis");
                     File.WriteAllLines(Path.Combine(root, "results.txt"), report);
                     shell.ExitForTest();
@@ -625,6 +626,25 @@ namespace Creezio.Switcher.Desktop
             Descendants(form).OfType<Expander>().Single().IsExpanded=true;form.UpdateLayout();verify=Descendants(form).OfType<Button>().Single(b=>Equals(b.Content,"Vérifier cette copie"));verify.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>fixture.Opens==1);await Task.Delay(30);
             assert(fixture.LastId==job&&fixture.Sends==2,"vérification réutilise le même identifiant au lieu de créer une nouvelle opération");assert(form.Status.Text.Contains("copie est créée")&&form.Status.Text.Contains("ouverture a échoué"),"échec d’ouverture distingue la copie réussie de la fenêtre indisponible");
             fixture.OpenFails=false;Descendants(form).OfType<Button>().Single(b=>Equals(b.Content,"Ouvrir dans Codex")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>fixture.Opens==2);assert(fixture.Sends==2,"réouverture ne relance pas la copie");form.Close();
+        }
+        private sealed class TransfersFixture:ITransferBackend
+        {
+            internal bool Visible;internal int Copies,Archives;
+            public string Identity(string instance)=>instance;
+            public Task<TransferProject[]> Projects(string instance,System.Threading.CancellationToken token)=>Task.FromResult(new[]{new TransferProject{Id="project",Name="Projet exemple",Roots=new[]{@"C:\Projets\Exemple"},Threads=new CopyThreadChoice[0]}});
+            public Task<string> Fingerprint(string i,string t,bool idle,System.Threading.CancellationToken c)=>Task.FromResult("digest");
+            public Task<ThreadCopyRecord> Copy(TransferRecord r,TransferItem i,System.Threading.CancellationToken c){Copies++;throw new Exception("No chat should be copied");}
+            public Task<string> Project(TransferRecord r,System.Threading.CancellationToken c)=>Task.FromResult(Visible?"destination-project":null);
+            public Task Assign(TransferRecord r,TransferItem i,System.Threading.CancellationToken c)=>Task.CompletedTask;
+            public Task Archive(string i,string t,System.Threading.CancellationToken c){Archives++;throw new Exception("No archive expected");}
+            public Task<bool> IsArchived(string i,string t,System.Threading.CancellationToken c)=>Task.FromResult(false);
+            public Task Open(TransferRecord r,TransferItem i,System.Threading.CancellationToken c)=>Task.CompletedTask;
+        }
+        private static async Task TransfersUi(ShellWindow shell,string root,Action<bool,string> assert)
+        {
+            var context=new DesktopContext(Path.Combine(root,"thread-copy-data"),true);var accounts=new AccountService(context.Root);var source=accounts.Data.Instances.Single(i=>i.Name=="Studio source");var backend=new TransfersFixture();var service=new Transfers(context.Store,backend);
+            var hub=new TransfersWindow(context,shell,source);hub.Show();hub.UpdateLayout();assert(Descendants(hub).OfType<Button>().Count(b=>TransfersWindow.Actions.Any(a=>Equals(a[1],b.Content)))==5,"cinq usages distincts dans le sélecteur");Capture(hub,Path.Combine(root,"Transfers-actions.png"));hub.Close();
+            var form=new TransferWindow(context,shell,source,"link_project",null,service);form.Show();await Until(()=>form.Items.Items.Count==1);assert(!form.RunButton.IsEnabled,"aucune exécution avant préparation");form.Items.SelectedIndex=0;await form.Prepare();assert(form.RunButton.IsEnabled&&!form.Items.IsEnabled&&!form.Destination.IsEnabled,"résumé préparé fige les choix");Capture(form,Path.Combine(root,"Transfers-summary.png"));await form.Run();assert(form.Status.Text.Contains("Codex doit actualiser")&&form.RunButton.IsEnabled,"projet invisible garde une reprise explicite sans faux succès");form.Width=540;form.UpdateLayout();Capture(form,Path.Combine(root,"Transfers-compact.png"));backend.Visible=true;await form.Run();assert(!form.RunButton.IsEnabled&&form.Status.Text.Contains("sans historique")&&backend.Copies==0&&backend.Archives==0,"ouverture du projet sans copie ni archivage");form.Close();
         }
         internal static int VerifyCompatibility(string root)
         {

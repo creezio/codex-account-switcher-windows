@@ -1,9 +1,9 @@
-# Copier une conversation vers une autre instance — 0.13
+# Copier une conversation vers une autre instance
 
 ## Parcours
 
 1. Garder les deux instances Codex ouvertes. Terminer ou arrêter le tour source.
-2. Dans **Instances**, sélectionner la source puis **Copier une conversation…**.
+2. Dans **Instances**, sélectionner la source puis **Conversations et projets… → Copier une conversation**.
 3. Rechercher et choisir la conversation, puis l’instance destinataire.
 4. Adapter éventuellement le titre et cliquer **Copier et ouvrir dans Codex**.
 5. Continuer dans la copie avec le compte destinataire.
