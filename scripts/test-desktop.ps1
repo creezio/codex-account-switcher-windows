@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param([string]$BinaryDirectory)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -11,7 +11,7 @@ $fixture=Join-Path $repo 'work\desktop-validation'
 $p=Start-Process -FilePath $exe -ArgumentList @('--ui-test',('"'+$fixture+'"')) -WindowStyle Hidden -PassThru -Wait
 $report=Get-Content -LiteralPath (Join-Path $fixture 'results.txt') -Encoding UTF8
 $report
-if($p.ExitCode -ne 0 -or ($report -match '^FAIL') -or $report[-1] -notmatch '^\d+ tests UI réussis$'){throw 'UI tests failed.'}
+if($p.ExitCode -ne 0 -or ($report -match '^FAIL') -or $report[-1] -notmatch '^\d+ tests UI r\u00e9ussis$'){throw 'UI tests failed.'}
 $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $testBin=Join-Path $repo 'work\test-bin'
 New-Item -ItemType Directory -Path $testBin -Force | Out-Null
