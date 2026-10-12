@@ -466,6 +466,7 @@ namespace Creezio.Switcher.Desktop
                     await SharedPageUi(shell,root,assert);
                     await InstanceWizardUi(shell,root,assert);
                     await AccountLoginUi(shell,root,assert);
+                    await ThreadCopyUi(shell,root,assert);
                     report.Add(passed + " tests UI réussis");
                     File.WriteAllLines(Path.Combine(root, "results.txt"), report);
                     shell.ExitForTest();
@@ -593,6 +594,37 @@ namespace Creezio.Switcher.Desktop
             var done=new TaskCompletionSource<bool>();
             _=shell.Dispatcher.BeginInvoke(new Action(async()=>{try{var dialog=await WaitDialog("Connecter un compte");dialog.SaveButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>dialog.Saved);done.SetResult(true);}catch(Exception e){done.SetException(e);}}),DispatcherPriority.ContextIdle);
             string auth=await AccountLoginPanel.Open(context,shell);await done.Task;assert(auth==FakeAuth(33),"ajout d’un compte utilise le même formulaire et renvoie la connexion confirmée");
+        }
+        private sealed class CopiesFixture:IThreadCopies
+        {
+            internal List<ThreadCopyRecord> Records=new List<ThreadCopyRecord>();internal int Sends,Opens;internal bool LoseResponse,OpenFails;internal string LastQuery,LastCursor,LastId;internal TaskCompletionSource<bool> Continue;
+            public Task<CopyThreadPage> List(string instance,string query,string cursor,System.Threading.CancellationToken token){LastQuery=query;LastCursor=cursor;return Task.FromResult(new CopyThreadPage{Threads=new[]{new CopyThreadChoice{Id=cursor==null?"thread-one":"thread-two",Title=cursor==null?"Préparer la version suivante":"Relire les changements",Folder=@"C:\Projets\Démonstration"}},Cursor=cursor==null?"page-two":null});}
+            public ThreadCopyRecord[] Recent(string source)=>Records.ToArray();
+            public async Task<ThreadCopyRecord> Copy(string id,string source,string destination,string thread,string title,System.Threading.CancellationToken token){Sends++;LastId=id;if(Continue!=null)await Continue.Task;var record=Records.SingleOrDefault(r=>r.Id==id);if(record==null){record=new ThreadCopyRecord{Id=id,Source=source,Destination=destination,SourceThread=thread,Title=title};Records.Add(record);}record.State=LoseResponse?"uncertain":"completed";record.Message=LoseResponse?"Résultat à vérifier":"Copie confirmée";record.TargetThread=LoseResponse?null:"new-thread";if(LoseResponse)throw new IOException("Réponse perdue : vérifiez la copie.");return record;}
+            public Task Open(ThreadCopyRecord r,System.Threading.CancellationToken token){Opens++;if(OpenFails)throw new InvalidOperationException("Fenêtre indisponible");return Task.CompletedTask;}
+        }
+        private static async Task ThreadCopyUi(ShellWindow shell,string root,Action<bool,string> assert)
+        {
+            var context=new DesktopContext(Path.Combine(root,"thread-copy-data"),true);var a=new AccountService(context.Root);a.Vault.Save(new VaultData());a=new AccountService(context.Root);var source=a.Instances.Create("Studio source");a.Instances.BindAccount(source,a.Import(FakeAuth(41),"Source"));var target=a.Instances.Create("Relecture");a.Instances.BindAccount(target,a.Import(FakeAuth(42),"Destination"));var hidden=a.Instances.Create("Archivée");a.Instances.Archive(hidden,true);
+            var fixture=new CopiesFixture();var form=new ThreadCopyWindow(context,shell,source,fixture);form.Show();await Until(()=>form.Conversations.Items.Count==1);form.UpdateLayout();
+            assert(form.Destination.Items.Count==1&&((DesktopInstance)form.Destination.SelectedItem).Id==target.Id,"copie propose uniquement les autres instances connectées et non archivées");
+            assert(!form.CopyButton.IsEnabled,"copie demande un choix explicite de conversation");form.Conversations.SelectedIndex=0;
+            assert(form.CopyButton.IsEnabled&&form.CopyTitle.Text.EndsWith(" · copie"),"choix remplit le titre et active la copie");
+            await form.Load(true);assert(form.Conversations.Items.Count==2&&fixture.LastCursor=="page-two"&&form.MoreButton.Visibility==Visibility.Collapsed,"copie pagine sans remplacer la première page");
+            form.Query.Text="version";await form.Load(false);assert(fixture.LastQuery=="version"&&fixture.LastCursor==null&&form.Conversations.Items.Count==1,"recherche repart de la première page");form.Conversations.SelectedIndex=0;
+            form.CopyTitle.Text="   ";assert(!form.CopyButton.IsEnabled,"copie refuse un titre vide");form.CopyTitle.Text="Version · relecture";fixture.Continue=new TaskCompletionSource<bool>();
+            Capture(form,Path.Combine(root,"Thread-copy.png"));form.Width=540;form.UpdateLayout();Capture(form,Path.Combine(root,"Thread-copy-compact.png"));
+            form.CopyButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>fixture.Sends==1);
+            assert(!form.CopyButton.IsEnabled&&!form.Destination.IsEnabled&&!form.Conversations.IsEnabled,"copie fige la source et la destination pendant le transfert");
+            await form.Submit();assert(fixture.Sends==1,"double envoi bloqué pendant la copie");fixture.Continue.SetResult(true);await Until(()=>fixture.Opens==1);await Task.Delay(30);
+            assert(!form.CopyButton.IsEnabled&&form.Status.Text.Contains("ouverte"),"résultat confirme l’ouverture et désactive une seconde copie");form.Close();
+            fixture=new CopiesFixture{LoseResponse=true};form=new ThreadCopyWindow(context,shell,source,fixture);form.Show();await Until(()=>form.Conversations.Items.Count==1);form.Conversations.SelectedIndex=0;await form.Submit();string job=fixture.LastId;
+            assert(!form.CopyButton.IsEnabled&&form.Status.Text.Contains("vérifier"),"réponse perdue affiche une erreur et interdit une nouvelle soumission");
+            fixture.LoseResponse=false;fixture.OpenFails=true;var verify=Descendants(form).OfType<Button>().SingleOrDefault(b=>Equals(b.Content,"Vérifier cette copie"));
+            // The recent section is collapsed by default, so expand before finding visual children.
+            Descendants(form).OfType<Expander>().Single().IsExpanded=true;form.UpdateLayout();verify=Descendants(form).OfType<Button>().Single(b=>Equals(b.Content,"Vérifier cette copie"));verify.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>fixture.Opens==1);await Task.Delay(30);
+            assert(fixture.LastId==job&&fixture.Sends==2,"vérification réutilise le même identifiant au lieu de créer une nouvelle opération");assert(form.Status.Text.Contains("copie est créée")&&form.Status.Text.Contains("ouverture a échoué"),"échec d’ouverture distingue la copie réussie de la fenêtre indisponible");
+            fixture.OpenFails=false;Descendants(form).OfType<Button>().Single(b=>Equals(b.Content,"Ouvrir dans Codex")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>fixture.Opens==2);assert(fixture.Sends==2,"réouverture ne relance pas la copie");form.Close();
         }
         internal static int VerifyCompatibility(string root)
         {

@@ -18,7 +18,7 @@ namespace Creezio.Switcher.Desktop
         private readonly WrapPanel tabs=new WrapPanel();
         private readonly Button[] tabButtons=new Button[3];
         private readonly ComboBox compactChoice=new ComboBox{DisplayMemberPath="Title",Visibility=Visibility.Collapsed};
-        private readonly Button rename;
+        private readonly Button rename,copyThread;
         private readonly WrapPanel lifecycle=new WrapPanel();
         private readonly Dictionary<string,string> operations=new Dictionary<string,string>();
         internal Func<string,string,bool> ConfirmLifecycle;
@@ -46,6 +46,7 @@ namespace Creezio.Switcher.Desktop
             foreach(string property in new[]{"Title","Summary","State"}){var text=new FrameworkElementFactory(typeof(TextBlock));text.SetBinding(TextBlock.TextProperty,new Binding(property));text.SetValue(TextBlock.MarginProperty,new Thickness(0,0,0,6));text.SetValue(TextBlock.TextWrappingProperty,TextWrapping.Wrap);text.SetValue(TextBlock.FontSizeProperty,property=="Title"?16d:12d);if(property=="Title")text.SetValue(TextBlock.FontWeightProperty,FontWeights.SemiBold);if(property=="State")text.SetResourceReference(TextBlock.ForegroundProperty,"AccentTextBrush");panel.AppendChild(text);}template.VisualTree=panel;List.ItemTemplate=template;
             var right=new DockPanel();Grid.SetColumn(right,2);split.Children.Add(right);var header=new StackPanel();header.Children.Add(compactChoice);header.Children.Add(heading);header.Children.Add(accountLine);
             var management=Ui.Actions(header);management.Margin=new Thickness(0,0,0,4);rename=Ui.AsyncButton("Renommer l’instance",Rename,Error);rename.IsEnabled=false;management.Children.Add(rename);
+            copyThread=Ui.Button("Copier une conversation…",()=>{if(current==null||!CanLeave())return;new ThreadCopyWindow(Context,Shell,current.Instance).ShowDialog();});copyThread.IsEnabled=false;management.Children.Add(copyThread);
             header.Children.Add(lifecycle);
             ConfirmLifecycle=(text,title)=>Ui.Confirm(Shell,text,title);
             verification.Visibility=Visibility.Collapsed;System.Windows.Automation.AutomationProperties.SetName(verification,"Résultat de la vérification");System.Windows.Automation.AutomationProperties.SetLiveSetting(verification,System.Windows.Automation.AutomationLiveSetting.Polite);header.Children.Add(verification);
@@ -69,12 +70,12 @@ namespace Creezio.Switcher.Desktop
             var rows=data.Where(r=>(r.Title+" "+r.Summary).IndexOf(search.Text,StringComparison.CurrentCultureIgnoreCase)>=0||(dirty&&r.Id==selected)).ToArray();
             string fingerprint=Json.Write(rows.Select(r=>new{r.Id,r.Title,r.Summary,r.State}));
             if(fingerprint!=listStamp){listStamp=fingerprint;changing=true;List.ItemsSource=rows;List.SelectedItem=rows.FirstOrDefault(r=>r.Id==selected)??rows.FirstOrDefault();compactChoice.ItemsSource=rows;compactChoice.SelectedItem=List.SelectedItem;changing=false;}
-            if(List.SelectedItem is ItemRow chosen)await Select(rows.First(r=>r.Id==chosen.Id));else if(selected!=null){resources?.Dispose();resources=null;selected=null;identity=null;current=null;heading.Text="Aucune instance";accountLine.Text="Créez une instance ou modifiez votre recherche.";detail.Content=null;rename.IsEnabled=false;UpdateVerification();RenderLifecycle();}
+            if(List.SelectedItem is ItemRow chosen)await Select(rows.First(r=>r.Id==chosen.Id));else if(selected!=null){resources?.Dispose();resources=null;selected=null;identity=null;current=null;heading.Text="Aucune instance";accountLine.Text="Créez une instance ou modifiez votre recherche.";detail.Content=null;rename.IsEnabled=false;copyThread.IsEnabled=false;UpdateVerification();RenderLifecycle();}
         }
         private static string Identity(ItemRow row){var info=(Info)row.Value;return row.Id+"/"+info.Instance.AccountKey+"/"+info.Instance.Archived;}
         private async Task Select(ItemRow row)
         {
-            current=(Info)row.Value;string stamp=Identity(row);rename.IsEnabled=true;
+            current=(Info)row.Value;string stamp=Identity(row);rename.IsEnabled=true;copyThread.IsEnabled=!current.Instance.Archived&&current.Instance.AccountKey!=null;
             bool changed=identity!=stamp;identity=stamp;heading.Text=row.Title;accountLine.Text=(current.Account?.Email??"Compte à connecter")+" · "+(current.Account?.Plan??"Connexion requise")+" · "+row.State;
             if(changed){Notice.Text="";resources?.Dispose();resources=null;selected=row.Id;if(current.Instance.AccountKey!=null&&!current.Instance.Archived)resources=new InstanceResourcesView(Context,Shell,current.Instance);ShowTab(tab);}
             else if(tab==0)RenderAccount();

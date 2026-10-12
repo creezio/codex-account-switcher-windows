@@ -1,0 +1,84 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Creezio.Switcher;
+
+internal static class ThreadCopyTests
+{
+    private static void Assert(bool ok,string message){if(!ok)throw new Exception(message);}
+    private static void Refused(Action action){try{action();}catch(InvalidOperationException){return;}throw new Exception("Expected refusal");}
+    private sealed class Fixture
+    {
+        internal AccountService Accounts;internal RelayStore Store;internal DesktopInstance Source,Target;
+        internal string SourceId=Guid.NewGuid().ToString(),TargetId,PathSource,PathTarget,HomeSource,HomeTarget,Folder;
+        internal string Job=Guid.NewGuid().ToString("N");internal int Forks,Mutations,IdleChecks;
+        internal bool Busy,Uncertain,Mismatch,Changed,Missing,MigrationFails,VisibleMissing;internal int Migrations;
+        internal object ForkArgs;internal ThreadCopies Copies;
+        internal Fixture(string root,string auth,string other)
+        {
+            Accounts=new AccountService(Path.Combine(root,"copy-"+Guid.NewGuid().ToString("N")));Store=new RelayStore(Path.Combine(Accounts.Vault.Root,"relay"));
+            Source=Accounts.Instances.Create("Source");Accounts.Instances.BindAccount(Source,Accounts.Import(auth,"Source"));Target=Accounts.Instances.Create("Destination");Accounts.Instances.BindAccount(Target,Accounts.Import(other,"Destination"));
+            HomeSource=Accounts.Instances.Home(Source);HomeTarget=Accounts.Instances.Home(Target);Folder=Path.Combine(Accounts.Vault.Root,"project");Directory.CreateDirectory(Folder);
+            Directory.CreateDirectory(Path.Combine(HomeSource,"sessions"));Directory.CreateDirectory(Path.Combine(HomeTarget,"sessions"));PathSource=Path.Combine(HomeSource,"sessions","source.jsonl");History("paginated");
+            Copies=new ThreadCopies(Store,home=>new Rpc(this,home==HomeSource),async(a,i,w,t,c)=>{IdleChecks++;if(Busy)throw new InvalidOperationException("busy");if(Changed&&IdleChecks==2)File.AppendAllText(PathSource,Line("response_item",new{type="message",role="user",content=new[]{new{type="input_text",text="changed"}}}));await Task.FromResult(0);},async(e,h,t,c)=>{Assert(h==HomeTarget&&t==TargetId,"migration scope mismatch");Migrations++;if(MigrationFails)throw new InvalidOperationException("migration unavailable");await Task.FromResult(0);});
+        }
+        internal static string Line(string type,object payload){return Json.Write(new{type=type,payload=payload})+"\n";}
+        internal void History(string mode){File.WriteAllText(PathSource,Line("session_meta",new{id=SourceId,history_mode=mode,cwd=Folder})+Line("response_item",new{type="message",role="user",content=new[]{new{type="input_text",text="remember ORANGE-42"}}})+Line("event_msg",new{type="user_message",message="remember ORANGE-42"})+Line("response_item",new{type="message",role="assistant",content=new[]{new{type="output_text",text="Remembered."}},phase="final_answer"}));}
+        internal ThreadCopyRecord Copy(){return Copies.Copy(Job,Source.Id,Target.Id,SourceId,"My copy",CancellationToken.None).GetAwaiter().GetResult();}
+        internal object Thread(bool source){return new{id=source?SourceId:TargetId,path=source?PathSource:PathTarget,cwd=Folder,name=source?"Original":"Copy",historyMode=source?"paginated":"legacy"};}
+        private sealed class Rpc:IThreadProfileRpc
+        {
+            private readonly Fixture f;private readonly bool source;
+            internal Rpc(Fixture f,bool source){this.f=f;this.source=source;}
+            public void Dispose(){}
+            public Task<object> Call(string method,object parameters,CancellationToken token)
+            {
+                object value=null;parameters=Json.Read<object>(Json.Write(parameters));
+                if(method=="thread/read")value=new{thread=f.Thread(source)};
+                else if(method=="thread/list"){Assert(Equals(Json.Get(parameters,"useStateDbOnly"),true),"indexed desktop threads omitted");value=new{data=f.Missing?new object[0]:new[]{f.Thread(source)},nextCursor=(string)null};}
+                else if(method=="thread/start"||method=="thread/resume")value=new{thread=new{id=Guid.NewGuid().ToString()},activePermissionProfile=new{id=":read-only"},approvalPolicy="on-request",approvalsReviewer="user"};
+                else if(method=="thread/unsubscribe")value=new{};
+                else if(method=="thread/items/list")value=new{data=f.VisibleMissing?new object[0]:new object[]{new{item=new{type="userMessage",content=new[]{new{type="text",text="remember ORANGE-42"}}}}},nextCursor=(string)null};
+                else if(method=="thread/fork"){
+                    f.ForkArgs=parameters;f.Forks++;f.TargetId=Guid.NewGuid().ToString();f.PathTarget=Path.Combine(f.HomeTarget,"sessions",f.TargetId+".jsonl");
+                    var lines=File.ReadAllLines(Json.Str(Json.Get(parameters,"path")));var meta=Json.Read<object>(lines[0]);var payload=Json.Obj(Json.Get(meta,"payload"));payload["id"]=f.TargetId;payload["thread_source"]=Json.Get(parameters,"threadSource");lines[0]=Json.Write(meta);
+                    File.WriteAllLines(f.PathTarget,lines);if(f.Mismatch)File.AppendAllText(f.PathTarget,Line("response_item",new{type="message",role="user",content=new[]{new{type="input_text",text="unexpected"}}}));
+                    if(f.Uncertain)throw new IOException("response lost");value=new{thread=f.Thread(false)};
+                }else if(method=="thread/name/set"||method=="thread/goal/clear"){f.Mutations++;value=new{};}
+                else throw new Exception("Unexpected method "+method);
+                return Task.FromResult(Json.Read<object>(Json.Write(value)));
+            }
+        }
+    }
+    internal static void RunAll(Action<string,Action> check,string root,string auth,string other)
+    {
+        check("thread copy fails if native Desktop loses a visible message",delegate{var f=new Fixture(root,auth,other){VisibleMissing=true};Refused(()=>f.Copy());Assert(f.Copies.Recent(f.Source.Id).Single().State=="migrating","invisible copy completed");f.VisibleMissing=false;Assert(f.Copy().State=="completed"&&f.Forks==1,"verification recovery duplicated");});
+        check("thread copy converts modern display messages without altering model context",delegate{var f=new Fixture(root,auth,other);string before=RolloutSnapshot.Scan(f.PathSource,f.SourceId).ModelDigest;File.AppendAllText(f.PathSource,Fixture.Line("event_msg",new{type="item_completed",thread_id=f.SourceId,turn_id="turn",item=new{type="AgentMessage",content=new[]{new{type="Text",text="Visible modern answer"}},phase="final_answer"}}));string snapshot=Path.Combine(f.Folder,"snapshot.jsonl");RolloutSnapshot.Scan(f.PathSource,f.SourceId,snapshot);var after=RolloutSnapshot.Scan(snapshot,f.SourceId);Assert(after.ModelDigest==before&&after.VisibleMessages.Contains(RolloutSnapshot.TextDigest("assistant","Visible modern answer")),"modern UI lost or model changed");});
+        check("thread copy refuses unknown multimodal display instead of silently dropping it",delegate{Refused(()=>RolloutSnapshot.LegacyDisplay(Json.Read<object>("{\"type\":\"UserMessage\",\"content\":[{\"type\":\"image\",\"url\":\"https://example.invalid/a.png\"}]}")));var converted=RolloutSnapshot.LegacyDisplay(Json.Read<object>("{\"type\":\"UserMessage\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}"));Assert(Json.Write(converted).Contains("hello"),"text not converted");});
+        check("thread copy migration failure preserves one copy and retries verification",delegate{var f=new Fixture(root,auth,other){MigrationFails=true};Refused(()=>f.Copy());Assert(f.Forks==1&&f.Copies.Recent(f.Source.Id).Single().State=="migrating","failed conversion reported success");int mutations=f.Mutations;f.MigrationFails=false;Assert(f.Copy().State=="completed"&&f.Forks==1&&f.Migrations==2&&f.Mutations==mutations,"retry duplicated or mutated copy");});
+        check("thread copy migration requires exact target and a successful native outcome",delegate{string id=Guid.NewGuid().ToString();foreach(string status in new[]{"migrated","already_paginated"})ThreadCopyMigration.Validate(Json.Read<object>(Json.Write(new{outcomes=new[]{new{thread_id=id,status=status}}})),id);foreach(string status in new[]{"eligible","skipped_busy","skipped_empty","missing_sqlite_metadata"})Refused(()=>ThreadCopyMigration.Validate(Json.Read<object>(Json.Write(new{outcomes=new[]{new{thread_id=id,status=status}}})),id));Refused(()=>ThreadCopyMigration.Validate(Json.Read<object>(Json.Write(new{outcomes=new[]{new{thread_id=Guid.NewGuid().ToString(),status="migrated"}}})),id));});
+        check("primary IPC discovery accepts only native local app-tool pipe names",delegate{Assert(NamedInstances.AppPipeName(@"\\.\pipe\codex-browser-use-12345678-abcd-1234-abcd-123456789012"),"native pipe excluded");foreach(string p in new[]{@"\\other\pipe\codex-browser-use-12345678-abcd-1234-abcd-123456789012",@"\\.\pipe\codex-browser-use\12345678-abcd-1234-abcd-123456789012",@"\\.\pipe\codex-ipc",@"\\.\pipe\codex-browser-use-not-a-guid"})Assert(!NamedInstances.AppPipeName(p),"foreign pipe accepted");});
+        check("thread copy preserves original and imports complete paginated history",delegate{var f=new Fixture(root,auth,other);string before=File.ReadAllText(f.PathSource);var r=f.Copy();Assert(r.State=="completed"&&f.TargetId!=f.SourceId&&r.HistoryItems==3,"not verified");Assert(File.ReadAllText(f.PathSource)==before,"source changed");Assert(File.ReadAllText(f.PathTarget).Contains("legacy"),"mode not converted");Assert(!Directory.GetFiles(Path.Combine(f.Store.Root,"thread-copies")).Any(),"snapshot leaked");});
+        check("thread copy supports legacy journals",delegate{var f=new Fixture(root,auth,other);f.History("legacy");Assert(f.Copy().State=="completed","legacy failed");});
+        check("thread copy uses native destination permissions and cannot start a model turn",delegate{var f=new Fixture(root,auth,other);f.Copy();Assert(Json.Get(f.ForkArgs,"sandbox")==null&&Json.Str(Json.Get(f.ForkArgs,"permissions"))==":read-only"&&Json.Str(Json.Get(f.ForkArgs,"approvalPolicy"))=="on-request"&&Equals(Json.Get(f.ForkArgs,"deferGoalContinuation"),true),"source permissions or goal inherited");Assert(f.Mutations==2,"name/goal not managed");});
+        check("thread copy retry never clears new goals or changes continued history",delegate{var f=new Fixture(root,auth,other);f.Copy();File.AppendAllText(f.PathTarget,"a subsequent owner turn");int mutations=f.Mutations;Assert(f.Copy().State=="completed"&&f.Forks==1&&f.Mutations==mutations,"completed copy mutated");});
+        check("thread copy refuses busy source before any destination write",delegate{var f=new Fixture(root,auth,other){Busy=true};Refused(()=>f.Copy());Assert(f.Forks==0,"fork despite active turn");});
+        check("thread copy refuses source history changing during preparation",delegate{var f=new Fixture(root,auth,other){Changed=true};Refused(()=>f.Copy());Assert(f.Forks==0&&!Directory.GetFiles(Path.Combine(f.Store.Root,"thread-copies")).Any(),"changed snapshot imported or left");});
+        check("thread copy verifies connected identity before transferring",delegate{var f=new Fixture(root,auth,other);File.WriteAllText(Path.Combine(f.HomeTarget,"auth.json"),auth);Refused(()=>f.Copy());Assert(f.Forks==0,"account drift ignored");});
+        check("thread copy rejects same instance and invalid thread id",delegate{var f=new Fixture(root,auth,other);Refused(()=>f.Copies.Copy(f.Job,f.Source.Id,f.Source.Id,f.SourceId,"copy",CancellationToken.None).GetAwaiter().GetResult());Refused(()=>f.Copies.Copy(f.Job,f.Source.Id,f.Target.Id,"../thread","copy",CancellationToken.None).GetAwaiter().GetResult());});
+        check("thread copy refuses unsupported and corrupt journals",delegate{var f=new Fixture(root,auth,other);f.History("future");Refused(()=>f.Copy());f.History("legacy");File.AppendAllText(f.PathSource,"{broken");Refused(()=>f.Copy());Assert(f.Forks==0,"invalid format copied");});
+        check("thread copy restricts history files to source profile sessions",delegate{var f=new Fixture(root,auth,other);Refused(()=>RolloutSnapshot.RequireRollout(f.HomeTarget,f.PathSource));Refused(()=>RolloutSnapshot.RequireRollout(f.HomeSource,Path.Combine(f.HomeSource,"sessions-other","a.jsonl")));});
+        check("thread copy normalizes native Windows prefixes without accepting device or alternate streams",delegate{var f=new Fixture(root,auth,other);RolloutSnapshot.RequireRollout(f.HomeSource,@"\\?\"+f.PathSource);Assert(RolloutSnapshot.Scan(@"\\?\"+f.PathSource,f.SourceId).Digest==RolloutSnapshot.Scan(f.PathSource,f.SourceId).Digest,"extended prefix differs");Refused(()=>RolloutSnapshot.NativePath(@"\\?\GLOBALROOT\Device\disk\sessions\a.jsonl"));Refused(()=>RolloutSnapshot.NativePath(f.PathSource+":stream.jsonl"));});
+        check("thread copy detects missing image attachments",delegate{var f=new Fixture(root,auth,other);File.AppendAllText(f.PathSource,Fixture.Line("response_item",new{type="message",role="user",content=new[]{new{type="input_image",image_url=new Uri(Path.Combine(f.Folder,"missing.png")).AbsoluteUri}}}));Refused(()=>f.Copy());Assert(f.Forks==0,"missing attachment accepted");});
+        check("thread copy rejects truncated target without automatic continuation",delegate{var f=new Fixture(root,auth,other){Mismatch=true};Assert(f.Copy().State=="verification_failed","mismatch accepted");int mutations=f.Mutations;Assert(f.Copy().State=="verification_failed"&&f.Forks==1&&f.Mutations==mutations,"mismatch retried automatically");});
+        check("thread copy recovers lost response from first journal metadata without duplication",delegate{var f=new Fixture(root,auth,other){Uncertain=true};try{f.Copy();throw new Exception("Expected IO error");}catch(IOException){}Assert(f.Copies.Recent(f.Source.Id).Single().State=="uncertain","missing durable uncertainty");f.Uncertain=false;Assert(f.Copy().State=="completed"&&f.Forks==1,"duplicate created");});
+        check("thread copy unknown outcome stays uncertain instead of sending twice",delegate{var f=new Fixture(root,auth,other){Uncertain=true};try{f.Copy();}catch(IOException){}f.Missing=true;Assert(f.Copy().State=="uncertain"&&f.Forks==1,"unknown fork resent");});
+        check("thread copy operation id is bound to payload and destination",delegate{var f=new Fixture(root,auth,other);f.Copy();Refused(()=>f.Copies.Copy(f.Job,f.Source.Id,f.Target.Id,f.SourceId,"Changed title",CancellationToken.None).GetAwaiter().GetResult());Assert(f.Forks==1,"mismatched retry copied");});
+        check("thread copy message id normalization preserves tool call ids",delegate{var f=new Fixture(root,auth,other);string content=File.ReadAllText(f.PathSource);string before=RolloutSnapshot.Scan(f.PathSource,f.SourceId).Digest;File.WriteAllText(f.PathSource,content.Replace("\"role\":\"user\"","\"id\":\"new-message-id\",\"role\":\"user\""));Assert(RolloutSnapshot.Scan(f.PathSource,f.SourceId).Digest==before,"generated message id changed meaning");File.AppendAllText(f.PathSource,Fixture.Line("response_item",new{type="function_call",call_id="important",name="tool",arguments="{}"}));Assert(RolloutSnapshot.Scan(f.PathSource,f.SourceId).Digest!=before,"call data ignored");});
+        check("thread copy tolerates empty native attachment defaults but checks visible text",delegate{var f=new Fixture(root,auth,other);string content=File.ReadAllText(f.PathSource);string before=RolloutSnapshot.Scan(f.PathSource,f.SourceId).Digest;File.WriteAllText(f.PathSource,content.Replace("\"type\":\"user_message\"","\"type\":\"user_message\",\"local_audio\":[]"));Assert(RolloutSnapshot.Scan(f.PathSource,f.SourceId).Digest==before,"empty default rejected");File.WriteAllText(f.PathSource,content.Replace("\"message\":\"remember ORANGE-42\"","\"message\":\"changed text\""));Assert(RolloutSnapshot.Scan(f.PathSource,f.SourceId).Digest!=before,"visible transcript ignored");});
+        check("thread copy digest is identical across Framework and Net10 with Unicode and HTML",delegate{var f=new Fixture(root,auth,other);File.WriteAllText(f.PathSource,Fixture.Line("session_meta",new{id=f.SourceId,history_mode="legacy"})+Fixture.Line("response_item",new{type="message",role="user",content=new[]{new{type="input_text",text="L’été <bonjour> 👋"}}}));Assert(RolloutSnapshot.Scan(f.PathSource,f.SourceId).Digest=="acd82379a4a4376e9fc363921fb57553023cbe1278313a069f740553a79be1a9","cross-runtime hash changed");});
+    }
+}

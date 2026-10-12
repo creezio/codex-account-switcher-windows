@@ -53,6 +53,7 @@ internal static class TestRunner
             LoginBrowserTests.RunAll(Check,sandbox);
             InstanceTests.RunAll(Check,sandbox,a,b);
             SimpleWorkflowTests.RunAll(Check,sandbox,a,b);
+            ThreadCopyTests.RunAll(Check,sandbox,a,b);
             ToolTunnelTests.RunAll(Check,sandbox);SharedPagesTests.RunAll(Check,sandbox);ResourceLinksTests.RunAll(Check,sandbox);
             ResourceCatalogTests.RunAll(Check,sandbox);
             RelayTests.RunAll(Check,sandbox);

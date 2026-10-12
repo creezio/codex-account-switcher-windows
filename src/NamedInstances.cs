@@ -59,7 +59,20 @@ namespace Creezio.Switcher
                 }
             }
         }
-        internal static async Task<RelayChannel> Connect(RelayStore store,AccountService a,DesktopInstance instance,string workspace,CancellationToken token)
+        internal static bool AppPipeName(string value)
+        {return System.Text.RegularExpressions.Regex.IsMatch(value??"",@"^\\\\\.\\pipe\\codex-browser-use-[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$");}
+        private static string PrimaryPipe(InstanceState state)
+        {
+            if(!state.Running||state.DesktopPid<=0||state.DesktopStartTicks<=0||state.Phase=="unknown")return null;
+            foreach(string path in Directory.GetFiles(@"\\.\pipe\").Where(AppPipeName).Take(64)){
+                // Identity is checked by Windows before any RPC is sent. Managed
+                // desktops have already been excluded by LocalState.
+                try{using(var client=new AppToolsClient(path,state.DesktopPid,state.DesktopStartTicks))return path;}
+                catch(IOException){}catch(InvalidOperationException){}catch(TimeoutException){}
+            }
+            return null;
+        }
+        internal static async Task<RelayChannel> Connect(RelayStore store,AccountService a,DesktopInstance instance,string workspace,CancellationToken token,string preferredThread=null)
         {
             VerifyAccount(a,instance);workspace=RelayStore.WorkspacePath(workspace);string home=a.Instances.Home(instance),id=ChannelId(home,workspace);
             var channels=store.Channels().Where(c=>RelayStore.SamePath(c.Home,home)&&c.AccountKey==instance.AccountKey&&AgentProviders.Codex(c)).ToArray();
@@ -71,9 +84,10 @@ namespace Creezio.Switcher
                 var live=channels.FirstOrDefault(c=>DesktopRuntime.SameProcess(c.ServerPid,c.ServerStartTicks));
                 if(live!=null){pipe=live.PipePath;pid=live.ServerPid;ticks=live.ServerStartTicks;}
             }
+            if(String.IsNullOrEmpty(pipe)&&instance.IsLocal){var state=a.Instances.Runtime.Probe(instance);pipe=PrimaryPipe(state);pid=state.DesktopPid;ticks=state.DesktopStartTicks;}
             if(String.IsNullOrEmpty(pipe))throw new InvalidOperationException("Ouvrez « "+instance.Name+" » dans le switcher. Pour la session habituelle, utilisez une fois le skill de délégation dans un chat de cette instance.");
             using(var client=new AppToolsClient(pipe,pid,ticks)){
-                var anchors=Anchors(home).Concat(channels.Where(c=>c.Enabled).Select(c=>c.AnchorThreadId)).Where(t=>!String.IsNullOrEmpty(t)).Distinct().Take(12);
+                var anchors=new[]{preferredThread}.Concat(Anchors(home)).Concat(channels.Where(c=>c.Enabled).Select(c=>c.AnchorThreadId)).Where(t=>!String.IsNullOrEmpty(t)).Distinct().Take(12);
                 string anchor=null;
                 foreach(string candidate in anchors){token.ThrowIfCancellationRequested();try{var snapshot=await client.Call(candidate,"read_thread",new{threadId=candidate,turnLimit=1,includeOutputs=false,maxOutputCharsPerItem=1000},token);DirectMessages.RequireThread(snapshot,candidate);anchor=candidate;break;}catch(InvalidOperationException){}}
                 if(anchor==null)throw new InvalidOperationException("Ouvrez un premier chat dans « "+instance.Name+" » et envoyez un message. Codex doit avoir créé une conversation avant de pouvoir recevoir une délégation.");

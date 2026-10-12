@@ -3,7 +3,7 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.12.4-beta.1 — navigateur, profil et lien de connexion au choix.** Windows 10/11 x64, interface en
+**Version 0.13.0-beta.1 — copier une conversation vers une autre instance.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
@@ -12,6 +12,18 @@ français et livraison portable incluant le runtime .NET 10, sans droits adminis
 · [Validation](docs/VALIDATION.md)
 
 ![Gestion des instances, avec des comptes fictifs](assets/screenshot.png)
+
+## Continuer une conversation dans une autre instance
+
+Dans **Instances**, sélectionnez la source puis **Copier une conversation…**.
+Choisissez le chat et l’instance destinataire, puis **Copier et ouvrir dans Codex**.
+L’original reste en place. La copie conserve l’historique et le dossier de
+travail, et utilise le compte et les permissions de destination.
+
+Les deux Codex doivent rester ouverts et le chat source au repos. Les droits
+sur les pages, sites et plugins ne sont pas transférés. **Copies récentes**
+permet de rouvrir une copie ou de vérifier une réponse perdue sans la dupliquer.
+[Fonctionnement, formats pris en charge et limites](docs/THREAD-COPY.md).
 
 ## Choisir le navigateur pour connecter un compte
 
@@ -374,10 +386,10 @@ pas déplacés ni supprimés.
 Depuis PowerShell à la racine du dépôt :
 
 ```powershell
-.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.12.4-beta.1
+.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.13.0-beta.1
 .\scripts\test.ps1 -TestDirectory work\framework-validation
 dotnet run --project tests\Core.Net10.csproj -c Release -- work\net10-validation
-.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.12.4-beta.1
+.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.13.0-beta.1
 ```
 
 La compilation de l'interface exige le SDK .NET 10 ; le moteur utilise le
