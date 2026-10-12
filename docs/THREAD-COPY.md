@@ -31,7 +31,9 @@ Les partages du tunnel se configurent séparément dans **Ressources & accès**.
   de son journal complet en mode `legacy`, dans un instantané temporaire privé.
   Les bases SQLite et fichiers d’authentification ne sont jamais copiés.
 - Les messages paginés récents sont adaptés au journal de reprise pour
-  conserver leurs textes visibles et leurs images locales. Le processus d’import est ensuite fermé,
+  conserver leurs textes visibles, images locales et images intégrées en données PNG,
+  JPEG, WebP ou GIF. Les images distantes et les niveaux de détail non représentables
+  restent refusés. Le processus d’import est ensuite fermé,
   et la commande native `migrate-rollouts --apply --thread <nouvel-id>` prépare
   le format paginé attendu par Codex. Elle ne vise que la copie. Un verrou,
   un outil absent ou une conversion refusée laisse l’opération à vérifier.
@@ -58,6 +60,22 @@ Les partages du tunnel se configurent séparément dans **Ressources & accès**.
   régénérés et les champs de pièces jointes vides ajoutés par Codex sont
   normalisés. Les identifiants d’appels d’outils restent vérifiés. Les images
   locales sont comparées par chemin et SHA-256 du fichier, dans l’ordre.
+  Les images intégrées sont comparées par format et SHA-256 des octets décodés.
+  Les pages de lecture contiennent dix éléments pour éviter que les anciennes
+  sorties d’images dépassent la taille de réponse du service natif.
+- Les anciennes annotations `executed_tool_calls` retirées par Codex sont adaptées
+  dans le seul instantané privé. Chaque annotation doit correspondre exactement
+  à un appel réel conservé : identifiant de l’appel, nom (avec son espace de noms)
+  et arguments. Les annotations incomplètes ou sans correspondance bloquent
+  l’import. Les appels, résultats, textes et autres métadonnées restent conservés.
+  Les valeurs vides par défaut ajoutées par Codex aux anciens compactages sont
+  préparées explicitement ; aucun contenu de compactage existant n’est remplacé.
+- Certains anciens forks combinent un affichage partiel dans le journal et
+  l’affichage complet dans SQLite. L’instantané privé remplace alors uniquement
+  ses événements d’affichage par les messages de l’API native, avec leur ordre,
+  images et regroupement par tour. Le contexte modèle doit rester identique et
+  les messages source sont relus avant le fork. Aucun journal source n’est réparé
+  ni réécrit. Une collision avec un fichier temporaire préexistant le préserve.
 - À la reprise d’un tour interrompu, Codex peut ajouter son avertissement
   `turn_aborted`. L’import accepte uniquement son texte et sa balise native
   exacts, en dernière position du contexte, suivis de l’événement d’interruption.

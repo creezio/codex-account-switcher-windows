@@ -57,3 +57,13 @@ Les essais réels ont utilisé uniquement des conversations fictives créées po
 - L’import initial dont la conversion avait omis du contexte a été remplacé, puis archivé uniquement dans la destination après validation complète. Les originaux et la première copie vérifiée ont été préservés. Les preuves contenant les identifiants réels restent locales.
 
 Les limites de lecture et du convertisseur, ainsi que les refus avant création pour les contenus trop grands qui ne peuvent pas être recompressés sans perte, sont détaillés dans [THREAD-COPY.md](THREAD-COPY.md).
+
+## Complément 0.14.2 : anciens forks et images intégrées
+
+- Clonage réel autorisé d’un projet de trois discussions vers un autre compte, avec mêmes fichiers, associations natives confirmées et aucun original archivé.
+- Vérification indépendante des 15 567 éléments de modèle et 56 compactages. Les 100 anciennes annotations d’exécution retirées par Codex correspondent exactement aux appels conservés : identifiant, nom et arguments. Les valeurs vides ajoutées aux compactages sont adaptées dans l’instantané privé. Les journaux originaux restent identiques octet par octet.
+- Les images intégrées dans les messages sont conservées et vérifiées. Les pages de dix éléments permettent la lecture des anciennes sorties volumineuses.
+- L’affichage partiel d’un ancien fork est reconstruit depuis l’API native, dans le seul instantané privé, puis vérifié après migration sans changement du contexte modèle.
+- Une récupération ponctuelle de 31 PNG disparus du dossier temporaire a utilisé les données exactes encore encodées dans les messages modèle. L’encodage des anciens fichiers temporaires n’était plus disponible ; aucune identité binaire avec ces fichiers disparus n’est revendiquée. Ce dépannage ciblé reste distinct du service d’import, qui continue de refuser les images locales introuvables.
+
+Les preuves contenant les identifiants, images et chemins réels sont locales et ne sont pas publiées.

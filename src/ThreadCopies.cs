@@ -31,10 +31,11 @@ namespace Creezio.Switcher
         public string RequestedFolder {get;set;} public string SourceFolder {get;set;}
         public bool NativeResumeNotice {get;set;}
         public bool LosslessPngEncoding {get;set;}
+        public int DuplicateToolAnnotations {get;set;} public int EmptyContextDefaults {get;set;}
     }
     internal sealed class RolloutSnapshot
     {
-        internal string Digest,SourceMode,ModelDigest;internal int Items,ModelItems;internal string[] VisibleMessages;internal bool NativeResumeNotice,LosslessPngEncoding;
+        internal string Digest,SourceMode,ModelDigest;internal int Items,ModelItems,DuplicateToolAnnotations,EmptyContextDefaults;internal string[] VisibleMessages;internal bool NativeResumeNotice,LosslessPngEncoding;
         internal const string NativeAbortText="<turn_aborted>\nThe previous turn was interrupted on purpose. Any running unified exec processes may still be running in the background. If any tools/commands were aborted, they may have partially executed.\n</turn_aborted>";
         private static bool IsNativeAbortNotice(object payload)
         {
@@ -45,7 +46,7 @@ namespace Creezio.Switcher
         internal const long MaxJournalBytes=512L*1024*1024;
         internal const int MaxItemCharacters=32*1024*1024;
         internal const int NativeLineBytes=16*1024*1024;
-        private static string WriteRollout(object value)
+        internal static string WriteRollout(object value)
         {
 #if NETCOREAPP
             return System.Text.Json.JsonSerializer.Serialize(value,Desktop.JsonCompatibility.Options);
@@ -53,7 +54,9 @@ namespace Creezio.Switcher
             return new System.Web.Script.Serialization.JavaScriptSerializer{MaxJsonLength=MaxItemCharacters}.Serialize(value);
 #endif
         }
-        private static object ReadRollout(string line)
+        internal static string DisplayLine(object value)
+        {string line=WriteRollout(value);if(Encoding.UTF8.GetByteCount(line)+2>=NativeLineBytes)throw new InvalidOperationException("Ce message d’affichage dépasse la limite native ; aucun import incomplet n’est créé.");return line;}
+        internal static object ReadRollout(string line)
         {
             // Image response items can exceed the small limit used for settings
             // and relay requests. Keep this exception confined to rollout imports.
@@ -63,9 +66,18 @@ namespace Creezio.Switcher
             return new System.Web.Script.Serialization.JavaScriptSerializer{MaxJsonLength=MaxItemCharacters}.Deserialize<object>(line);
 #endif
         }
-        internal static string VisibleDigest(string role,string text,IEnumerable<string> images)
+        internal static string EmbeddedUrl(object content)
+        {string url=Json.Str(Json.Get(content,"url")),legacy=Json.Str(Json.Get(content,"image_url"));return url.Length==0?legacy:url;}
+        internal static bool EmbeddedImage(object content)
         {
-            var paths=(images??new string[0]).ToArray();if(paths.Length==0)return TextDigest(role,text);
+            if(Json.Str(Json.Get(content,"type"))!="image"||Json.Get(content,"detail")!=null)return false;
+            string url=EmbeddedUrl(content),legacy=Json.Str(Json.Get(content,"image_url"));
+            if(!Json.Obj(content).Keys.All(k=>new[]{"type","url","image_url","detail"}.Contains(k))||(legacy.Length>0&&legacy!=url))return false;
+            return url.Length<=MaxItemCharacters&&new[]{"data:image/png;base64,","data:image/jpeg;base64,","data:image/webp;base64,","data:image/gif;base64,"}.Any(p=>url.StartsWith(p,StringComparison.Ordinal));
+        }
+        internal static string VisibleDigest(string role,string text,IEnumerable<string> images,IEnumerable<string> embedded=null)
+        {
+            var paths=(images??new string[0]).ToArray();var inline=(embedded??new string[0]).ToArray();if(paths.Length==0&&inline.Length==0)return TextDigest(role,text);
             var proof=new List<string>();foreach(string image in paths){
                 string path=Path.GetFullPath(NativePath(image));SafeFiles.RejectLinks(path);
                 if(!File.Exists(path))throw new InvalidOperationException("Une image locale jointe à ce thread est introuvable. Rétablissez le fichier avant de copier la conversation.");
@@ -73,7 +85,9 @@ namespace Creezio.Switcher
                 using(var stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read))using(var sha=SHA256.Create())proof.Add(path.ToUpperInvariant()+":"+BitConverter.ToString(sha.ComputeHash(stream)));
                 info.Refresh();if(info.Length!=length||info.LastWriteTimeUtc!=modified)throw new InvalidOperationException("Une image jointe a changé pendant la préparation.");
             }
-            return TextDigest(role,text+"\nlocal-images:"+Canonical(proof));
+            string attachments=paths.Length==0?"":"\nlocal-images:"+Canonical(proof);
+            if(inline.Length>0){var hashes=new List<string>();foreach(string url in inline){if(!EmbeddedImage(new Dictionary<string,object>{{"type","image"},{"url",url}}))throw new InvalidOperationException("Format d’image intégrée non pris en charge.");byte[] bytes;try{bytes=Convert.FromBase64String(url.Substring(url.IndexOf(',')+1));}catch(FormatException){throw new InvalidOperationException("Image intégrée invalide.");}if(bytes.Length==0)throw new InvalidOperationException("Image intégrée vide.");using(var sha=SHA256.Create())hashes.Add(url.Substring(0,url.IndexOf(',')+1)+BitConverter.ToString(sha.ComputeHash(bytes)));}attachments+="\nembedded-images:"+Canonical(hashes);}
+            return TextDigest(role,text+attachments);
         }
         private static string Canonical(object value)
         {
@@ -121,6 +135,7 @@ namespace Creezio.Switcher
             path=NativePath(path);
             var info=new FileInfo(path);if(info.Length>MaxJournalBytes)throw new InvalidOperationException("Ce journal dépasse la limite d’import de 512 Mio.");
             long length=info.Length;DateTime modified=info.LastWriteTimeUtc;var result=new RolloutSnapshot();var visible=new List<string>();
+            var compatibility=copy==null?null:new LegacyHistoryCompatibility(path,token);
             using(var stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))
             using(var reader=new StreamReader(stream,Encoding.UTF8,true))
             using(var writer=copy==null?null:new StreamWriter(new FileStream(copy,FileMode.CreateNew,FileAccess.Write,FileShare.None),new UTF8Encoding(false)))
@@ -147,10 +162,11 @@ namespace Creezio.Switcher
                         byte[] bytes=Encoding.UTF8.GetBytes(type+"\n"+Canonical(payload)+"\n");
                         if(ignoreNativeResumeNotice&&type=="response_item"&&IsNativeAbortNotice(payload)){pendingNotice=bytes;noticeAborted=false;noticeSuffixValid=true;}
                         else append(bytes,type!="event_msg");
-                        if(type=="event_msg")visible.Add(VisibleDigest(Json.Str(Json.Get(payload,"type"))=="user_message"?"user":"assistant",Json.Str(Json.Get(payload,"message")),RelayEngine.Rows(Json.Get(payload,"local_images")).Select(Json.Str)));
+                        if(type=="event_msg")visible.Add(VisibleDigest(Json.Str(Json.Get(payload,"type"))=="user_message"?"user":"assistant",Json.Str(Json.Get(payload,"message")),RelayEngine.Rows(Json.Get(payload,"local_images")).Select(Json.Str),RelayEngine.Rows(Json.Get(payload,"images")).Select(Json.Str)));
                         if(copy!=null)CheckImages(payload);
                     }
                     if(writer!=null){
+                        compatibility.Apply(entry);if(compatibility.DuplicateAnnotations>0||compatibility.EmptyDefaults>0)line=WriteRollout(entry);
                         if(Encoding.UTF8.GetByteCount(line)+2>=NativeLineBytes){
                             pngEncoding.Optimize(entry);string optimized=WriteRollout(entry);
                             if(Encoding.UTF8.GetByteCount(optimized)+2>=NativeLineBytes)throw new InvalidOperationException("Codex ne peut importer cet élément de plus de 16 Mio sans perdre du contexte. L’original est conservé ; aucune copie n’a été créée.");
@@ -165,7 +181,7 @@ namespace Creezio.Switcher
                     // display-only equivalents; model response items stay intact.
                     if(writer!=null&&result.SourceMode=="paginated"&&type=="event_msg"&&Json.Str(Json.Get(payload,"type"))=="item_completed"){
                         var display=LegacyDisplay(Json.Get(payload,"item"));
-                        if(display!=null&&writer!=null)writer.WriteLine(Json.Write(new{timestamp=Json.Get(entry,"timestamp"),type="event_msg",payload=display}));
+                        if(display!=null&&writer!=null)writer.WriteLine(DisplayLine(new{timestamp=Json.Get(entry,"timestamp"),type="event_msg",payload=display}));
                     }
                 }
                 if(pendingNotice!=null){if(noticeAborted&&noticeSuffixValid)result.NativeResumeNotice=true;else append(pendingNotice,true);}
@@ -173,6 +189,7 @@ namespace Creezio.Switcher
                 sha.TransformFinalBlock(new byte[0],0,0);result.Digest=BitConverter.ToString(sha.Hash).Replace("-","").ToLowerInvariant();
                 modelSha.TransformFinalBlock(new byte[0],0,0);result.ModelDigest=BitConverter.ToString(modelSha.Hash).Replace("-","").ToLowerInvariant();result.VisibleMessages=visible.ToArray();
             }
+            if(compatibility!=null){result.DuplicateToolAnnotations=compatibility.DuplicateAnnotations;result.EmptyContextDefaults=compatibility.EmptyDefaults;}
             info.Refresh();if(info.Length!=length||info.LastWriteTimeUtc!=modified)throw new InvalidOperationException("La conversation a changé pendant la préparation. Attendez la fin du travail puis réessayez.");
             return result;
         }
@@ -187,10 +204,11 @@ namespace Creezio.Switcher
             if(type=="UserMessage"){
                 var content=RelayEngine.Rows(Json.Get(item,"content")).ToArray();
                 // Never silently turn a multimodal message into text-only UI.
-                if(content.Any(c=>!new[]{"text","localImage","local_image"}.Contains(Json.Str(Json.Get(c,"type")))))throw new InvalidOperationException("Cette conversation contient une pièce jointe dont l’affichage natif ne peut pas encore être copié fidèlement.");
+                if(content.Any(c=>!new[]{"text","localImage","local_image"}.Contains(Json.Str(Json.Get(c,"type")))&&!EmbeddedImage(c)))throw new InvalidOperationException("Cette conversation contient une pièce jointe dont l’affichage natif ne peut pas encore être copié fidèlement.");
                 var paths=content.Where(c=>new[]{"localImage","local_image"}.Contains(Json.Str(Json.Get(c,"type")))).Select(c=>Json.Str(Json.Get(c,"path"))).ToArray();
-                VisibleDigest("user","",paths);
-                return new{type="user_message",message=String.Join("\n",content.Where(c=>Json.Str(Json.Get(c,"type"))=="text").Select(c=>Json.Str(Json.Get(c,"text")))),images=new string[0],local_images=paths,text_elements=new object[0]};
+                var embedded=content.Where(EmbeddedImage).Select(EmbeddedUrl).ToArray();
+                VisibleDigest("user","",paths,embedded);
+                return new{type="user_message",message=String.Join("\n",content.Where(c=>Json.Str(Json.Get(c,"type"))=="text").Select(c=>Json.Str(Json.Get(c,"text")))),images=embedded,local_images=paths,text_elements=new object[0]};
             }
             return null;
         }
@@ -306,7 +324,7 @@ namespace Creezio.Switcher
                             var originalFile=new FileInfo(choice.Path);long originalLength=originalFile.Length;DateTime originalTime=originalFile.LastWriteTimeUtc;
                             var content=RolloutSnapshot.Scan(choice.Path,thread,snapshot,token);
                             if(content.SourceMode=="paginated")await CompleteSnapshotDisplay(origin,thread,snapshot,token).ConfigureAwait(false);
-                            var prepared=RolloutSnapshot.Scan(snapshot,thread,null,token);record.Digest=prepared.Digest;record.HistoryItems=prepared.Items;record.SourceMode=content.SourceMode;record.LosslessPngEncoding=content.LosslessPngEncoding;
+                            var prepared=RolloutSnapshot.Scan(snapshot,thread,null,token);record.Digest=prepared.Digest;record.HistoryItems=prepared.Items;record.SourceMode=content.SourceMode;record.LosslessPngEncoding=content.LosslessPngEncoding;record.DuplicateToolAnnotations=content.DuplicateToolAnnotations;record.EmptyContextDefaults=content.EmptyContextDefaults;
                             var defaults=await DestinationDefaults(target,record.Folder,token).ConfigureAwait(false);record.PermissionProfile=Json.Str(Json.Get(Json.Get(defaults,"activePermissionProfile"),"id"));record.ApprovalPolicy=Json.Get(defaults,"approvalPolicy");record.ApprovalsReviewer=Json.Str(Json.Get(defaults,"approvalsReviewer"));
                             await idle(a,from,record.SourceFolder,thread,token).ConfigureAwait(false);
                             var current=RolloutSnapshot.Scan(choice.Path,thread,null,token);originalFile.Refresh();if(current.Digest!=content.Digest||originalFile.Length!=originalLength||originalFile.LastWriteTimeUtc!=originalTime)throw new InvalidOperationException("L’historique a changé. Recommencez après la fin du travail.");
@@ -377,35 +395,42 @@ namespace Creezio.Switcher
             if(!actual.SequenceEqual(expected??new string[0]))throw new InvalidOperationException("L’ordre ou le contenu des messages visibles diffère de la source. La copie reste à vérifier.");
         }
         internal static async Task<string[]> ReadVisible(IThreadProfileRpc rpc,string thread,CancellationToken token)
-        {var rows=await ReadVisibleRows(rpc,thread,token).ConfigureAwait(false);if(rows.Any(r=>r.Unsupported))throw new InvalidOperationException("Une pièce jointe de cet historique ne peut pas encore être reproduite fidèlement dans Codex.");return rows.Select(r=>RolloutSnapshot.VisibleDigest(r.Role,r.Text,r.LocalImages)).ToArray();}
-        internal sealed class VisibleRow {internal string Role,Text,Turn;internal string[] LocalImages;internal bool Unsupported;}
+        {var rows=await ReadVisibleRows(rpc,thread,token).ConfigureAwait(false);if(rows.Any(r=>r.Unsupported))throw new InvalidOperationException("Une pièce jointe de cet historique ne peut pas encore être reproduite fidèlement dans Codex.");return rows.Select(r=>RolloutSnapshot.VisibleDigest(r.Role,r.Text,r.LocalImages,r.EmbeddedImages)).ToArray();}
+        internal sealed class VisibleRow {internal string Role,Text,Turn;internal string[] LocalImages,EmbeddedImages;internal bool Unsupported;}
         private static async Task<VisibleRow[]> ReadVisibleRows(IThreadProfileRpc rpc,string thread,CancellationToken token)
         {
             var actual=new List<VisibleRow>();string cursor=null;int pages=0;
             do{
-                var page=await rpc.Call("thread/items/list",new{threadId=thread,limit=100,cursor=cursor,sortDirection="asc"},token).ConfigureAwait(false);
+                var page=await rpc.Call("thread/items/list",new{threadId=thread,limit=10,cursor=cursor,sortDirection="asc"},token).ConfigureAwait(false);
                 foreach(var row in RelayEngine.Rows(Json.Get(page,"data"))){var item=Json.Get(row,"item");string type=Json.Str(Json.Get(item,"type"));
                     if(type=="agentMessage")actual.Add(new VisibleRow{Role="assistant",Text=Json.Str(Json.Get(item,"text")),Turn=Json.Str(Json.Get(row,"turnId"))});
-                    if(type=="userMessage"){var content=RelayEngine.Rows(Json.Get(item,"content")).ToArray();actual.Add(new VisibleRow{Role="user",Text=String.Join("\n",content.Where(c=>Json.Str(Json.Get(c,"type"))=="text").Select(c=>Json.Str(Json.Get(c,"text")))),LocalImages=content.Where(c=>Json.Str(Json.Get(c,"type"))=="localImage").Select(c=>Json.Str(Json.Get(c,"path"))).ToArray(),Turn=Json.Str(Json.Get(row,"turnId")),Unsupported=content.Any(c=>!new[]{"text","localImage"}.Contains(Json.Str(Json.Get(c,"type"))))});}
+                    if(type=="userMessage"){var content=RelayEngine.Rows(Json.Get(item,"content")).ToArray();actual.Add(new VisibleRow{Role="user",Text=String.Join("\n",content.Where(c=>Json.Str(Json.Get(c,"type"))=="text").Select(c=>Json.Str(Json.Get(c,"text")))),LocalImages=content.Where(c=>new[]{"localImage","local_image"}.Contains(Json.Str(Json.Get(c,"type")))).Select(c=>Json.Str(Json.Get(c,"path"))).ToArray(),EmbeddedImages=content.Where(RolloutSnapshot.EmbeddedImage).Select(RolloutSnapshot.EmbeddedUrl).ToArray(),Turn=Json.Str(Json.Get(row,"turnId")),Unsupported=content.Any(c=>!new[]{"text","localImage","local_image"}.Contains(Json.Str(Json.Get(c,"type")))&&!RolloutSnapshot.EmbeddedImage(c))});}
                 }
-                cursor=Json.Str(Json.Get(page,"nextCursor"));if(++pages>2000)throw new InvalidOperationException("Historique trop long pour vérifier intégralement son affichage.");
+                cursor=Json.Str(Json.Get(page,"nextCursor"));if(++pages>20000)throw new InvalidOperationException("Historique trop long pour vérifier intégralement son affichage.");
             }while(cursor.Length>0);
             return actual.ToArray();
         }
         internal static async Task CompleteSnapshotDisplay(IThreadProfileRpc rpc,string thread,string snapshot,CancellationToken token)
         {
-            var prepared=RolloutSnapshot.Scan(snapshot,thread,null,token);var rows=await ReadVisibleRows(rpc,thread,token).ConfigureAwait(false);var native=rows.Select(r=>RolloutSnapshot.VisibleDigest(r.Role,r.Text,r.LocalImages)).ToArray();
+            var prepared=RolloutSnapshot.Scan(snapshot,thread,null,token);var rows=await ReadVisibleRows(rpc,thread,token).ConfigureAwait(false);var native=rows.Select(r=>RolloutSnapshot.VisibleDigest(r.Role,r.Text,r.LocalImages,r.EmbeddedImages)).ToArray();
             if(rows.Any(r=>r.Unsupported))throw new InvalidOperationException("Une pièce jointe de cet historique ne peut pas encore être reproduite fidèlement dans Codex.");
-            if(prepared.VisibleMessages.Length>0){if(!prepared.VisibleMessages.SequenceEqual(native))throw new InvalidOperationException("L’affichage enregistré diffère de l’historique natif. Aucun import incomplet n’a été lancé.");return;}
-            if(rows.Length==0)return;
+            if(prepared.VisibleMessages.SequenceEqual(native))return;
+            if(prepared.VisibleMessages.Length>0){
+                // Older forks can contain a partial legacy transcript alongside
+                // the complete paginated transcript. Replace only display events
+                // in this private snapshot; the native source UI is authoritative.
+                string temp=snapshot+".display-tmp";SafeFiles.RejectLinks(temp);bool owned=false;
+                try{using(var reader=new StreamReader(snapshot))using(var output=new FileStream(temp,FileMode.CreateNew,FileAccess.Write,FileShare.None)){owned=true;using(var writer=new StreamWriter(output,new UTF8Encoding(false))){string line;while((line=reader.ReadLine())!=null){token.ThrowIfCancellationRequested();var entry=RolloutSnapshot.ReadRollout(line);string kind=Json.Str(Json.Get(Json.Get(entry,"payload"),"type"));if(Json.Str(Json.Get(entry,"type"))=="event_msg"&&(kind=="user_message"||kind=="agent_message"))continue;writer.WriteLine(line);}}}File.Replace(temp,snapshot,null);}
+                finally{if(owned&&File.Exists(temp))File.Delete(temp);}
+            }
             // Recent Desktop releases store display messages only in SQLite. Rebuild
             // them in the private snapshot, retaining their order and turn grouping.
             using(var writer=new StreamWriter(snapshot,true,new UTF8Encoding(false))){
                 string turn=null;foreach(var row in rows){token.ThrowIfCancellationRequested();string next=String.IsNullOrEmpty(row.Turn)?"switcher-import":row.Turn;
                     if(next!=turn){if(turn!=null)writer.WriteLine(Json.Write(new{type="event_msg",timestamp=DateTime.UtcNow.ToString("o"),payload=new{type="task_complete",turn_id=turn}}));turn=next;writer.WriteLine(Json.Write(new{type="event_msg",timestamp=DateTime.UtcNow.ToString("o"),payload=new{type="task_started",turn_id=turn,model_context_window=258400}}));}
-                    object display=row.Role=="user"?(object)new{type="user_message",message=row.Text,images=new string[0],local_images=row.LocalImages??new string[0],text_elements=new object[0]}:new{type="agent_message",message=row.Text,phase="final_answer"};writer.WriteLine(Json.Write(new{type="event_msg",timestamp=DateTime.UtcNow.ToString("o"),payload=display}));
+                    object display=row.Role=="user"?(object)new{type="user_message",message=row.Text,images=row.EmbeddedImages??new string[0],local_images=row.LocalImages??new string[0],text_elements=new object[0]}:new{type="agent_message",message=row.Text,phase="final_answer"};writer.WriteLine(RolloutSnapshot.DisplayLine(new{type="event_msg",timestamp=DateTime.UtcNow.ToString("o"),payload=display}));
                 }
-                writer.WriteLine(Json.Write(new{type="event_msg",timestamp=DateTime.UtcNow.ToString("o"),payload=new{type="task_complete",turn_id=turn}}));
+                if(turn!=null)writer.WriteLine(Json.Write(new{type="event_msg",timestamp=DateTime.UtcNow.ToString("o"),payload=new{type="task_complete",turn_id=turn}}));
             }
             if(RolloutSnapshot.Scan(snapshot,thread,null,token).ModelDigest!=prepared.ModelDigest)throw new InvalidOperationException("La reconstruction de l’affichage a changé le contexte modèle.");
         }
