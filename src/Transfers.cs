@@ -88,7 +88,7 @@ namespace Creezio.Switcher
                         token.ThrowIfCancellationRequested();Identity(r);
                         if(item.Target==null){
                             if(await backend.Fingerprint(r.Request.Source,item.Source,true,token).ConfigureAwait(false)!=item.Digest)throw new InvalidOperationException("Une conversation source a changé depuis la préparation. Créez une nouvelle opération pour inclure ses nouveaux messages.");
-                            Report(r,"copying","Copie vérifiée "+(Array.IndexOf(r.Items,item)+1)+" / "+r.Items.Length+" · "+item.Title,progress);
+                            Report(r,"copying","Copie et vérification "+(Array.IndexOf(r.Items,item)+1)+" / "+r.Items.Length+" · "+item.Title,progress);
                             var copy=await backend.Copy(r,item,token).ConfigureAwait(false);if(copy.State!="completed")throw new InvalidOperationException(copy.Message??"La copie reste à vérifier.");
                             item.Target=copy.TargetThread;item.TargetDigest=await backend.Fingerprint(r.Request.Destination,item.Target,false,token).ConfigureAwait(false);Save(r);
                         }

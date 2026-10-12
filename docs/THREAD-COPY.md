@@ -31,7 +31,7 @@ Les partages du tunnel se configurent séparément dans **Ressources & accès**.
   de son journal complet en mode `legacy`, dans un instantané temporaire privé.
   Les bases SQLite et fichiers d’authentification ne sont jamais copiés.
 - Les messages paginés récents sont adaptés au journal de reprise pour
-  conserver leurs textes visibles. Le processus d’import est ensuite fermé,
+  conserver leurs textes visibles et leurs images locales. Le processus d’import est ensuite fermé,
   et la commande native `migrate-rollouts --apply --thread <nouvel-id>` prépare
   le format paginé attendu par Codex. Elle ne vise que la copie. Un verrou,
   un outil absent ou une conversion refusée laisse l’opération à vérifier.
@@ -51,18 +51,34 @@ Les partages du tunnel se configurent séparément dans **Ressources & accès**.
   ne lance aucun tour de modèle et n’exécute aucun ancien appel d’outil.
 - Les contenus de modèle, compactages et messages visibles sont comparés
   par empreinte SHA-256, dans l’ordre, avant conversion. Après conversion,
-  le contexte de modèle est comparé de nouveau et chaque texte de conversation
+  le contexte de modèle est comparé de nouveau et chaque message de conversation
   est recherché dans toutes les pages de `thread/items/list`, l’API de
   l’interface native. Les cartes techniques et de raisonnement peuvent être
   présentées différemment par le convertisseur Codex. Seuls les identifiants de messages
   régénérés et les champs de pièces jointes vides ajoutés par Codex sont
-  normalisés. Les identifiants d’appels d’outils restent vérifiés.
+  normalisés. Les identifiants d’appels d’outils restent vérifiés. Les images
+  locales sont comparées par chemin et SHA-256 du fichier, dans l’ordre.
+- À la reprise d’un tour interrompu, Codex peut ajouter son avertissement
+  `turn_aborted`. L’import accepte uniquement son texte et sa balise native
+  exacts, en dernière position du contexte, suivis de l’événement d’interruption.
+  Le reste de l’historique doit correspondre intégralement. Cet avertissement
+  est conservé et inclus dans la vérification après migration ; aucun autre
+  message développeur n’est exclu de la comparaison.
 - Une copie dont le contenu diffère est conservée pour examen et signalée
   comme non vérifiée ; elle n’est pas ouverte automatiquement.
-- Limites actuelles : journal de 256 Mio et élément JSON de 4 Mio maximum.
+- Limites actuelles : journal de 512 Mio et élément JSON de 32 Mio maximum.
+  Cette limite JSON plus grande est réservée à la lecture des journaux d’import ;
+  les réglages et requêtes du relais conservent leur limite habituelle.
+  Le convertisseur Codex qualifié omet les lignes de 16 Mio ou plus. Dans
+  l’instantané privé, les PNG encodés de ces lignes sont recompressés sans perte :
+  données raster décompressées, filtrage et tous les autres blocs PNG doivent
+  rester identiques. Aucun pixel, texte ou métadonnée n’est retiré et les fichiers
+  d’image d’origine restent inchangés. L’historique encodé ainsi préparé est
+  ensuite comparé intégralement au résultat natif par SHA-256. Si une ligne
+  reste trop grande, l’import est refusé avant création de la conversation.
   Les messages paginés multimodaux dont l’affichage n’est pas pris en charge
   sont refusés avant création ; ils ne sont pas silencieusement amputés.
-  Les images locales des anciens journaux doivent encore exister. Les fichiers restent
+  Les images locales, anciennes ou paginées, doivent encore exister. Les fichiers restent
   référencés sur ce PC, sans transport ni réparation automatique de pièces
   jointes. Des pièces jointes cloud peuvent rester inaccessibles à la cible.
 - Le journal d’opération est chiffré avec Windows DPAPI. L’instantané de

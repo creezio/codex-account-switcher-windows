@@ -47,3 +47,13 @@ Codex peut déplacer les messages d’affichage du journal JSONL vers SQLite à 
 - Les comptes authentifiés ont été vérifiés séparément par `account/read` et comparés aux comptes permanents des instances. Aucun tour de modèle n’a été lancé pendant ces imports ; ce contrôle ne mesure pas la facturation d’un futur tour.
 
 Les essais réels ont utilisé uniquement des conversations fictives créées pour la recette. L’instance principale et les discussions existantes ont été préservées. Les adaptateurs d’index et d’historique restent dépendants de la version de Codex : un format non reconnu suspend l’opération plutôt que d’annoncer une migration réussie.
+
+## Complément 0.14.1 : historiques volumineux et images
+
+- 411 tests moteur sur chaque runtime et 158 contrôles WPF, avec compilation sans avertissement.
+- Clonage autorisé d’un projet existant avec deux discussions et un dossier commun ; environ 538 Mio d’historiques et 24 images locales. Comptes de source et de destination vérifiés séparément ; aucune discussion originale archivée ni fichier de projet dupliqué.
+- Le premier journal dépasse l’ancienne limite de 256 Mio. Le second contient cinq blocs de contexte dépassant la limite native de 16 Mio par ligne. Leur import utilise une recompression PNG sans perte dans le seul instantané privé ; les fichiers d’origine restent inchangés.
+- Vérification indépendante du contexte : les 1 428 éléments de modèle et six blocs de compactage du second historique sont conservés, avec données raster et métadonnées PNG identiques. Le seul élément ajouté est l’avertissement natif d’un tour interrompu. L’interface native conserve les textes et les images, dans l’ordre.
+- L’import initial dont la conversion avait omis du contexte a été remplacé, puis archivé uniquement dans la destination après validation complète. Les originaux et la première copie vérifiée ont été préservés. Les preuves contenant les identifiants réels restent locales.
+
+Les limites de lecture et du convertisseur, ainsi que les refus avant création pour les contenus trop grands qui ne peuvent pas être recompressés sans perte, sont détaillés dans [THREAD-COPY.md](THREAD-COPY.md).
