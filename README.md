@@ -3,10 +3,16 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.14.2-beta.1 — conversations et projets entre instances.** Windows 10/11 x64, interface en
+**Version 0.15.0-beta.1 — performances par instance, conversations et projets.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
+
+Le nouvel écran **Performances** regroupe la RAM, le CPU et les processus Windows
+par instance et par compte. Il permet d’inspecter les PID et rôles, de vérifier
+l’activité des chats, puis de fermer ou redémarrer une instance gérée après
+confirmation et contrôle complet. Les processus non attribués restent distincts.
+[Fonctionnement et limites des mesures](docs/PERFORMANCE-DASHBOARD.md).
 · [Versions et téléchargements](https://github.com/creezio/codex-account-switcher-windows/releases)
 · [Plan de réalisation](docs/PLAN.md)
 · [Validation](docs/VALIDATION.md)
@@ -399,10 +405,10 @@ pas déplacés ni supprimés.
 Depuis PowerShell à la racine du dépôt :
 
 ```powershell
-.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.14.2-beta.1
+.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.15.0-beta.1
 .\scripts\test.ps1 -TestDirectory work\framework-validation
 dotnet run --project tests\Core.Net10.csproj -c Release -- work\net10-validation
-.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.14.2-beta.1
+.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.15.0-beta.1
 ```
 
 La compilation de l'interface exige le SDK .NET 10 ; le moteur utilise le

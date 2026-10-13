@@ -11,7 +11,7 @@ using System.Windows.Threading;
 
 namespace Creezio.Switcher.Desktop
 {
-    internal static class DesktopTests
+    internal static partial class DesktopTests
     {
         private sealed class PluginFixtureConnection:IToolTunnelConnection
         {
@@ -195,6 +195,7 @@ namespace Creezio.Switcher.Desktop
                         Capture(shell, Path.Combine(root, page + ".png"));
                     }
                     var shared=(ToolSharingPage)shell.Pages["Outils partagés"];
+                    await PerformanceAcceptance(context,shell,toolOwner.Id,root,assert);
                     shell.Navigate("Outils partagés");await shared.Refresh();shell.UpdateLayout();
                     assert(shared.List.Items.Count==1&&Descendants(shared).OfType<TextBlock>().Any(t=>t.Text.Contains("page_demo")),"outils partagés affichent le propriétaire et la ressource autorisée");
                     var inspectShare=shell.Dispatcher.BeginInvoke(new Action(()=>{

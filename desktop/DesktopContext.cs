@@ -11,6 +11,7 @@ namespace Creezio.Switcher.Desktop
         internal readonly string Root;
         internal readonly RelayStore Store;
         internal readonly bool Fixture;
+        internal string InitialPage="Accueil";
         internal LoginBrowser[] LoginBrowsersFixture;
         internal Func<Action<string>,CancellationToken,Task<string>> LoginAuthFixture;
         internal Action<LoginBrowserTarget,string> LoginOpenFixture;
@@ -19,6 +20,35 @@ namespace Creezio.Switcher.Desktop
         internal Func<DesktopInstance,InstanceState> InstanceStateFixture;
         internal Func<string,Task<string>> InstanceWindowFixture;
         internal Func<string,bool,InstanceState,Task<string>> InstanceLifecycleFixture;
+        internal Func<ResourceSnapshot> ResourceSnapshotFixture;
+        internal Func<string,Task<ResourceActivity>> ResourceActivityFixture;
+        private readonly ProcessResources resourceMonitor=new ProcessResources();
+        internal async Task<ResourceSnapshot> Resources()
+        {
+            if(Fixture)return ResourceSnapshotFixture?.Invoke()??new ResourceSnapshot{Captured=DateTime.UtcNow,Groups=new ResourceGroup[0],Unassigned=new ResourceProcess[0]};
+            return await Read(a=>{
+                var scopes=a.Data.Instances.Where(i=>!i.Archived).Select(i=>new ResourceScope{Id=i.Id,Name=i.Name,Primary=i.IsLocal,Managed=!i.IsLocal,Home=a.Instances.Home(i),Account=a.Data.Profiles.Where(p=>p.Key==i.AccountKey).Select(p=>p.Email).FirstOrDefault()??"Compte non associé",State=InstanceState(a,i)}).ToList();
+                using(var self=System.Diagnostics.Process.GetCurrentProcess())scopes.Add(new ResourceScope{Id="switcher",Name="Account Switcher",Account="Application de gestion",State=new InstanceState{Running=true,DesktopPid=self.Id,DesktopStartTicks=self.StartTime.ToUniversalTime().Ticks,Phase="running"}});
+                return resourceMonitor.Capture(scopes.ToArray());
+            });
+        }
+        internal async Task<ResourceActivity> ResourceActivity(string id)
+        {
+            if(Fixture)return await (ResourceActivityFixture?.Invoke(id)??Task.FromResult(new ResourceActivity()));
+            try{
+                var target=await Read(a=>new {Accounts=a,Instance=a.Data.Instances.Single(i=>i.Id==id&&!i.Archived)});
+                using(var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(5))){
+                    var channel=await NamedInstances.Connect(Store,target.Accounts,target.Instance,Environment.CurrentDirectory,deadline.Token);
+                    var listed=await new DesktopRelayTransport().Call(channel,"list_threads",new{limit=50},deadline.Token);
+                    return Creezio.Switcher.ResourceActivity.FromSidebar(listed);
+                }
+            }catch(Exception e){return new ResourceActivity{Checked=DateTime.UtcNow,Message="Activité non vérifiable : "+Program.SafeError(e)};}
+        }
+        internal async Task RequireIdleResourceInstance(string id)
+        {
+            if(Fixture){var activity=await ResourceActivity(id);if(activity.State!="visible_idle")throw new InvalidOperationException("Un chat travaille ou son activité n’est pas vérifiable.");return;}
+            using(var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(30)))await new TransferBackend(Store).RequireIdleInstance(id,deadline.Token);
+        }
         internal async Task<string> CloseOrRestartInstance(string id,bool restart,InstanceState expected)
         {
             if(Fixture)return await (InstanceLifecycleFixture?.Invoke(id,restart,expected)??Task.FromException<string>(new InvalidOperationException("Gestion non configurée dans cette recette.")));

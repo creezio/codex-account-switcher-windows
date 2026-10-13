@@ -59,7 +59,7 @@ namespace Creezio.Switcher.Desktop
             var footer = new StackPanel { Margin = new Thickness(8, 14, 0, 0) };
             footer.Children.Add(status);
             advancedNavigation = Ui.Check("Réglages avancés", context.Store.ReadRecord<AppearanceSettings>("appearance.dpapi").Advanced, footer);
-            footer.Children.Add(Ui.Text(RelayWorker.Version+" · Instances & plugins", 11, true));
+            footer.Children.Add(Ui.Text(RelayWorker.Version+" · Instances & performances", 11, true));
             DockPanel.SetDock(footer, Dock.Bottom);
             side.Children.Add(footer);
             side.Children.Add(Navigation);
@@ -68,6 +68,7 @@ namespace Creezio.Switcher.Desktop
             Pages.Add("Accueil", new HomePage(context, this));
             Pages.Add("Comptes", new AccountsPage(context, this));
             Pages.Add("Instances", new InstancesPage(context, this));
+            Pages.Add("Performances", new PerformancePage(context, this));
             Pages.Add("Outils partagés", new ToolSharingPage(context, this));
             Pages.Add("Agents", new ConfigurationPage(context, this, true));
             Pages.Add("Projets", new ConfigurationPage(context, this, false));
@@ -155,7 +156,7 @@ namespace Creezio.Switcher.Desktop
                 if (tray != null)
                     tray.Dispose();
             };
-            Loaded += async delegate { Navigate("Accueil"); Theme(context.Store.ReadRecord<AppearanceSettings>("appearance.dpapi").Theme); if (!context.Fixture) { refreshTimer.Start(); usageTimer.Start(); try { var initial = await context.Read(a => a.Data.Profiles.Where(p => p.ResetAttempt != null).Select(p => p.ResetAttempt.IdempotencyKey).ToArray()); foreach (string id in initial) notified.Add(id); await context.Initialize(); await Supervise(); } catch (Exception e) { status.Text = Program.SafeError(e); } } };
+            Loaded += async delegate { Navigate(Pages.ContainsKey(context.InitialPage)?context.InitialPage:"Accueil"); Theme(context.Store.ReadRecord<AppearanceSettings>("appearance.dpapi").Theme); if (!context.Fixture) { refreshTimer.Start(); usageTimer.Start(); try { var initial = await context.Read(a => a.Data.Profiles.Where(p => p.ResetAttempt != null).Select(p => p.ResetAttempt.IdempotencyKey).ToArray()); foreach (string id in initial) notified.Add(id); await context.Initialize(); await Supervise(); } catch (Exception e) { status.Text = Program.SafeError(e); } } };
         }
         internal void Navigate(string page)
         {
@@ -163,7 +164,7 @@ namespace Creezio.Switcher.Desktop
             Navigation.SelectedItem = page;
         }
         private void UpdateNavigation()
-        { Navigation.ItemsSource = new[]{"Accueil","Instances","Tâches","Assistance","PC distants","Comptes","Outils partagés","Agents","Projets","Paramètres"}.Where(p=>advancedNavigation.IsChecked==true||!AdvancedPages.Contains(p)).ToArray(); }
+        { Navigation.ItemsSource = new[]{"Accueil","Instances","Performances","Tâches","Assistance","PC distants","Comptes","Outils partagés","Agents","Projets","Paramètres"}.Where(p=>advancedNavigation.IsChecked==true||!AdvancedPages.Contains(p)).ToArray(); }
         internal void ExitForTest()
         {
             exit = true;
@@ -172,6 +173,7 @@ namespace Creezio.Switcher.Desktop
         private async Task RefreshCurrent()
         {
             string page = CurrentPage;
+            if(page=="Performances"&&!IsVisible)return;
             if (page == null || !refreshing.Add(page))
                 return;
             try

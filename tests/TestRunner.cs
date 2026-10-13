@@ -52,6 +52,7 @@ internal static class TestRunner
             ResetTests.RunAll(Check);
             LoginBrowserTests.RunAll(Check,sandbox);
             InstanceTests.RunAll(Check,sandbox,a,b);
+            ProcessResourceTests.RunAll(Check);
             SimpleWorkflowTests.RunAll(Check,sandbox,a,b);
             ThreadCopyTests.RunAll(Check,sandbox,a,b);
             TransferTests.RunAll(Check,sandbox);

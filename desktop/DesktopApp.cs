@@ -45,7 +45,7 @@ namespace Creezio.Switcher.Desktop
                 try
                 {
                     var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Creezio", "CodexAccountSwitcher");
-                    return app.Run(new ShellWindow(new DesktopContext(root)));
+                    return app.Run(new ShellWindow(new DesktopContext(root){InitialPage=args.Length==1&&args[0]=="--performances"?"Performances":"Accueil"}));
                 }
                 catch (Exception e) { MessageBox.Show(Program.SafeError(e), "Démarrage du switcher", MessageBoxButton.OK, MessageBoxImage.Error); return 1; }
             }
