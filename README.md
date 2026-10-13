@@ -3,10 +3,15 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.16.0-beta.1 — tableau de bord repensé, conversations et projets.** Windows 10/11 x64, interface en
+**Version 0.16.1-beta.1 — lancements fiables et récupération des temporaires.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
+
+Cette version corrige les lancements bloqués par un temporaire d’état abandonné.
+Elle récupère les fichiers orphelins identifiables, respecte les hôtes encore
+actifs et affiche l’étape ainsi que le code Windows réel en cas d’échec.
+[Récupération et diagnostics de lancement](docs/STARTUP-RECOVERY.md).
 
 L’écran **Performances** conserve un sélecteur d’instances à côté du détail du
 compte choisi. **Vue d’ensemble** résume les familles de processus et les plus
@@ -409,10 +414,10 @@ pas déplacés ni supprimés.
 Depuis PowerShell à la racine du dépôt :
 
 ```powershell
-.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.16.0-beta.1
+.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.16.1-beta.1
 .\scripts\test.ps1 -TestDirectory work\framework-validation
 dotnet run --project tests\Core.Net10.csproj -c Release -- work\net10-validation
-.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.16.0-beta.1
+.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.16.1-beta.1
 ```
 
 La compilation de l'interface exige le SDK .NET 10 ; le moteur utilise le

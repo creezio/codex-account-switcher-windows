@@ -94,6 +94,7 @@ namespace Creezio.Switcher.Desktop
                 var close=Ui.AsyncButton("Fermer",()=>ManageInstance(info,"close"),Error);close.IsEnabled=restart.IsEnabled;lifecycle.Children.Add(close);
             }
             if(!busy&&state.Running&&!state.WindowReady)lifecycle.Children.Add(Ui.Text(state.Phase=="background"?"La fenêtre est fermée ; Codex fonctionne encore en arrière-plan.":state.Message??state.Caption,12,true));
+            if(!busy&&!state.Running&&state.Phase=="error")lifecycle.Children.Add(Ui.Text(state.Message??"Le lancement a échoué. Réessayez ou consultez le diagnostic.",12,true));
         }
         private async Task ManageInstance(Info info,string action)
         {

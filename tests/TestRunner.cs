@@ -23,6 +23,7 @@ internal static class TestRunner
     private static string Folder(string name) {string path=Path.Combine(sandbox,name);Directory.CreateDirectory(path);return path;}
     public static int Main(string[] args)
     {
+        if(args.Length==2&&args[0]=="--atomic-crash")return StartupRecoveryTests.Crash(Path.GetFullPath(args[1]));
         sandbox=Path.GetFullPath(args.Length>0?args[0]:"work\\tests");
         if(Directory.Exists(sandbox) && Directory.GetFileSystemEntries(sandbox).Length>0) {Console.Error.WriteLine("Test directory must be empty.");return 2;}
         Directory.CreateDirectory(sandbox);

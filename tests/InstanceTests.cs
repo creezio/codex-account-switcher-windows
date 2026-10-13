@@ -35,6 +35,7 @@ internal static class InstanceTests
     }
     public static void RunAll(Action<string,Action> check,string root,string a,string b)
     {
+        StartupRecoveryTests.RunAll(check,root);
         int counter=0;Func<Fixture> fixture=()=>new Fixture(Path.Combine(root,"instances-"+(counter++)),a,b);
         check("v1 migration preserves credentials, scopes and the encrypted original",delegate {
             string folder=Path.Combine(root,"legacy-instances");var vault=new Vault(folder);
@@ -97,5 +98,90 @@ internal static class InstanceTests
         });
         check("empty archived instance cannot be launched",delegate {var f=fixture();f.Manager.Archive(f.One,true);Throws(()=>f.Manager.Start(f.One,CancellationToken.None).GetAwaiter().GetResult());Assert(!f.Runtime.Open.Contains(f.One.Id),"archived instance launched");});
         check("restored legacy instance adopts its actual account before opening",delegate {var f=fixture();f.Manager.Configure(f.One,f.Alice);f.One.AccountLocked=false;f.One.AccountKey=f.Bob.Key;f.Manager.Archive(f.One,true);f.Manager.Archive(f.One,false);f.Manager.Start(f.One,CancellationToken.None).GetAwaiter().GetResult();Assert(f.One.AccountLocked&&f.One.AccountKey==f.Alice.Key&&f.Runtime.Open.Contains(f.One.Id),"restored legacy binding remained stale");});
+    }
+}
+
+internal static class StartupRecoveryTests
+{
+    private static void Assert(bool value,string reason){if(!value)throw new Exception(reason);}
+    internal static int Crash(string path)
+    {
+        using(var p=Process.GetCurrentProcess()){string nonce=Guid.NewGuid().ToString("N");long ticks=p.StartTime.ToUniversalTime().Ticks;File.WriteAllText(path+".switcher-tmp",AtomicFiles.Reservation(p.Id,ticks,nonce));File.WriteAllText(AtomicFiles.Temporary(path,p.Id,ticks,nonce),"unfinished");}
+        return 23;
+    }
+    internal static void RunAll(Action<string,Action> check,string root)
+    {
+        int index=0;Func<string> folder=()=>{string path=Path.Combine(root,"startup-recovery-"+(index++));Directory.CreateDirectory(path);return path;};
+        check("unowned legacy temporary is preserved instead of racing an older writer",()=>{
+            string path=Path.Combine(folder(),"settings.json");File.WriteAllText(path,"old");File.WriteAllText(path+".switcher-tmp","legacy");try{SafeFiles.AtomicWrite(path,Encoding.UTF8.GetBytes("new"));throw new Exception("Expected refusal");}catch(IOException e){Assert((e.HResult&0xffff)==80,"lost collision code");}Assert(File.ReadAllText(path)=="old"&&File.ReadAllText(path+".switcher-tmp")=="legacy","unsafe legacy cleanup");
+        });
+        check("dead owner temporary recovered immediately without an age heuristic",()=>{
+            string path=Path.Combine(folder(),"state.json"),temp=AtomicFiles.Temporary(path,123,1,Guid.NewGuid().ToString("N"));File.WriteAllText(path,"valid");File.WriteAllText(temp,"partial");Assert(AtomicFiles.RecoverOwned(path,(pid,ticks)=>false)==1&&!File.Exists(temp)&&File.ReadAllText(path)=="valid","partial promoted or orphan kept");
+        });
+        check("live writer and unrecognized temporary names are preserved",()=>{
+            string path=Path.Combine(folder(),"state.json");using(var self=Process.GetCurrentProcess()){
+                string live=AtomicFiles.Temporary(path,self.Id,self.StartTime.ToUniversalTime().Ticks,Guid.NewGuid().ToString("N")),unknown=path+".switcher-tmp-unknown";
+                File.WriteAllText(live,"live");File.WriteAllText(unknown,"keep");SafeFiles.AtomicWrite(path,Encoding.UTF8.GetBytes("valid"));Assert(File.ReadAllText(live)=="live"&&File.ReadAllText(unknown)=="keep","active or ambiguous file removed");
+            }
+        });
+        check("PID reuse does not make a dead owner's temporary live",()=>{
+            string path=Path.Combine(folder(),"state.json");using(var self=Process.GetCurrentProcess()){
+                string temp=AtomicFiles.Temporary(path,self.Id,1,Guid.NewGuid().ToString("N"));File.WriteAllText(temp,"orphan");Assert(AtomicFiles.RecoverOwned(path)==1&&!File.Exists(temp),"PID-only attribution");
+            }
+        });
+        check("open temporary is never deleted even when ownership is reported dead",()=>{
+            string path=Path.Combine(folder(),"state.json"),temp=AtomicFiles.Temporary(path,123,1,Guid.NewGuid().ToString("N"));File.WriteAllText(temp,"open");using(var stream=File.Open(temp,FileMode.Open,FileAccess.ReadWrite,FileShare.None)){Assert(AtomicFiles.RecoverOwned(path,(pid,ticks)=>false)==0&&File.Exists(temp),"open file removed");}
+        });
+        check("instance lease migration removes legacy temporaries without promoting partial data",()=>{
+            string path=folder(),target=Path.Combine(path,"state.json");File.WriteAllText(target,"valid");foreach(string name in new[]{"state.json","launch.json","stop.json"})File.WriteAllText(Path.Combine(path,name)+".switcher-tmp","partial");using(var lease=new InstanceLease(path))AtomicFiles.RecoverLegacyInstance(path);Assert(File.ReadAllText(target)=="valid"&&!Directory.GetFiles(path,"*.switcher-tmp").Any(),"legacy migration changed final data");
+        });
+        check("locked legacy temporary reports sharing violation and stays intact",()=>{
+            string path=folder(),temp=Path.Combine(path,"state.json.switcher-tmp");File.WriteAllText(temp,"open");using(var locked=File.Open(temp,FileMode.Open,FileAccess.ReadWrite,FileShare.None)){try{using(var lease=new InstanceLease(path))AtomicFiles.RecoverLegacyInstance(path);throw new Exception("Expected refusal");}catch(IOException e){Assert((e.HResult&0xffff)==32,"real sharing violation lost");}}Assert(File.ReadAllText(temp)=="open","legacy writer touched");
+        });
+        check("failed replacement preserves valid target and removes only its own temporary",()=>{
+            string path=Path.Combine(folder(),"state.json");File.WriteAllText(path,"old");File.SetAttributes(path,FileAttributes.ReadOnly);try{try{SafeFiles.AtomicWrite(path,Encoding.UTF8.GetBytes("new"));throw new Exception("Expected refusal");}catch(UnauthorizedAccessException){}Assert(File.ReadAllText(path)=="old"&&!Directory.GetFiles(Path.GetDirectoryName(path),".swt-*").Any(),"failure changed final data or leaked temp");}finally{File.SetAttributes(path,FileAttributes.Normal);}
+        });
+        check("concurrent atomic writers produce complete files and no leftovers",()=>{
+            string path=Path.Combine(folder(),"state.json");SafeFiles.AtomicWrite(path,Encoding.UTF8.GetBytes("initial"));Task.WaitAll(Enumerable.Range(0,8).Select(n=>Task.Run(()=>{for(int j=0;j<12;j++)SafeFiles.AtomicWrite(path,Encoding.UTF8.GetBytes(new string((char)('a'+n),2048)));})).ToArray());string final=File.ReadAllText(path);Assert(final.Length==2048&&final.All(c=>c==final[0])&&!Directory.GetFiles(Path.GetDirectoryName(path),".swt-*").Any(),"torn output or leftover");
+        });
+        check("crashed child writer is recovered across process boundaries",()=>{
+            string path=Path.Combine(folder(),"state.json");File.WriteAllText(path,"valid");string assembly=System.Reflection.Assembly.GetExecutingAssembly().Location;
+#if NETCOREAPP
+            string runtime=Directory.GetParent(Directory.GetParent(Directory.GetParent(Path.GetDirectoryName(typeof(object).Assembly.Location)).FullName).FullName).FullName;
+            var start=new ProcessStartInfo(Path.Combine(runtime,"dotnet.exe"),"\""+assembly+"\" --atomic-crash \""+path+"\""){UseShellExecute=false,CreateNoWindow=true};
+#else
+            var start=new ProcessStartInfo(assembly,"--atomic-crash \""+path+"\""){UseShellExecute=false,CreateNoWindow=true};
+#endif
+            using(var child=Process.Start(start)){Assert(child.WaitForExit(15000)&&child.ExitCode==23,"crash fixture failed");}Assert(Directory.GetFiles(Path.GetDirectoryName(path),".swt-*").Length==1,"missing crash artifact");SafeFiles.AtomicWrite(path,Encoding.UTF8.GetBytes("recovered"));Assert(File.ReadAllText(path)=="recovered"&&!Directory.GetFiles(Path.GetDirectoryName(path),".swt-*").Any(),"real orphan blocked write");
+        });
+        Func<string,InstanceLaunch> request=exe=>{string instance=Guid.NewGuid().ToString("N"),baseRoot=folder(),path=InstancePaths.Folder(baseRoot,instance);Directory.CreateDirectory(path);Directory.CreateDirectory(InstancePaths.Home(baseRoot,instance));Directory.CreateDirectory(InstancePaths.UserData(baseRoot,instance));return new InstanceLaunch{Root=baseRoot,InstanceId=instance,LaunchId=Guid.NewGuid().ToString("N"),DesktopExecutable=exe,Name="Fixture"};};
+        check("host publishes the actual missing executable error before state creation",()=>{
+            var launch=request(Path.Combine(root,"absent","ChatGPT.exe"));string path=InstancePaths.Folder(launch.Root,launch.InstanceId),file=Path.Combine(path,"launch.json");SafeFiles.AtomicWrite(file,Encoding.UTF8.GetBytes(Json.Write(launch)));Assert(InstanceHost.Run(file)==1,"missing executable accepted");var error=InstanceStartup.Read(path,launch.LaunchId);Assert(error!=null&&error.ErrorType=="FileNotFoundException"&&error.ErrorCode=="0x80070002"&&error.Stage=="prepare-profile"&&InstanceStartup.Read(path,Guid.NewGuid().ToString("N"))==null,"diagnostic missing or stale");
+        });
+        check("host records state access failure even when state.json cannot be replaced",()=>{
+            string fake=Path.Combine(folder(),"ChatGPT.exe");File.WriteAllText(fake,"not executable");var launch=request(fake);string path=InstancePaths.Folder(launch.Root,launch.InstanceId),file=Path.Combine(path,"launch.json"),state=Path.Combine(path,"state.json");SafeFiles.AtomicWrite(file,Encoding.UTF8.GetBytes(Json.Write(launch)));File.WriteAllText(state,"preserve");File.SetAttributes(state,FileAttributes.ReadOnly);try{Assert(InstanceHost.Run(file)==1,"state failure accepted");var failure=InstanceStartup.Read(path,launch.LaunchId);Assert(failure!=null&&failure.Stage=="write-state"&&failure.ErrorCode=="0x80070005"&&File.ReadAllText(state)=="preserve","state failure lost or clobbered");var shown=new DesktopRuntime(launch.Root).Probe(new DesktopInstance{Id=launch.InstanceId});Assert(shown.Phase=="error"&&!shown.Running&&shown.Message.Contains("0x80070005"),"actual failure hidden by malformed status");}finally{File.SetAttributes(state,FileAttributes.Normal);}
+        });
+        check("host recovers legacy state orphan then surfaces native executable error",()=>{
+            string fake=Path.Combine(folder(),"ChatGPT.exe");File.WriteAllText(fake,"not executable");var launch=request(fake);string path=InstancePaths.Folder(launch.Root,launch.InstanceId),file=Path.Combine(path,"launch.json");SafeFiles.AtomicWrite(file,Encoding.UTF8.GetBytes(Json.Write(launch)));File.WriteAllText(Path.Combine(path,"state.json.switcher-tmp"),"orphan");Assert(InstanceHost.Run(file)==1&&!File.Exists(Path.Combine(path,"state.json.switcher-tmp")),"recovery blocked");var failure=InstanceStartup.Read(path,launch.LaunchId);Assert(failure!=null&&failure.Stage=="start-desktop"&&failure.ErrorType=="Win32Exception"&&failure.NativeErrorCode.HasValue&&failure.Message.Contains(failure.NativeErrorCode.Value.ToString()),"native CreateProcess error not reported");var state=Json.Read<InstanceState>(SafeFiles.ReadText(Path.Combine(path,"state.json")));Assert(!state.Running&&state.Phase=="error"&&state.Caption=="Échec du lancement","failure shown as stopped or starting");
+        });
+        check("launch diagnostics use trusted labels and codes without leaking exception contents",()=>{
+            var error=InstanceStartup.Failure(Guid.NewGuid().ToString("N"),"bootstrap",new InvalidOperationException("Bearer private-token user@example.com"));Assert(!Json.Write(error).Contains("private-token")&&!Json.Write(error).Contains("user@example.com")&&error.Message.Contains("InvalidOperationException"),"exception body exposed");
+        });
+        check("Windows launcher reports actual native error without stderr secrets",()=>{
+            try{DesktopRuntime.RunPowerShell("throw (New-Object ComponentModel.Win32Exception(5,'private-token user@example.com'))",CancellationToken.None).GetAwaiter().GetResult();throw new Exception("Expected refusal");}
+            catch(InstanceStartupException e){Assert(e.Result.NativeErrorCode==5&&e.Result.ErrorCode=="0x80004005"&&e.Result.Stage=="windows-launcher"&&e.Result.ExitCode==1&&!e.Message.Contains("private-token")&&!e.Message.Contains("user@example.com")&&Program.SafeError(e)==e.Message,"launcher detail lost or exposed");}
+        });
+        check("persistent launch failure is correlated to the latest request and retry clears it",()=>{
+            var launch=request(Path.Combine(root,"absent","ChatGPT.exe"));string path=InstancePaths.Folder(launch.Root,launch.InstanceId),file=Path.Combine(path,"launch.json");SafeFiles.AtomicWrite(file,Encoding.UTF8.GetBytes(Json.Write(launch)));InstanceHost.Run(file);
+            var runtime=new DesktopRuntime(launch.Root);var instance=new DesktopInstance{Id=launch.InstanceId};var failed=runtime.Probe(instance);Assert(!failed.Running&&failed.Phase=="error"&&failed.Message.Contains("0x80070002"),"failure hidden when state never created");
+            SafeFiles.AtomicWrite(Path.Combine(path,"state.json"),Encoding.UTF8.GetBytes(Json.Write(failed)));
+            launch.LaunchId=Guid.NewGuid().ToString("N");SafeFiles.AtomicWrite(file,Encoding.UTF8.GetBytes(Json.Write(launch)));var fresh=runtime.Probe(instance);Assert(!fresh.Running&&fresh.Phase=="stopped"&&fresh.Message==null&&fresh.LaunchId!=launch.LaunchId,"stale failure blocks retry or request mistaken for a host status");
+        });
+        check("timeout only says starting when the matching host is actually alive",()=>{
+            string launch=Guid.NewGuid().ToString("N");Assert(InstanceStartup.Timeout(new InstanceState{LaunchId="old",Running=true,Phase="starting"},launch).StartsWith("Échec")&&InstanceStartup.Timeout(new InstanceState{LaunchId=launch,Running=false,Phase="stopped"},launch).StartsWith("Échec")&&InstanceStartup.Timeout(new InstanceState{LaunchId=launch,Running=true,Phase="starting"},launch).Contains("L’hôte répond"),"false startup timeout");
+        });
+        check("early Codex exit records its code and diagnostics are bounded to one record",()=>{
+            string path=folder(),launch=Guid.NewGuid().ToString("N");InstanceStartup.Save(path,InstanceStartup.DesktopExit(launch,27));InstanceStartup.Save(path,InstanceStartup.Bootstrap(launch));Assert(Directory.GetFiles(path).Length==1&&InstanceStartup.Read(path,launch).ErrorType=="CodexBootstrapFailed"&&InstanceStartup.DesktopExit(launch,27).Message.Contains("27"),"unbounded history or exit code lost");
+        });
     }
 }

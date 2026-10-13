@@ -56,7 +56,7 @@ namespace Creezio.Switcher
         public bool NetworkWarning { get; set; }
         public bool Running { get; set; }
         public string AppToolsPipe { get; set; }
-        public string Caption { get { return Phase=="unknown"?"État à vérifier":Phase=="stopping"?"Fermeture en cours":!Running?"Fermée":WindowReady?"Ouverte":Phase=="starting"?"Démarrage en cours":"En arrière-plan"; } }
+        public string Caption { get { return Phase=="unknown"?"État à vérifier":Phase=="stopping"?"Fermeture en cours":Phase=="error"?"Échec du lancement":!Running?"Fermée":WindowReady?"Ouverte":Phase=="starting"?"Démarrage en cours":"En arrière-plan"; } }
     }
     public sealed class DesktopPackage
     {
@@ -117,9 +117,10 @@ namespace Creezio.Switcher
         internal static string PowerShell { get {return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe");} }
         internal static string QuotePS(string value) {return "'"+value.Replace("'","''")+"'";}
         internal static string EncodePS(string value) {return Convert.ToBase64String(Encoding.Unicode.GetBytes(value));}
-        private static async Task<string> RunPowerShell(string command,CancellationToken token)
+        internal static async Task<string> RunPowerShell(string command,CancellationToken token)
         {
-            var start=new ProcessStartInfo(PowerShell,"-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand "+EncodePS(command)) {
+            string guarded="$ErrorActionPreference='Stop'; try { "+command+" } catch { $launchFault=$_.Exception.GetBaseException(); $nativeCode=$null; if($launchFault -is [ComponentModel.Win32Exception]){$nativeCode=$launchFault.NativeErrorCode}; [Console]::Error.WriteLine(('CREEZIO_LAUNCH_ERROR='+(@{Type=$launchFault.GetType().Name;HResult=$launchFault.HResult;Native=$nativeCode}|ConvertTo-Json -Compress)));exit 1 }";
+            var start=new ProcessStartInfo(PowerShell,"-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand "+EncodePS(guarded)) {
                 UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8
             };
             using(var process=Process.Start(start)) {
@@ -129,8 +130,14 @@ namespace Creezio.Switcher
                     if(token.IsCancellationRequested || DateTime.UtcNow>deadline) {try{process.Kill();}catch{} token.ThrowIfCancellationRequested();throw new InvalidOperationException("Le lanceur Windows n'a pas répondu. Réessayez.");}
                     await Task.Delay(100,token);
                 }
-                string result=await output; await error;
-                if(process.ExitCode!=0) throw new InvalidOperationException("Windows n'a pas pu lancer le paquet Codex. Vérifiez que Codex est installé pour cet utilisateur depuis le Microsoft Store.");
+                string result=await output,details=await error;
+                if(process.ExitCode!=0) {
+                    var failure=InstanceStartup.LauncherExit(process.ExitCode);
+                    foreach(string line in details.Split('\n'))if(line.StartsWith("CREEZIO_LAUNCH_ERROR=",StringComparison.Ordinal)) {
+                        try{var info=Json.Read<Dictionary<string,object>>(line.Substring("CREEZIO_LAUNCH_ERROR=".Length));string type=Json.Str(Json.Get(info,"Type"));var hr=Json.Number(Json.Get(info,"HResult"));var native=Json.Number(Json.Get(info,"Native"));if(System.Text.RegularExpressions.Regex.IsMatch(type,"^[A-Za-z0-9_]{1,80}$")&&hr.HasValue)failure=InstanceStartup.FailureCode(null,"windows-launcher",type,(int)hr.Value,native.HasValue?(int?)native.Value:null,process.ExitCode);}catch{}
+                    }
+                    throw new InstanceStartupException(failure);
+                }
                 return result.Trim();
             }
         }
@@ -155,12 +162,28 @@ namespace Creezio.Switcher
             if(instance.IsLocal) return DesktopWindows.LocalState(root);
             string folder=InstancePaths.Folder(root,instance.Id), path=Path.Combine(folder,"state.json");
             try {
-                var state=File.Exists(path)?Json.Read<InstanceState>(SafeFiles.ReadText(path)):new InstanceState {Phase="stopped"};
                 bool held=InstanceLease.Busy(folder);
+                InstanceState state;
+                try{state=File.Exists(path)?Json.Read<InstanceState>(SafeFiles.ReadText(path)):new InstanceState {Phase="stopped"};if(state==null)throw new InvalidDataException();}
+                catch{
+                    // Only a matching failure before child creation proves a corrupt status has no live desktop.
+                    var request=Json.Read<InstanceLaunch>(SafeFiles.ReadText(Path.Combine(folder,"launch.json")));
+                    var failed=InstanceStartup.Read(folder,request.LaunchId);
+                    if(!held&&failed!=null&&new[]{"prepare-profile","recover-temporaries","write-state","start-desktop","windows-launcher"}.Contains(failed.Stage))
+                        return new InstanceState{LaunchId=request.LaunchId,Phase="error",Message=failed.Message};
+                    throw;
+                }
                 bool desktop=SameProcess(state.DesktopPid,state.DesktopStartTicks);
                 bool window=false;
                 if(desktop)using(var process=Process.GetProcessById(state.DesktopPid))window=process.MainWindowHandle!=IntPtr.Zero;
                 Reconcile(state,held,desktop,window);
+                if(!state.Running) {
+                    string launch=state.LaunchId;
+                    try{string requestPath=Path.Combine(folder,"launch.json");if(File.Exists(requestPath))launch=Json.Read<InstanceLaunch>(SafeFiles.ReadText(requestPath)).LaunchId;}catch{}
+                    var failure=InstanceStartup.Read(folder,launch);
+                    if(failure!=null){state.LaunchId=launch;state.Phase="error";state.Message=failure.Message;}
+                    else if(state.LaunchId!=launch){state.Phase="stopped";state.Message=null;}
+                }
                 return state;
             } catch {return new InstanceState {Running=true,Phase="unknown",Message="État indéterminé : aucune modification de cette instance n'est autorisée."};}
         }
@@ -202,9 +225,11 @@ namespace Creezio.Switcher
             var package=await FindPackage(token);
             string folder=InstancePaths.Folder(root,instance.Id);
             var request=new InstanceLaunch {Root=root,InstanceId=instance.Id,LaunchId=Guid.NewGuid().ToString("N"),DesktopExecutable=package.Executable,Name=instance.Name};
-            using(var lease=new InstanceLease(folder)) {
-                SafeFiles.AtomicWrite(Path.Combine(folder,"launch.json"),Encoding.UTF8.GetBytes(Json.Write(request)));
-            }
+            string preparation="acquire-instance";
+            try{using(var lease=new InstanceLease(folder)) {
+                preparation="recover-temporaries";AtomicFiles.RecoverLegacyInstance(folder);
+                preparation="write-request";SafeFiles.AtomicWrite(Path.Combine(folder,"launch.json"),Encoding.UTF8.GetBytes(Json.Write(request)));
+            }}catch(Exception error){var failure=InstanceStartup.Failure(request.LaunchId,preparation,error);throw new InvalidOperationException(failure.Message,error);}
             string host=HostExecutable();
             string hostArgs="--instance-host \""+Path.Combine(folder,"launch.json")+"\"";
             string command="$ErrorActionPreference='Stop'; Invoke-CommandInDesktopPackage -PackageFamilyName "+QuotePS(package.Family)+" -AppId "+QuotePS(package.AppId)+" -Command "+QuotePS(host)+" -Args "+QuotePS(hostArgs)+" -PreventBreakaway";
@@ -213,6 +238,8 @@ namespace Creezio.Switcher
                 var deadline=DateTime.UtcNow.AddSeconds(45);
                 while(DateTime.UtcNow<deadline) {
                     token.ThrowIfCancellationRequested();
+                    var failure=InstanceStartup.Read(folder,request.LaunchId);
+                    if(failure!=null)throw new InvalidOperationException(failure.Message);
                     var state=Probe(instance);
                     if(state.LaunchId==request.LaunchId) {
                         if(state.Phase=="error" || (!state.Running && state.Phase=="stopped")) throw new InvalidOperationException(state.Message ?? "L'instance s'est arrêtée pendant le lancement.");
@@ -220,9 +247,13 @@ namespace Creezio.Switcher
                     }
                     await Task.Delay(250,token);
                 }
-                throw new InvalidOperationException("Codex démarre encore. Son état reste visible dans Instances ; aucune autre instance n'a été fermée.");
+                throw new InvalidOperationException(InstanceStartup.Timeout(Probe(instance),request.LaunchId));
             } catch(OperationCanceledException) {
                 SafeFiles.AtomicWrite(Path.Combine(folder,"stop.json"),Encoding.UTF8.GetBytes(Json.Write(new {LaunchId=request.LaunchId})));
+                throw;
+            } catch(InstanceStartupException error) {
+                error.Result.LaunchId=request.LaunchId;
+                try{InstanceStartup.Save(folder,error.Result);}catch{}
                 throw;
             }
         }

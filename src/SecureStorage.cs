@@ -35,16 +35,7 @@ namespace Creezio.Switcher
         }
         public static void AtomicWrite(string path, byte[] data)
         {
-            RejectLinks(path);
-            string temp = path + ".switcher-tmp";
-            RejectLinks(temp);
-            bool created = false;
-            try
-            {
-                using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { created = true; stream.Write(data, 0, data.Length); stream.Flush(true); }
-                if (File.Exists(path)) File.Replace(temp, path, null); else File.Move(temp, path);
-            }
-            finally { if (created && File.Exists(temp)) File.Delete(temp); }
+            AtomicFiles.Write(path,data);
         }
         public static string ReadText(string path)
         {
