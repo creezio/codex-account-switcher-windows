@@ -3,21 +3,25 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.15.0-beta.1 — performances par instance, conversations et projets.** Windows 10/11 x64, interface en
+**Version 0.16.0-beta.1 — tableau de bord repensé, conversations et projets.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
 
-Le nouvel écran **Performances** regroupe la RAM, le CPU et les processus Windows
-par instance et par compte. Il permet d’inspecter les PID et rôles, de vérifier
-l’activité des chats, puis de fermer ou redémarrer une instance gérée après
-confirmation et contrôle complet. Les processus non attribués restent distincts.
+L’écran **Performances** conserve un sélecteur d’instances à côté du détail du
+compte choisi. **Vue d’ensemble** résume les familles de processus et les plus
+gourmands ; **Processus** propose recherche, filtres et tri numérique, dans une
+seule liste sans défilement horizontal. Le résumé du PC reste visible. En petite
+fenêtre, le sélecteur devient une liste déroulante. Les actions d’ouverture,
+de contrôle d’activité et de fermeture protégée restent accessibles.
 [Fonctionnement et limites des mesures](docs/PERFORMANCE-DASHBOARD.md).
 · [Versions et téléchargements](https://github.com/creezio/codex-account-switcher-windows/releases)
 · [Plan de réalisation](docs/PLAN.md)
 · [Validation](docs/VALIDATION.md)
 
 ![Gestion des instances, avec des comptes fictifs](assets/screenshot.png)
+
+![Tableau de bord des performances, avec des comptes fictifs](assets/performance-dashboard.png)
 
 ## Continuer une conversation dans une autre instance
 
@@ -405,10 +409,10 @@ pas déplacés ni supprimés.
 Depuis PowerShell à la racine du dépôt :
 
 ```powershell
-.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.15.0-beta.1
+.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.16.0-beta.1
 .\scripts\test.ps1 -TestDirectory work\framework-validation
 dotnet run --project tests\Core.Net10.csproj -c Release -- work\net10-validation
-.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.15.0-beta.1
+.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.16.0-beta.1
 ```
 
 La compilation de l'interface exige le SDK .NET 10 ; le moteur utilise le

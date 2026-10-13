@@ -700,7 +700,7 @@ namespace Creezio.Switcher.Desktop
             var content = (FrameworkElement)window.Content;
             var target = new RenderTargetBitmap((int)Math.Ceiling(content.ActualWidth * scale), (int)Math.Ceiling(content.ActualHeight * scale), 96 * scale, 96 * scale, PixelFormats.Pbgra32);
             var drawing = new DrawingVisual();
-            using(var dc=drawing.RenderOpen()) dc.DrawRectangle(new VisualBrush(content),null,new Rect(0,0,content.ActualWidth,content.ActualHeight));
+            using(var dc=drawing.RenderOpen()) dc.DrawRectangle(new VisualBrush(content){ViewboxUnits=BrushMappingMode.Absolute,Viewbox=new Rect(0,0,content.ActualWidth,content.ActualHeight),Stretch=Stretch.Fill},null,new Rect(0,0,content.ActualWidth,content.ActualHeight));
             target.Render(drawing);
             var encoder = new PngBitmapEncoder();
             encoder.Frames.Add(BitmapFrame.Create(target));

@@ -49,6 +49,7 @@ namespace Creezio.Switcher.Desktop
             root.ColumnDefinitions.Add(new ColumnDefinition());
             Content = root;
             Navigation.SetResourceReference(Control.BackgroundProperty, "CanvasBrush");
+            Navigation.ItemTemplate = NavigationGlyph.Template();
             var side = new DockPanel { Margin = new Thickness(14, 22, 12, 14) };
             root.Children.Add(side);
             var brand = new StackPanel { Margin = new Thickness(12, 0, 0, 28) };
