@@ -110,7 +110,7 @@ namespace Creezio.Switcher
             socket.Options.SetRequestHeader("originator", "creezio_account_switcher");
 #if NETCOREAPP
             Stage = "header-user-agent";
-            socket.Options.SetRequestHeader("User-Agent", "creezio-switcher-cloud-prototype/0.17.0-beta.2");
+            socket.Options.SetRequestHeader("User-Agent", "creezio-switcher-cloud-prototype/0.17.1-beta.1");
 #endif
             socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(20);
 #if !NETCOREAPP
@@ -351,7 +351,7 @@ namespace Creezio.Switcher
                 var identity = Current();
                 await transport.Connect(identity.AccessToken, binding.AccountId, token).ConfigureAwait(false); Current();
                 string id = NextId();
-                await transport.Send(Json.Write(new { id = id, method = "initialize", @params = new { clientInfo = new { name = "creezio_account_switcher", title = "Creezio Account Switcher", version = "0.17.0-beta.2" }, capabilities = new { experimentalApi = true, requestAttestation = false } } }), token).ConfigureAwait(false);
+                await transport.Send(Json.Write(new { id = id, method = "initialize", @params = new { clientInfo = new { name = "creezio_account_switcher", title = "Creezio Account Switcher", version = "0.17.1-beta.1" }, capabilities = new { experimentalApi = true, requestAttestation = false } } }), token).ConfigureAwait(false);
                 var result = await Receive(id, token).ConfigureAwait(false);
                 if (String.IsNullOrWhiteSpace(Optional(result, "userAgent"))) throw Incompatible();
                 await transport.Send(Json.Write(new { method = "initialized", @params = new { } }), token).ConfigureAwait(false); Current();

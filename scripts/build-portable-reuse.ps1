@@ -2,17 +2,50 @@
 param(
   [string]$OutputDirectory,
   [string]$RuntimeDirectory,
-  [string]$RuntimeVersion='10.0.12'
+  [string]$RuntimeVersion='10.0.12',
+  [switch]$ResumeIncomplete
 )
 $ErrorActionPreference='Stop'
+
+function Assert-IncompleteApplicationDirectory([string]$Directory) {
+  if(Test-Path -LiteralPath (Join-Path $Directory 'RUNTIME-SHARED.json')){throw 'Cette livraison possède déjà un runtime partagé ; aucune reprise autorisée.'}
+  $applicationNames=@('CodexAccountSwitcher.exe','CodexAccountSwitcher.exe.config','CodexAccountSwitcher.dll','CodexAccountSwitcher.deps.json','CodexAccountSwitcher.runtimeconfig.json','CodexAccountSwitcher.pdb','CreezioRelay.exe','CreezioRelay.exe.config')
+  $pending=[Collections.Generic.Stack[string]]::new()
+  $pending.Push($Directory)
+  while($pending.Count){
+    $current=$pending.Pop()
+    $directoryInfo=Get-Item -LiteralPath $current -Force
+    if(-not $directoryInfo.PSIsContainer -or ($directoryInfo.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'La reprise refuse les liens, jonctions et destinations non répertoires.'}
+    foreach($child in Get-ChildItem -LiteralPath $current -Force){
+      if($child.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'La reprise refuse tout lien ou jonction descendant.'}
+      if($current -eq $Directory){
+        if($child.PSIsContainer){if($child.Name -ne 'plugins'){throw "Sous-dossier inattendu dans la compilation partielle : $($child.Name)"}}
+        elseif($child.Name -notin $applicationNames){throw "Fichier non applicatif dans la compilation partielle : $($child.Name)"}
+      }
+      if($child.PSIsContainer){$pending.Push($child.FullName)}
+    }
+  }
+  $busy=@(Get-CimInstance Win32_Process | Where-Object {
+    $_.ProcessId -ne $PID -and
+      (($_.ExecutablePath -and $_.ExecutablePath.StartsWith($Directory+'\',[StringComparison]::OrdinalIgnoreCase)) -or
+       ($_.CommandLine -and $_.CommandLine.IndexOf($Directory,[StringComparison]::OrdinalIgnoreCase) -ge 0))
+  })
+  if($busy.Count){throw 'La compilation partielle est référencée par un processus actif ; reprise refusée.'}
+}
+
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-if(-not $OutputDirectory){$OutputDirectory=Join-Path $repo 'outputs\v0.17.0-beta.2'}
+if(-not $OutputDirectory){$OutputDirectory=Join-Path $repo 'outputs\v0.17.1-beta.1'}
 if(-not $RuntimeDirectory){$RuntimeDirectory=Join-Path $repo 'outputs\v0.16.1-beta.1'}
 $target=[IO.Path]::GetFullPath($OutputDirectory).TrimEnd('\')
 $source=[IO.Path]::GetFullPath($RuntimeDirectory).TrimEnd('\')
 $outputs=[IO.Path]::GetFullPath((Join-Path $repo 'outputs')).TrimEnd('\')+'\'
 if(-not $target.StartsWith($outputs,[StringComparison]::OrdinalIgnoreCase) -or $target -eq $source){throw 'La nouvelle livraison doit être un dossier distinct dans outputs.'}
-if(Test-Path -LiteralPath $target){throw 'Le dossier de livraison existe déjà. Ne pas republier sur des fichiers de runtime partagés.'}
+if(Test-Path -LiteralPath $target){
+  if(-not $ResumeIncomplete){throw 'Le dossier de livraison existe déjà. Ne pas republier sur des fichiers de runtime partagés. -ResumeIncomplete exige une compilation applicative incomplète sans runtime ni processus actif.'}
+  # A failed app-only publish may leave independent binaries. Reuse these files
+  # without deleting the directory or ever accepting a previously linked runtime.
+  Assert-IncompleteApplicationDirectory $target
+}
 if([IO.Path]::GetPathRoot($target) -ne [IO.Path]::GetPathRoot($source)){throw 'Les liens physiques exigent le même volume.'}
 if(-not(Test-Path -LiteralPath $source -PathType Container)){throw 'Runtime portable existant introuvable.'}
 if((Get-Item -LiteralPath $source).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Le runtime source ne doit pas être une jonction.'}

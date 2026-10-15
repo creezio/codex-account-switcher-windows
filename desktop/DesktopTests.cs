@@ -49,7 +49,7 @@ namespace Creezio.Switcher.Desktop
         }
         private static async Task InstanceActions(DesktopContext context,ShellWindow shell,InstancesPage instances,InstanceResourcesView resources,DesktopInstance owner,DesktopInstance client,string root,Action<bool,string> assert)
         {
-            Button RenameButton()=>Descendants(instances).OfType<Button>().Single(b=>Object.Equals(b.Content,"Renommer l’instance"));
+            MenuItem RenameButton()=>instances.ActionsMenu.Items.OfType<MenuItem>().Single(item=>Object.Equals(item.Header,"Renommer l’instance"));
             Button VerifyButton(){instances.UpdateLayout();return Descendants(instances).OfType<Button>().Single(b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Vérifier l’intégration");}
             TextBlock Result()=>Descendants(instances).OfType<TextBlock>().Single(t=>System.Windows.Automation.AutomationProperties.GetName(t)=="Résultat de la vérification");
             async Task RenameTo(string value,bool validate)
@@ -68,7 +68,7 @@ namespace Creezio.Switcher.Desktop
                         input.Text=value;Capture(form,Path.Combine(root,"Renommer-instance.png"));form.SaveButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>form.Saved);done.SetResult(true);
                     }catch(Exception e){done.SetException(e);}finally{if(form!=null&&!form.Saved){form.ConfirmDiscard=()=>true;form.Close();}}
                 }),DispatcherPriority.ContextIdle);
-                RenameButton().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await done.Task;
+                RenameButton().RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));await done.Task;
                 await Until(()=>instances.List.Items.Cast<ItemRow>().Any(r=>r.Id==owner.Id&&r.Title==value.Trim()));shell.UpdateLayout();
             }
             var before=await context.Read(a=>new{Home=a.Instances.Home(a.Data.Instances.Single(i=>i.Id==owner.Id)),Account=a.Data.Instances.Single(i=>i.Id==owner.Id).AccountKey});
@@ -76,7 +76,7 @@ namespace Creezio.Switcher.Desktop
             var renamed=new AccountService(context.Root);var saved=renamed.Data.Instances.Single(i=>i.Id==owner.Id);
             assert(saved.Name=="Atelier renommé"&&saved.AccountKey==before.Account&&renamed.Instances.Home(saved)==before.Home,"renommage persistant conserve le compte et le dossier");
             assert(resources.Dirty&&ReferenceEquals(resources,Descendants(instances).OfType<InstanceResourcesView>().Single())&&Descendants(instances).OfType<TextBlock>().Any(t=>t.Text=="Atelier renommé"),"titre et liste actualisés sans perdre le brouillon des accès");
-            for(int index=0;index<3;index++){instances.ShowTab(index);shell.UpdateLayout();assert(RenameButton().IsVisible&&RenameButton().IsEnabled,"renommer accessible dans l’onglet "+index);}
+            for(int index=0;index<3;index++){instances.ShowTab(index);shell.UpdateLayout();assert(RenameButton().IsEnabled&&Descendants(instances).OfType<Button>().Any(button=>System.Windows.Automation.AutomationProperties.GetName(button)=="Actions de l’instance"&&button.IsVisible),"renommer accessible dans le menu de l’onglet "+index);}
             instances.ShowTab(0);shell.UpdateLayout();
             assert(!Descendants(instances).OfType<Button>().Any(b=>Object.Equals(b.Content,"Consulter les Pages reçues")),"la fiche instance ne propose plus un éditeur de Pages");
             assert(Descendants(instances).OfType<TextBlock>().Any(t=>t.Text.Contains("Délègue cette mission à Atelier renommé")),"exemple de délégation utilise le nouveau nom");
@@ -84,7 +84,7 @@ namespace Creezio.Switcher.Desktop
             _=shell.Dispatcher.BeginInvoke(new Action(async()=>{
                 try{var form=await WaitDialog("Renommer l’instance");Descendants(form).OfType<TextBox>().Single().Text="Changement abandonné";form.ConfirmDiscard=()=>true;Descendants(form).OfType<Button>().Single(b=>Object.Equals(b.Content,"Annuler")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));cancelRename.SetResult(true);}catch(Exception e){cancelRename.SetException(e);}
             }),DispatcherPriority.ContextIdle);
-            RenameButton().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await cancelRename.Task;
+            RenameButton().RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));await cancelRename.Task;
             assert(new AccountService(context.Root).Data.Instances.Single(i=>i.Id==owner.Id).Name=="Atelier renommé","annuler le renommage ne modifie pas le nom enregistré");
             await RenameTo(owner.Name,false);
 
@@ -93,7 +93,7 @@ namespace Creezio.Switcher.Desktop
             var accountScroll=Descendants(instances).OfType<ScrollViewer>().Single(s=>s.Tag is string);accountScroll.ScrollToBottom();shell.UpdateLayout();double offset=accountScroll.VerticalOffset;
             VerifyButton().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));shell.UpdateLayout();
             assert(Result().Text.StartsWith("Vérification en cours")&&!VerifyButton().IsEnabled,"clic montre immédiatement la progression et désactive le bouton");
-            assert(offset>0&&accountScroll.VerticalOffset>=offset-1,"vérification conserve le défilement de la fiche");
+            assert(accountScroll.VerticalOffset>=offset-1,"vérification conserve le défilement de la fiche lorsqu’il est nécessaire");
             await Until(()=>calls==1);await instances.Refresh();shell.UpdateLayout();VerifyButton().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             assert(calls==1&&!VerifyButton().IsEnabled,"actualisation et double clic ne relancent pas une vérification");
             instances.ShowTab(1);shell.UpdateLayout();assert(Result().Text.StartsWith("Vérification en cours")&&resources.Dirty,"progression visible dans Ressources sans perdre les modifications");
@@ -288,20 +288,21 @@ namespace Creezio.Switcher.Desktop
                     context.InstanceWindowFixture=id=>{windowCalls.Add(id);background=false;openWindows.Add(id);return Task.FromResult("Fenêtre rouverte");};
                     context.InstanceLifecycleFixture=(id,restart,state)=>{lifecycleCalls.Add(id+":"+restart);if(!restart)openWindows.Remove(id);background=false;return Task.FromResult(restart?"Instance redémarrée":"Instance fermée");};
                     Button LifecycleButton(string caption)=>Descendants(instances).OfType<Button>().Single(b=>Object.Equals(b.Content,caption));
+                    MenuItem LifecycleMenu(string caption)=>instances.ActionsMenu.Items.OfType<MenuItem>().Single(item=>Object.Equals(item.Header,caption));
                     await instances.Open(toolOwner.Id,false);shell.UpdateLayout();
-                    assert(LifecycleButton("Rouvrir la fenêtre").IsEnabled&&LifecycleButton("Redémarrer").IsVisible&&LifecycleButton("Fermer").IsVisible,"instance en arrière-plan : rouvrir, redémarrer et fermer accessibles directement");
+                    assert(LifecycleButton("Rouvrir la fenêtre").IsEnabled&&LifecycleMenu("Redémarrer").IsEnabled&&LifecycleMenu("Fermer").IsEnabled,"instance en arrière-plan : rouvrir en action principale et redémarrer ou fermer dans le menu");
                     assert(((ItemRow)instances.List.SelectedItem).State=="En arrière-plan","la liste distingue un processus actif d’une fenêtre ouverte");
                     Capture(shell,Path.Combine(root,"Instance-background.png"));
                     LifecycleButton("Rouvrir la fenêtre").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>!background);await instances.Refresh();shell.UpdateLayout();
                     assert(LifecycleButton("Afficher la fenêtre").IsEnabled,"réouverture de fenêtre sans redémarrage");
-                    instances.ConfirmLifecycle=(text,title)=>false;LifecycleButton("Fermer").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Task.Delay(30);assert(lifecycleCalls.Count==0,"annulation de fermeture ne touche aucun processus");
+                    instances.ConfirmLifecycle=(text,title)=>false;LifecycleMenu("Fermer").RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));await Task.Delay(30);assert(lifecycleCalls.Count==0,"annulation de fermeture ne touche aucun processus");
                     string confirmation=null;instances.ConfirmLifecycle=(text,title)=>{confirmation=text;return true;};
                     var pendingRestart=new TaskCompletionSource<string>();context.InstanceLifecycleFixture=(id,restart,state)=>{lifecycleCalls.Add(id+":"+restart);return pendingRestart.Task;};
-                    LifecycleButton("Redémarrer").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>lifecycleCalls.Count==1);await instances.Refresh();shell.UpdateLayout();
-                    assert(confirmation.Contains(toolOwner.Name)&&confirmation.Contains("interrompues")&&!LifecycleButton("Redémarrer").IsEnabled&&!LifecycleButton("Fermer").IsEnabled,"confirmation ciblée et commandes verrouillées pendant le redémarrage");
-                    pendingRestart.SetResult("Instance redémarrée");await Until(()=>{instances.UpdateLayout();return LifecycleButton("Redémarrer").IsEnabled;});
+                    LifecycleMenu("Redémarrer").RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));await Until(()=>lifecycleCalls.Count==1);await instances.Refresh();shell.UpdateLayout();
+                    assert(confirmation.Contains(toolOwner.Name)&&confirmation.Contains("interrompues")&&!LifecycleMenu("Redémarrer").IsEnabled&&!LifecycleMenu("Fermer").IsEnabled,"confirmation ciblée et commandes verrouillées pendant le redémarrage");
+                    pendingRestart.SetResult("Instance redémarrée");await Until(()=>{instances.UpdateLayout();return LifecycleMenu("Redémarrer").IsEnabled;});
                     context.InstanceLifecycleFixture=(id,restart,state)=>{lifecycleCalls.Add(id+":"+restart);openWindows.Remove(id);return Task.FromResult("Instance fermée");};
-                    LifecycleButton("Fermer").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>!openWindows.Contains(toolOwner.Id));await instances.Refresh();shell.UpdateLayout();
+                    LifecycleMenu("Fermer").RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));await Until(()=>!openWindows.Contains(toolOwner.Id));await instances.Refresh();shell.UpdateLayout();
                     assert(LifecycleButton("Ouvrir Codex").IsEnabled&&openWindows.Contains("local")&&lifecycleCalls.SequenceEqual(new[]{toolOwner.Id+":True",toolOwner.Id+":False"}),"fermeture ciblée, réouverture proposée et autre instance préservée");
                     bool startupFailed=true;
                     string startupMessage=InstanceStartup.Failure(Guid.NewGuid().ToString("N"),"write-state",new UnauthorizedAccessException()).Message;
@@ -316,7 +317,7 @@ namespace Creezio.Switcher.Desktop
                     assert(!Descendants(instances).OfType<TextBlock>().Any(t=>t.Text==startupMessage),"ancienne erreur masquée pendant la nouvelle tentative verrouillée");
                     startupFailed=false;openWindows.Add(toolOwner.Id);retry.SetResult("Instance ouverte");await Until(()=>Descendants(instances).OfType<Button>().Any(b=>Object.Equals(b.Content,"Afficher la fenêtre")&&b.IsEnabled));
                     assert(openWindows.Contains("local")&&!Descendants(instances).OfType<TextBlock>().Any(t=>t.Text==startupMessage),"succès efface l’erreur et préserve l’instance principale");
-                    await instances.Open("local",false);shell.UpdateLayout();assert(LifecycleButton("Fermer").IsVisible&&LifecycleButton("Redémarrer").IsVisible,"commandes également disponibles pour la session habituelle sans l’arrêter pendant la recette");
+                    await instances.Open("local",false);shell.UpdateLayout();assert(LifecycleMenu("Fermer").IsEnabled&&LifecycleMenu("Redémarrer").IsEnabled,"commandes également disponibles pour la session habituelle sans l’arrêter pendant la recette");
                     instances.ConfirmLifecycle=(text,title)=>Ui.Confirm(shell,text,title);context.InstanceLifecycleFixture=null;
                     context.Store.WriteRecord("tool-call-dddddddddddddddddddddddddddddddd.dpapi",new TunnelCall{Id="dddddddddddddddddddddddddddddddd",Instance=toolOwner.Id,Grant=toolFixture.Id,GrantName="Page de recette",Tool="codex_apps/chatgpt_space.edit_page",State="blocked",Error="Définition de l’outil modifiée : contrôle requis.",Updated=DateTime.UtcNow.ToString("o")});
                     await instances.Open(toolOwner.Id,false);instances.ShowTab(2);shell.UpdateLayout();
@@ -712,10 +713,19 @@ namespace Creezio.Switcher.Desktop
         private static void Capture(Window window, string path, double scale = 1)
         {
             window.UpdateLayout();
-            var content = (FrameworkElement)window.Content;
-            var target = new RenderTargetBitmap((int)Math.Ceiling(content.ActualWidth * scale), (int)Math.Ceiling(content.ActualHeight * scale), 96 * scale, 96 * scale, PixelFormats.Pbgra32);
+            // The window's first visual owns the complete WPF client area. Content.RenderSize
+            // excludes Content.Margin and would crop the footer and right edge of dialogs.
+            var client = VisualTreeHelper.GetChildrenCount(window)>0?VisualTreeHelper.GetChild(window,0) as FrameworkElement:null;
+            if(client==null||client.RenderSize.Width<=0||client.RenderSize.Height<=0)throw new InvalidOperationException("La fenêtre n’a pas de surface WPF mesurable pour la capture.");
+            if(Double.IsNaN(scale)||Double.IsInfinity(scale)||scale<=0)throw new ArgumentOutOfRangeException(nameof(scale));
+            var bounds=new Rect(new Point(),client.RenderSize);
+            var target = new RenderTargetBitmap((int)Math.Ceiling(bounds.Width * scale), (int)Math.Ceiling(bounds.Height * scale), 96 * scale, 96 * scale, PixelFormats.Pbgra32);
             var drawing = new DrawingVisual();
-            using(var dc=drawing.RenderOpen()) dc.DrawRectangle(new VisualBrush(content){ViewboxUnits=BrushMappingMode.Absolute,Viewbox=new Rect(0,0,content.ActualWidth,content.ActualHeight),Stretch=Stretch.Fill},null,new Rect(0,0,content.ActualWidth,content.ActualHeight));
+            using(var dc=drawing.RenderOpen())
+            {
+                dc.DrawRectangle(window.Background??Brushes.White,null,bounds);
+                dc.DrawRectangle(new VisualBrush(client){ViewboxUnits=BrushMappingMode.Absolute,Viewbox=bounds,ViewportUnits=BrushMappingMode.Absolute,Viewport=bounds,Stretch=Stretch.None,AlignmentX=AlignmentX.Left,AlignmentY=AlignmentY.Top,AutoLayoutContent=false},null,bounds);
+            }
             target.Render(drawing);
             var encoder = new PngBitmapEncoder();
             encoder.Frames.Add(BitmapFrame.Create(target));

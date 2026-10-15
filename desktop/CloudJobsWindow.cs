@@ -185,11 +185,15 @@ namespace Creezio.Switcher.Desktop
             error.Text = ""; notice.Text = "Suivi démarré. La mission enregistrée conserve son identifiant ; aucun nouvel envoi n’a été créé.";
             return Task.CompletedTask;
         }
-        private sealed class InstanceChoice { public string Label { get; set; } public string Id { get; set; } public string AccountKey { get; set; } }
-        private async Task<CloudConfiguration[]> LoadEnvironments(string instanceId, CancellationToken token)
+        private async Task<CloudConfiguration[]> LoadEnvironments(CloudMissionAccountChoice choice, CancellationToken token)
         {
-            if (context.Fixture) return EnvironmentsFixture == null ? new CloudConfiguration[0] : await EnvironmentsFixture(instanceId, token);
-            var target = await context.Read(accounts => new { Accounts = accounts, Instance = NamedInstances.Resolve(accounts, instanceId) });
+            var target = await context.Read(accounts =>
+            {
+                var instance = NamedInstances.Resolve(accounts, choice.Id);
+                if (instance.AccountKey != choice.AccountKey) throw new InvalidOperationException("Le compte associé à cette instance a changé. Fermez cet assistant et rechargez les comptes avant une nouvelle mission.");
+                return new { Accounts = accounts, Instance = instance };
+            });
+            if (context.Fixture) return EnvironmentsFixture == null ? new CloudConfiguration[0] : await EnvironmentsFixture(choice.Id, token);
             using (var client = CloudInstanceConnection.Open(target.Accounts, target.Instance))
             {
                 var found = new Dictionary<string, CloudConfiguration>(StringComparer.Ordinal);
@@ -213,67 +217,32 @@ namespace Creezio.Switcher.Desktop
                 return found.Values.OrderBy(value => value.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
             }
         }
-        private async Task Compose()
+        internal Task StartNewMission(string instanceId = null, string configurationId = null) => Compose(instanceId, configurationId);
+        private Task Compose() => Compose(null, null);
+        private async Task Compose(string instanceId, string configurationId)
         {
             if (composing || closed) return;
             composing = true;
             try
             {
-                var instances = await context.Read(accounts => accounts.Data.Instances.Where(instance => !instance.Archived && !String.IsNullOrEmpty(instance.AccountKey)).Select(instance => new InstanceChoice { Id = instance.Id, AccountKey = instance.AccountKey, Label = instance.Name + " · " + accounts.Data.Profiles.Where(profile => profile.Key == instance.AccountKey).Select(profile => profile.Email).FirstOrDefault() }).ToArray());
+                var instances = await context.Read(accounts => accounts.Data.Instances.Where(instance => !instance.Archived && !String.IsNullOrEmpty(instance.AccountKey)).Select(instance => new CloudMissionAccountChoice { Id = instance.Id, AccountKey = instance.AccountKey, Label = instance.Name + " · " + accounts.Data.Profiles.Where(profile => profile.Key == instance.AccountKey).Select(profile => profile.Email).FirstOrDefault() }).ToArray());
                 if (closed) return;
                 if (instances.Length == 0) throw new InvalidOperationException("Connectez un compte permanent à une instance avant une mission Cloud.");
-                var form = new EditWindow(shell, "Nouvelle mission Codex Cloud", "Envoyer la mission") { Owner = this };
-                using (var formLifetime = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token))
+                string workerError = null;
+                var form = new CloudMissionWizard(this, instances, LoadEnvironments, async (spec, token) =>
                 {
-                    bool formClosed = false; string loadedAccount = null;
-                    form.Closed += delegate { formClosed = true; formLifetime.Cancel(); };
-                    form.Fields.Children.Add(Ui.Text("Compte exécutant", 13)); var instance = new ComboBox { ItemsSource = instances, DisplayMemberPath = "Label" }; AutomationProperties.SetName(instance, "Compte exécutant la mission Cloud"); form.Fields.Children.Add(instance);
-                    var environment = new ComboBox { DisplayMemberPath = "Name" }; AutomationProperties.SetName(environment, "Environnement publié de la mission Cloud"); form.Fields.Children.Add(Ui.Text("Environnement publié", 13)); form.Fields.Children.Add(environment);
-                    var state = Ui.Text("Choisissez le compte puis chargez ses environnements.", 13, true); AutomationProperties.SetName(state, "État du chargement des environnements Cloud"); form.Fields.Children.Add(state);
-                    var load = Ui.AsyncButton("Charger les environnements", async () =>
+                    await context.Read(accounts =>
                     {
-                        if (!(instance.SelectedItem is InstanceChoice choice)) throw new InvalidOperationException("Choisissez le compte exécutant.");
-                        instance.IsEnabled = false; environment.ItemsSource = null; loadedAccount = null; state.Text = "Chargement des environnements de " + choice.Label + "…";
-                        try
-                        {
-                            using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(formLifetime.Token))
-                            {
-                                timeout.CancelAfter(TimeSpan.FromSeconds(60));
-                                var found = await LoadEnvironments(choice.Id, timeout.Token);
-                                if (formClosed || !ReferenceEquals(instance.SelectedItem, choice)) return;
-                                environment.ItemsSource = found; loadedAccount = choice.Id + "/" + choice.AccountKey;
-                                state.Text = context.Fixture && EnvironmentsFixture == null ? "Aucun appel réseau avec les comptes fictifs de recette." : found.Length + " environnement(s) prêt(s) sur ce compte. Choisissez celui de la mission.";
-                            }
-                        }
-                        finally { if (!formClosed) instance.IsEnabled = true; }
-                    }, exception => { if (!formClosed) state.Text = Program.SafeError(exception); });
-                    form.Fields.Children.Add(load);
-                    instance.SelectionChanged += delegate { loadedAccount = null; environment.ItemsSource = null; state.Text = "Chargez les environnements du compte sélectionné."; };
-                    var missionTitle = Ui.Input("Titre de la mission", "", form.Fields); missionTitle.MaxLength = 200;
-                    var prompt = Ui.Input("Mandat, périmètre autorisé et résultat attendu", "", form.Fields, true); prompt.MaxLength = 24000;
-                    form.Fields.Children.Add(Ui.Text("Le compte choisi travaille dans un conteneur Cloud. Les changements utilisent une branche distincte ; aucune fusion automatique. Le résultat restera dans Missions Cloud.", 13, true));
-                    string id = Guid.NewGuid().ToString("N"), workerError = null;
-                    form.Dirty = () => missionTitle.Text.Length > 0 || prompt.Text.Length > 0;
-                    form.Save = async () =>
-                    {
-                        var selectedInstance = instance.SelectedItem as InstanceChoice; var selectedEnvironment = environment.SelectedItem as CloudConfiguration;
-                        if (selectedInstance == null || selectedEnvironment == null || loadedAccount != selectedInstance.Id + "/" + selectedInstance.AccountKey) throw new InvalidOperationException("Choisissez un compte et chargez son environnement publié.");
-                        if (String.IsNullOrWhiteSpace(missionTitle.Text) || String.IsNullOrWhiteSpace(prompt.Text)) throw new InvalidOperationException("Indiquez un titre et un mandat pour cette mission.");
-                        var spec = new CloudJobSpec { Id = id, Instance = selectedInstance.Id, ExpectedAccountKey = selectedInstance.AccountKey, ConfigurationId = selectedEnvironment.Id, Title = missionTitle.Text, Prompt = prompt.Text, ExplicitDelegation = true, ReturnToSource = false };
-                        instance.IsEnabled = environment.IsEnabled = load.IsEnabled = false; missionTitle.IsReadOnly = prompt.IsReadOnly = true;
-                        await context.Read(accounts =>
-                        {
-                            var current = accounts.Data.Instances.SingleOrDefault(value => value.Id == selectedInstance.Id && !value.Archived);
-                            if (current == null || current.AccountKey != selectedInstance.AccountKey) throw new InvalidOperationException("Le compte associé à cette instance a changé. Fermez ce formulaire et rechargez les comptes avant une nouvelle mission.");
-                            return true;
-                        });
-                        if (context.Fixture) { if (SubmitFixture == null) throw new InvalidOperationException("Aucune mission réelle depuis cette recette."); await SubmitFixture(spec, formLifetime.Token); }
-                        else await new CloudJobs(context.Store).Submit(spec, null, formLifetime.Token);
-                        try { await EnsureWorker(); } catch (Exception exception) { workerError = "Mission enregistrée une seule fois, mais suivi indisponible : " + Program.SafeError(exception) + " Utilisez Démarrer le suivi pour reprendre cette mission."; }
-                    };
-                    form.ShowDialog();
-                    if (form.Saved && !closed) { requestedSelection = id; await Refresh(); if (workerError != null) error.Text = workerError; }
-                }
+                        var current = accounts.Data.Instances.SingleOrDefault(value => value.Id == spec.Instance && !value.Archived);
+                        if (current == null || current.AccountKey != spec.ExpectedAccountKey) throw new InvalidOperationException("Le compte associé à cette instance a changé. Fermez cet assistant et rechargez les comptes avant une nouvelle mission.");
+                        return true;
+                    });
+                    if (context.Fixture) { if (SubmitFixture == null) throw new InvalidOperationException("Aucune mission réelle depuis cette recette."); await SubmitFixture(spec, token); }
+                    else await new CloudJobs(context.Store).Submit(spec, null, token);
+                    try { await EnsureWorker(); } catch (Exception exception) { workerError = "Mission enregistrée une seule fois, mais suivi indisponible : " + Program.SafeError(exception) + " Utilisez Démarrer le suivi pour reprendre cette mission."; }
+                }, lifetime.Token, instanceId, configurationId);
+                form.ShowDialog();
+                if (form.Saved && !closed) { requestedSelection = form.MissionId; await Refresh(); if (workerError != null) error.Text = workerError; }
             }
             finally { composing = false; }
         }

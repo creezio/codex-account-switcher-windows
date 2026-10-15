@@ -3,15 +3,22 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.17.0-beta.2 — environnements et missions Codex Cloud par compte.** Windows 10/11 x64, interface en
+**Version 0.17.1-beta.1 — missions guidées et vue des instances simplifiée.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
 
-Cette version ajoute **Instances → Cloud** pour choisir un dépôt GitHub accessible
-au compte, créer un environnement privé, suivre sa préparation et demander sa
-publication. **Tâches → Missions Cloud** permet d’envoyer un mandat à un
-compte et un environnement explicitement choisis, puis de suivre son résultat.
+La configuration d’une mission Cloud se fait désormais en quatre étapes :
+**Compte → Environnement → Mission → Vérifier**. Choisir le compte charge
+automatiquement ses environnements publiés ; le récapitulatif confirme la cible
+et le mandat avant l’envoi. Revenir à une étape conserve le texte saisi.
+
+La vue **Instances → Cloud** présente le catalogue et les détails de l’environnement
+sélectionné, avec les actions secondaires regroupées dans des menus. La fiche
+d’instance conserve une action principale et ses onglets, sans empiler les boutons.
+Vous pouvez toujours choisir un dépôt GitHub accessible au compte, créer un
+environnement privé, suivre sa préparation et demander sa publication.
+**Tâches → Missions Cloud** permet ensuite de suivre le résultat de chaque mandat.
 Chaque mission de code reçoit une branche distincte ; l’intégration reste une
 décision séparée après vérification dans GitHub.
 
@@ -27,7 +34,8 @@ donc une évolution du service peut interrompre une opération. Les fichiers
 locaux ne sont pas transférés automatiquement au conteneur. La première connexion
 GitHub et les autorisations interactives restent des étapes
 officielles distinctes. [Parcours, validations et limites Cloud](docs/CLOUD-NATIVE-PILOT.md)
-· [Notes de version 0.17](docs/RELEASE-0.17.md).
+· [Refonte 0.17.1](docs/RELEASE-0.17.1.md)
+· [Recette Cloud 0.17](docs/RELEASE-0.17.md).
 
 La récupération des temporaires d’instance et les diagnostics de lancement
 introduits en 0.16.1 sont conservés. [Détails](docs/STARTUP-RECOVERY.md).
@@ -45,6 +53,8 @@ de contrôle d’activité et de fermeture protégée restent accessibles.
 
 ![Gestion des instances, avec des comptes fictifs](assets/screenshot.png)
 
+![Récapitulatif de mission Cloud dans l’assistant guidé, avec des comptes fictifs](assets/cloud-mission-wizard.png)
+
 ![Tableau de bord des performances, avec des comptes fictifs](assets/performance-dashboard.png)
 
 ## Confier une mission à Codex Cloud
@@ -54,8 +64,10 @@ de contrôle d’activité et de fermeture protégée restent accessibles.
    explicitement son accès réseau ; un réseau désactivé empêche notamment un push.
 3. Lancez **Préparer l’environnement**, consultez son suivi, puis demandez sa
    publication avec l’action séparée proposée une fois la préparation terminée.
-4. Dans **Tâches → Missions Cloud → Nouvelle mission Cloud**, choisissez
-   ce compte et son environnement publié, puis indiquez le titre et le mandat.
+4. Dans **Tâches → Missions Cloud → Nouvelle mission Cloud**, choisissez le
+   compte. Ses environnements se chargent automatiquement. Choisissez un
+   environnement, continuez pour décrire la mission, puis vérifiez le
+   récapitulatif avant **Envoyer la mission**.
 5. Suivez l’état et le résultat dans cette fenêtre. Vérifiez la branche, le SHA,
    la PR et la CI dans GitHub avant de décider d’une intégration.
 
@@ -123,7 +135,7 @@ les plugins connectés, Sites et Pages sont détectés automatiquement auprès d
 Choisissez **Partager avec**, cochez les ressources par leur nom, sélectionnez
 **Lecture** ou **Lecture et modification**, puis **Enregistrer les accès**.
 
-**Renommer l’instance** reste visible au-dessus des onglets ; le compte et
+**Renommer l’instance** reste accessible dans ses actions, quel que soit l’onglet ; le compte et
 le dossier restent associés à la même instance. Dans **Compte**, **Vérifier
 l’intégration** affiche immédiatement sa progression, puis un résultat daté ou
 l’erreur à corriger. La date du dernier contrôle et la version installée sont
@@ -133,7 +145,7 @@ Pour une instance ouverte, **Afficher la fenêtre** ramène son Codex au premier
 plan, y compris la session principale. **Ouvrir Codex** lance une instance fermée.
 Si sa fenêtre a été fermée mais que Codex reste actif, l’état devient
 **En arrière-plan** et **Rouvrir la fenêtre** réactive le même profil sans arrêter
-ses tâches. **Fermer** et **Redémarrer** sont visibles au-dessus des onglets ;
+ses tâches. **Fermer** et **Redémarrer** restent accessibles dans ses actions ;
 une confirmation rappelle que ces deux actions interrompent les tâches de
 l’instance sélectionnée. Le compte et les conversations sont conservés.
 [Fonctionnement et validation du cycle des instances](docs/INSTANCE-LIFECYCLE.md).

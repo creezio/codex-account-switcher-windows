@@ -6,6 +6,8 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
+using System.Windows.Automation;
+using System.Windows.Controls.Primitives;
 
 namespace Creezio.Switcher.Desktop
 {
@@ -18,7 +20,9 @@ namespace Creezio.Switcher.Desktop
         private readonly WrapPanel tabs=new WrapPanel();
         private readonly Button[] tabButtons=new Button[4];
         private readonly ComboBox compactChoice=new ComboBox{DisplayMemberPath="Title",Visibility=Visibility.Collapsed};
-        private readonly Button rename,copyThread;
+        private readonly MenuItem rename,copyThread;
+        internal readonly ContextMenu ActionsMenu=new ContextMenu();
+        private readonly Button more;
         private readonly WrapPanel lifecycle=new WrapPanel();
         private readonly Dictionary<string,string> operations=new Dictionary<string,string>();
         internal Func<string,string,bool> ConfirmLifecycle;
@@ -31,6 +35,7 @@ namespace Creezio.Switcher.Desktop
         private string identity;
         private string listStamp;
         private string renderedAccount;
+        private string lifecycleStamp;
         private Info current;
         private InstanceResourcesView resources;
         private CloudEnvironmentPanel cloud;
@@ -38,24 +43,38 @@ namespace Creezio.Switcher.Desktop
         {public DesktopInstance Instance;public Profile Account;public InstanceState State;public RelayIntegrationState Integration;public string Active;}
         internal InstancesPage(DesktopContext context,ShellWindow shell):base(context,shell,"Instances","Un compte, ses ressources et ses accès, réunis dans chaque espace Codex.")
         {
-            Command("Créer une instance",async()=>{if(!CanLeave())return;await InstanceWizard.Open(Context,Shell);await Refresh();},true);
-            Command("Archives",async()=>{if(!CanLeave())return;archived=!archived;await Refresh();});
-            var split=new Grid();split.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(.26,GridUnitType.Star),MinWidth=170});split.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(20)});split.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(.74,GridUnitType.Star)});Body.Children.Add(split);
-            var left=new DockPanel();split.Children.Add(left);var label=Ui.Text("VOS INSTANCES",11,true);DockPanel.SetDock(label,Dock.Top);left.Children.Add(label);var searchField=Ui.SearchField(search,"Rechercher une instance");DockPanel.SetDock(searchField,Dock.Top);left.Children.Add(searchField);left.Children.Add(List);
+            Header.Visibility=Visibility.Collapsed;
+            var split=new Grid();split.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(235)});split.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(20)});split.ColumnDefinitions.Add(new ColumnDefinition());Body.Children.Add(split);
+            var left=new DockPanel();split.Children.Add(left);
+            var listActions=new DockPanel{LastChildFill=true,Margin=new Thickness(0,0,0,12)};
+            var add=Ui.AsyncButton("+",async()=>{if(!CanLeave())return;await InstanceWizard.Open(Context,Shell);await Refresh();},Error);add.ToolTip="Créer une instance";AutomationProperties.SetName(add,"Créer une instance");add.Margin=new Thickness(4,0,0,0);add.Padding=new Thickness(10,7,10,7);DockPanel.SetDock(add,Dock.Right);listActions.Children.Add(add);
+            var archiveMenu=new ContextMenu();var archiveItem=new MenuItem{Header="Afficher les archives",IsCheckable=true};AutomationProperties.SetName(archiveItem,"Afficher les archives");archiveMenu.Items.Add(archiveItem);
+            archiveItem.Click+=async delegate{if(!CanLeave()){archiveItem.IsChecked=archived;return;}archived=archiveItem.IsChecked;try{await Refresh();}catch(Exception error){Error(error);}};
+            Button ArchiveButton(){Button button=null;button=Ui.Button("⋯",()=>{archiveItem.IsChecked=archived;archiveMenu.PlacementTarget=button;archiveMenu.Placement=PlacementMode.Bottom;archiveMenu.IsOpen=true;});button.ContextMenu=archiveMenu;button.ToolTip="Options de la liste d’instances";AutomationProperties.SetName(button,"Options de la liste d’instances");button.Margin=new Thickness(4,0,0,0);button.Padding=new Thickness(10,7,10,7);return button;}
+            var archive=ArchiveButton();DockPanel.SetDock(archive,Dock.Right);listActions.Children.Add(archive);
+            var pageTitle=Ui.Text("Instances",22);pageTitle.VerticalAlignment=VerticalAlignment.Center;pageTitle.Margin=new Thickness(0);listActions.Children.Add(pageTitle);
+            DockPanel.SetDock(listActions,Dock.Top);left.Children.Add(listActions);
+            var searchField=Ui.SearchField(search,"Rechercher une instance");DockPanel.SetDock(searchField,Dock.Top);left.Children.Add(searchField);left.Children.Add(List);
             System.Windows.Automation.AutomationProperties.SetName(search,"Rechercher une instance");System.Windows.Automation.AutomationProperties.SetName(List,"Vos instances");
             var template=new DataTemplate(typeof(ItemRow));var panel=new FrameworkElementFactory(typeof(StackPanel));
-            foreach(string property in new[]{"Title","Summary","State"}){var text=new FrameworkElementFactory(typeof(TextBlock));text.SetBinding(TextBlock.TextProperty,new Binding(property));text.SetValue(TextBlock.MarginProperty,new Thickness(0,0,0,6));text.SetValue(TextBlock.TextWrappingProperty,TextWrapping.Wrap);text.SetValue(TextBlock.FontSizeProperty,property=="Title"?16d:12d);if(property=="Title")text.SetValue(TextBlock.FontWeightProperty,FontWeights.SemiBold);if(property=="State")text.SetResourceReference(TextBlock.ForegroundProperty,"AccentTextBrush");panel.AppendChild(text);}template.VisualTree=panel;List.ItemTemplate=template;
-            var right=new DockPanel();Grid.SetColumn(right,2);split.Children.Add(right);var header=new StackPanel();header.Children.Add(compactChoice);header.Children.Add(heading);header.Children.Add(accountLine);
-            var management=Ui.Actions(header);management.Margin=new Thickness(0,0,0,4);rename=Ui.AsyncButton("Renommer l’instance",Rename,Error);rename.IsEnabled=false;management.Children.Add(rename);
-            copyThread=Ui.Button("Conversations et projets…",()=>{if(current==null||!CanLeave())return;new TransfersWindow(Context,Shell,current.Instance).ShowDialog();});copyThread.IsEnabled=false;management.Children.Add(copyThread);
-            header.Children.Add(lifecycle);
+            foreach(string property in new[]{"Title","Summary","State"}){var text=new FrameworkElementFactory(typeof(TextBlock));text.SetBinding(TextBlock.TextProperty,new Binding(property));text.SetValue(TextBlock.MarginProperty,new Thickness(0,0,0,3));text.SetValue(TextBlock.TextWrappingProperty,TextWrapping.NoWrap);text.SetValue(TextBlock.TextTrimmingProperty,TextTrimming.CharacterEllipsis);text.SetValue(TextBlock.FontSizeProperty,property=="Title"?14d:12d);if(property=="Title")text.SetValue(TextBlock.FontWeightProperty,FontWeights.SemiBold);if(property=="State")text.SetResourceReference(TextBlock.ForegroundProperty,"AccentTextBrush");panel.AppendChild(text);}template.VisualTree=panel;List.ItemTemplate=template;
+            var right=new DockPanel();Grid.SetColumn(right,2);split.Children.Add(right);var header=new StackPanel();
+            var compactBar=new DockPanel{Visibility=Visibility.Collapsed,Margin=new Thickness(0,0,0,10)};
+            var compactArchive=ArchiveButton();DockPanel.SetDock(compactArchive,Dock.Right);compactBar.Children.Add(compactArchive);
+            var compactAdd=Ui.AsyncButton("+",async()=>{if(!CanLeave())return;await InstanceWizard.Open(Context,Shell);await Refresh();},Error);compactAdd.Margin=new Thickness(6,0,0,0);compactAdd.ToolTip="Créer une instance";AutomationProperties.SetName(compactAdd,"Créer une instance");DockPanel.SetDock(compactAdd,Dock.Right);compactBar.Children.Add(compactAdd);compactChoice.Margin=new Thickness(0);compactBar.Children.Add(compactChoice);header.Children.Add(compactBar);
+            var instanceHeader=new Grid{Margin=new Thickness(0,0,0,8)};instanceHeader.ColumnDefinitions.Add(new ColumnDefinition());instanceHeader.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
+            var identityHeader=new StackPanel{VerticalAlignment=VerticalAlignment.Center,Margin=new Thickness(0,0,12,0)};heading.FontSize=23;heading.Margin=new Thickness(0,0,0,3);heading.TextWrapping=TextWrapping.NoWrap;heading.TextTrimming=TextTrimming.CharacterEllipsis;accountLine.FontSize=12;accountLine.Margin=new Thickness(0);identityHeader.Children.Add(heading);identityHeader.Children.Add(accountLine);instanceHeader.Children.Add(identityHeader);
+            lifecycle.VerticalAlignment=VerticalAlignment.Center;Grid.SetColumn(lifecycle,1);instanceHeader.Children.Add(lifecycle);header.Children.Add(instanceHeader);
+            rename=MenuAction("Renommer l’instance",Rename);rename.IsEnabled=false;ActionsMenu.Items.Add(rename);
+            copyThread=MenuAction("Conversations et projets…",()=>{if(current!=null&&CanLeave())new TransfersWindow(Context,Shell,current.Instance).ShowDialog();return Task.CompletedTask;});copyThread.IsEnabled=false;ActionsMenu.Items.Add(copyThread);
+            more=Ui.Button("⋯",()=>{ActionsMenu.PlacementTarget=more;ActionsMenu.Placement=PlacementMode.Bottom;ActionsMenu.IsOpen=true;});more.ContextMenu=ActionsMenu;more.Padding=new Thickness(12,7,12,7);more.Margin=new Thickness(0);more.ToolTip="Actions de l’instance";AutomationProperties.SetName(more,"Actions de l’instance");
             ConfirmLifecycle=(text,title)=>Ui.Confirm(Shell,text,title);
             verification.Visibility=Visibility.Collapsed;System.Windows.Automation.AutomationProperties.SetName(verification,"Résultat de la vérification");System.Windows.Automation.AutomationProperties.SetLiveSetting(verification,System.Windows.Automation.AutomationLiveSetting.Polite);header.Children.Add(verification);
-            header.Children.Add(tabs);DockPanel.SetDock(header,Dock.Top);right.Children.Add(header);right.Children.Add(detail);
+            var tabLine=new Border{BorderThickness=new Thickness(0,0,0,1),Child=tabs,Margin=new Thickness(0,0,0,16)};tabLine.SetResourceReference(Border.BorderBrushProperty,"LineBrush");header.Children.Add(tabLine);DockPanel.SetDock(header,Dock.Top);right.Children.Add(header);right.Children.Add(detail);
             System.Windows.Automation.AutomationProperties.SetName(compactChoice,"Instance sélectionnée");
-            SizeChanged+=delegate{bool compact=ActualWidth<750;left.Visibility=compact?Visibility.Collapsed:Visibility.Visible;split.ColumnDefinitions[0].MinWidth=compact?0:170;split.ColumnDefinitions[0].Width=compact?new GridLength(0):new GridLength(.26,GridUnitType.Star);split.ColumnDefinitions[1].Width=new GridLength(compact?0:20);compactChoice.Visibility=compact?Visibility.Visible:Visibility.Collapsed;heading.Visibility=compact?Visibility.Collapsed:Visibility.Visible;Header.Children[1].Visibility=compact?Visibility.Collapsed:Visibility.Visible;};
+            SizeChanged+=delegate{bool compact=ActualWidth<850;left.Visibility=compact?Visibility.Collapsed:Visibility.Visible;split.ColumnDefinitions[0].Width=new GridLength(compact?0:235);split.ColumnDefinitions[1].Width=new GridLength(compact?0:20);compactBar.Visibility=compact?Visibility.Visible:Visibility.Collapsed;compactChoice.Visibility=compact?Visibility.Visible:Visibility.Collapsed;};
             compactChoice.SelectionChanged+=delegate{if(changing)return;List.SelectedItem=compactChoice.SelectedItem;};
-            for(int n=0;n<4;n++){int index=n;tabButtons[n]=Ui.Button(new[]{"Compte","Ressources & accès","Activité","Cloud"}[n],()=>ShowTab(index));tabs.Children.Add(tabButtons[n]);}
+            for(int n=0;n<4;n++){int index=n;tabButtons[n]=Ui.Button(new[]{"Compte","Ressources & accès","Activité","Cloud"}[n],()=>ShowTab(index));tabButtons[n].Padding=new Thickness(10,10,10,11);tabButtons[n].Margin=new Thickness(0,0,8,-1);tabButtons[n].MinHeight=40;tabs.Children.Add(tabButtons[n]);}
             List.SelectionChanged+=async delegate{if(changing)return;try{var row=List.SelectedItem as ItemRow;if(row==null)return;if(row.Id!=selected&&!CanLeave()){changing=true;List.SelectedItem=List.Items.Cast<ItemRow>().FirstOrDefault(r=>r.Id==selected);compactChoice.SelectedItem=List.SelectedItem;changing=false;return;}changing=true;compactChoice.SelectedItem=row;changing=false;await Select(row);}catch(Exception e){changing=false;Error(e);}};
             search.TextChanged+=async delegate{try{if(changing||!CanLeave())return;await Refresh();}catch(Exception e){Error(e);}};
             Shell.Closed+=delegate{resources?.Dispose();cloud?.Dispose();};
@@ -85,17 +104,29 @@ namespace Creezio.Switcher.Desktop
         }
         private void RenderLifecycle()
         {
-            lifecycle.Children.Clear();if(current==null||current.Instance.Archived)return;
+            string stamp=current==null?null:Json.Write(new{current.Instance.Id,current.Instance.Name,current.Instance.Archived,current.State.Running,current.State.WindowReady,current.State.Phase,current.State.Message,operation=operations.TryGetValue(current.Instance.Id,out var pending)?pending:null});
+            if(stamp!=null&&stamp==lifecycleStamp)return;lifecycleStamp=stamp;
+            lifecycle.Children.Clear();while(ActionsMenu.Items.Count>2)ActionsMenu.Items.RemoveAt(2);
+            if(current==null)return;
+            if(current.Instance.Archived){lifecycle.Children.Add(more);return;}
             var info=current;var state=info.State;bool busy=operations.TryGetValue(info.Instance.Id,out var progress);
             bool blocked=busy||state.Phase=="unknown"||state.Phase=="stopping"||state.Phase=="starting";
             var open=Ui.AsyncButton(busy?progress:state.WindowReady?"Afficher la fenêtre":state.Running?"Rouvrir la fenêtre":"Ouvrir Codex",()=>ManageInstance(info,"open"),Error,true);
-            open.IsEnabled=!blocked;lifecycle.Children.Add(open);
+            open.IsEnabled=!blocked;open.Margin=new Thickness(0,0,7,0);open.Padding=new Thickness(12,8,12,8);lifecycle.Children.Add(open);
             if(state.Running){
-                var restart=Ui.AsyncButton("Redémarrer",()=>ManageInstance(info,"restart"),Error);restart.IsEnabled=!busy&&state.Phase!="unknown"&&state.Phase!="stopping";lifecycle.Children.Add(restart);
-                var close=Ui.AsyncButton("Fermer",()=>ManageInstance(info,"close"),Error);close.IsEnabled=restart.IsEnabled;lifecycle.Children.Add(close);
+                ActionsMenu.Items.Add(new Separator());
+                var restart=MenuAction("Redémarrer",()=>ManageInstance(info,"restart"));restart.IsEnabled=!busy&&state.Phase!="unknown"&&state.Phase!="stopping";ActionsMenu.Items.Add(restart);
+                var close=MenuAction("Fermer",()=>ManageInstance(info,"close"));close.IsEnabled=restart.IsEnabled;ActionsMenu.Items.Add(close);
             }
-            if(!busy&&state.Running&&!state.WindowReady)lifecycle.Children.Add(Ui.Text(state.Phase=="background"?"La fenêtre est fermée ; Codex fonctionne encore en arrière-plan.":state.Message??state.Caption,12,true));
-            if(!busy&&!state.Running&&state.Phase=="error")lifecycle.Children.Add(Ui.Text(state.Message??"Le lancement a échoué. Réessayez ou consultez le diagnostic.",12,true));
+            lifecycle.Children.Add(more);
+            if(!busy&&state.Running&&!state.WindowReady)Notice.Text=state.Phase=="background"?"La fenêtre est fermée ; Codex fonctionne encore en arrière-plan.":state.Message??state.Caption;
+            if(!busy&&!state.Running&&state.Phase=="error")Notice.Text=state.Message??"Le lancement a échoué. Réessayez ou consultez le diagnostic.";
+        }
+        private MenuItem MenuAction(string label,Func<Task> action)
+        {
+            var item=new MenuItem{Header=label};AutomationProperties.SetName(item,label);
+            item.Click+=async delegate{if(!item.IsEnabled)return;item.IsEnabled=false;try{await action();}catch(Exception error){Error(error);}finally{item.IsEnabled=true;}};
+            return item;
         }
         private async Task ManageInstance(Info info,string action)
         {
@@ -145,7 +176,10 @@ namespace Creezio.Switcher.Desktop
         internal void ShowTab(int index)
         {
             if(index!=tab&&cloud?.CanLeave()==false)return;
-            tab=index;for(int n=0;n<tabButtons.Length;n++)tabButtons[n].SetResourceReference(FrameworkElement.StyleProperty,n==index?"PrimaryButton":typeof(Button));
+            tab=index;for(int n=0;n<tabButtons.Length;n++){
+                var button=tabButtons[n];button.SetResourceReference(Control.BackgroundProperty,"CanvasBrush");button.SetResourceReference(Control.ForegroundProperty,n==index?"AccentTextBrush":"MutedBrush");button.SetResourceReference(Control.BorderBrushProperty,n==index?"AccentBrush":"CanvasBrush");button.BorderThickness=new Thickness(0,0,0,n==index?3:0);button.FontWeight=n==index?FontWeights.SemiBold:FontWeights.Normal;
+                AutomationProperties.SetHelpText(button,n==index?"Onglet sélectionné":"Afficher l’onglet");
+            }
             if(current==null)return;
             if(index==0)RenderAccount();
             else if(index==1)detail.Content=resources??(object)Ui.Card(Ui.Text("Connectez le compte de cette instance pour détecter ses ressources.",15,true));

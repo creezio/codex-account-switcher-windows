@@ -33,8 +33,9 @@ namespace Creezio.Switcher.Desktop
             const string second = "11111111-2222-3333-4444-555555555555~asenvcfg_second";
             const string added = "11111111-2222-3333-4444-555555555555~asenvcfg_added";
             const string secret = "PRIVATE_CLOUD_ERROR_MUST_NOT_BE_DISPLAYED";
+            bool published=false;
             var names = new Dictionary<string, string> { { first, "Brouillon cloud" }, { second, "Autre environnement" } };
-            object Configuration(string id) => new { id, name = names[id], is_owner = true, share_settings = "private", status = "pending", version_id = "11111111-2222-3333-4444-555555555555~cecfgver_fixture", version_revision = 1, repositories = new[] { new { repository_id = "github/123", @ref = "refs/heads/main", depth = 1 } }, network_policy = new { type = "disabled" } };
+            object Configuration(string id) => new { id, name = names[id], is_owner = true, share_settings = "private", status = published ? "ready" : "pending", version_id = "11111111-2222-3333-4444-555555555555~cecfgver_fixture", version_revision = published ? 2 : 1, latest_ready_version_id=published?"11111111-2222-3333-4444-555555555555~cecfgver_fixture":null, repositories = new[] { new { repository_id = "github/123", @ref = "refs/heads/main", depth = 1 } }, network_policy = new { type = "disabled" } };
             HttpResponseMessage Response(object value, HttpStatusCode code = HttpStatusCode.OK) => new HttpResponseMessage(code) { Content = new StringContent(Json.Write(value), Encoding.UTF8, "application/json") };
             Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> catalog = (request, token) =>
             {
@@ -54,17 +55,21 @@ namespace Creezio.Switcher.Desktop
                 await Task.Delay(30);
                 var cloud = Descendants(instances).OfType<CloudEnvironmentPanel>().Single();
                 TextBlock Status() => Descendants(cloud).OfType<TextBlock>().Single(text => AutomationProperties.GetName(text) == "État de la connexion Codex Cloud");
-                Button Button(string label) => Descendants(cloud).OfType<Button>().Single(button => Object.Equals(button.Content, label));
+                Button Button(string label) => Descendants(cloud).OfType<Button>().Single(button => Object.Equals(button.Content, label)||AutomationProperties.GetName(button)==label);
+                MenuItem Menu(string label)=>cloud.ActionsMenu.Items.OfType<MenuItem>().Single(item=>Object.Equals(item.Header,label));
+                void Invoke(string label){var button=Descendants(cloud).OfType<Button>().SingleOrDefault(item=>Object.Equals(item.Content,label)||AutomationProperties.GetName(item)==label);if(button!=null)button.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));else Menu(label).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));}
                 assert(Status().Text.Contains("Aucun appel Cloud") && handler.Requests == 0, "onglet Cloud de recette ne contacte jamais les comptes réels");
                 cloud.ClientFactory = () => new CloudBackend(http, () => identity, CloudBackend.Capture(identity));
                 cloud.GitHubFixture = token => Task.FromResult(new CloudGitHubRepositoryPage { Data = new List<CloudGitHubRepository> { new CloudGitHubRepository { Id = "github/123", FullName = "fixture/project", DefaultBranch = "main" } }, Page = 1, HasNextPage = false });
                 await cloud.Reload(first);
                 shell.UpdateLayout();
                 assert(cloud.EnvironmentChoice.Items.Count == 2 && handler.Requests == 4, "Cloud charge les pages des deux périmètres et déduplique leurs environnements");
-                assert(Descendants(cloud).OfType<TextBlock>().Any(text => text.Text.Contains("Instance : " + owner.Name) && text.Text.Contains("@example.com")), "Cloud conserve le compte et le nom de l’instance visibles");
+                int beforeFilter=handler.Requests;cloud.EnvironmentSearch.Text="aucun résultat de recette";
+                assert(cloud.EnvironmentList.Items.Count==1&&((CloudConfiguration)cloud.EnvironmentList.SelectedItem).Id==first&&handler.Requests==beforeFilter,"filtre local conserve l’environnement sélectionné sans nouvel appel réseau");cloud.EnvironmentSearch.Clear();
+                assert(Descendants(cloud).OfType<TextBlock>().Any(text => text.Text.Contains("@example.com")&&Convert.ToString(text.ToolTip).Contains("Instance : " + owner.Name)), "Cloud conserve le compte visible et l’instance dans son information contextuelle");
                 assert(Descendants(cloud).OfType<TextBlock>().Any(text => text.Text == "Brouillon enregistré · préparation à terminer") && !Descendants(cloud).OfType<TextBlock>().Any(text => text.Text.Contains("publié avec succès")), "configuration initiale affichée comme brouillon sans promesse de publication");
-                assert(Button("Créer un brouillon Cloud").IsEnabled && Button("Renommer l’environnement").IsEnabled, "actions Cloud accessibles après relecture réussie");
-                assert(Descendants(cloud).OfType<TextBlock>().Any(text => AutomationProperties.GetName(text) == "État des dépôts GitHub de cette instance" && text.Text.Contains("1 dépôt(s)")), "catalogue GitHub appartient au compte de l’instance affichée");
+                assert(Button("Nouvel environnement").IsEnabled && Menu("Renommer l’environnement").IsEnabled, "actions Cloud accessibles après relecture réussie");
+                assert(Descendants(cloud).OfType<TextBlock>().Any(text => text.Text.Contains("1 dépôt(s) GitHub")&&text.Text.Contains("@example.com")), "catalogue GitHub appartient au compte de l’instance affichée");
                 Capture(shell, Path.Combine(root, "Instance-cloud.png"));
 
                 int before = handler.Requests;
@@ -72,6 +77,9 @@ namespace Creezio.Switcher.Desktop
                 Button("Actualiser le Cloud").RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
                 await Until(() => Status().Text.Contains("403") && Button("Actualiser le Cloud").IsEnabled);
                 assert(handler.Requests == before + 1 && cloud.EnvironmentChoice.Items.Count == 2 && !Status().Text.Contains(secret), "erreur Cloud expliquée sans secret ni relance et sans effacer la liste précédente");
+                cloud.EnvironmentChoice.SelectedItem=cloud.EnvironmentChoice.Items.Cast<CloudConfiguration>().Single(value=>value.Id==second);
+                await Until(()=>Status().Text.Contains("403")&&cloud.EnvironmentChoice.IsEnabled);
+                assert(((CloudConfiguration)cloud.EnvironmentChoice.SelectedItem).Id==first&&((CloudConfiguration)cloud.EnvironmentList.SelectedItem).Id==first,"échec de lecture d’un autre environnement restaure la sélection correspondant à la fiche affichée");
 
                 var waiting = new TaskCompletionSource<bool>();
                 handler.Reply = async (request, token) => { waiting.TrySetResult(true); await Task.Delay(Timeout.Infinite, token); return Response(new { data = new object[0] }); };
@@ -84,7 +92,7 @@ namespace Creezio.Switcher.Desktop
 
                 handler.Reply = (request, token) => Task.FromResult(Response(new { data = new object[0], next_cursor = (string)null }));
                 await cloud.Reload();
-                assert(cloud.EnvironmentChoice.Items.Count == 0 && Button("Créer un brouillon Cloud").IsEnabled, "premier environnement peut être créé depuis GitHub sans configuration Cloud préexistante");
+                assert(cloud.EnvironmentChoice.Items.Count == 0 && Button("Nouvel environnement").IsEnabled, "premier environnement peut être créé depuis GitHub sans configuration Cloud préexistante");
                 handler.Reply = (request, token) => request.RequestUri.Query.Contains("cursor=") ? Task.FromResult(Response(new { data = new object[0], next_cursor = (string)null })) : catalog(request, token);
                 await cloud.Reload(first);
 
@@ -108,11 +116,11 @@ namespace Creezio.Switcher.Desktop
                         catch (Exception error) { done.SetException(error); }
                         finally { if (form != null && !form.Saved) { form.ConfirmDiscard = () => true; form.Close(); } }
                     }), DispatcherPriority.ContextIdle);
-                    Button(button).RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                    Invoke(button);
                     await done.Task;
                     await Until(() => Button("Actualiser le Cloud").IsEnabled);
                 }
-                await Dialog("Créer un brouillon Codex Cloud", "Créer un brouillon Cloud", async form =>
+                await Dialog("Créer un brouillon Codex Cloud", "Nouvel environnement", async form =>
                 {
                     var input = Descendants(form).OfType<TextBox>().Single();
                     input.Text = "Création contrôlée";
@@ -142,7 +150,7 @@ namespace Creezio.Switcher.Desktop
 
                 int refused = 0;
                 cloud.CreateFixture = (request, id, token) => { refused++; throw new CloudBackendException("fixture", "Refus de recette", 400); };
-                await Dialog("Créer un brouillon Codex Cloud", "Créer un brouillon Cloud", async form =>
+                await Dialog("Créer un brouillon Codex Cloud", "Nouvel environnement", async form =>
                 {
                     var input = Descendants(form).OfType<TextBox>().Single();
                     input.Text = "Création refusée";
@@ -153,7 +161,7 @@ namespace Creezio.Switcher.Desktop
 
                 int uncertain = 0;
                 cloud.CreateFixture = (request, id, token) => { uncertain++; throw new CloudBackendUncertainException("réponse perdue"); };
-                await Dialog("Créer un brouillon Codex Cloud", "Créer un brouillon Cloud", async form =>
+                await Dialog("Créer un brouillon Codex Cloud", "Nouvel environnement", async form =>
                 {
                     Descendants(form).OfType<TextBox>().Single().Text = "Résultat incertain";
                     form.SaveButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
@@ -181,7 +189,7 @@ namespace Creezio.Switcher.Desktop
                     assert(id == setupId, "publication cible la préparation existante sans recréer de chat");
                     return Task.FromResult(new CloudEnvironmentSetupResult { Id = id, ConfigurationId = added, ThreadId = "setup-thread", TurnId = "setup-turn", State = "publishing", Stage = "approval-pending" });
                 };
-                assert(!Button("Modifier et publier…").IsEnabled && Button("Préparer l’environnement…").IsEnabled, "révision initiale propose préparation et protège la modification d’une version non publiée");
+                assert(!Menu("Modifier et publier…").IsEnabled && Button("Préparer l’environnement…").IsEnabled, "révision initiale propose préparation et protège la modification d’une version non publiée");
                 await Dialog("Préparer l’environnement Codex Cloud", "Préparer l’environnement…", async form =>
                 {
                     assert(!Descendants(form).OfType<TextBox>().Any() && Descendants(form).OfType<TextBlock>().Any(text => text.Text.Contains("fixture/project")), "préparation utilise le nom GitHub fourni par le catalogue sans saisie d’identifiant technique");
@@ -190,14 +198,32 @@ namespace Creezio.Switcher.Desktop
                 });
                 await Until(() => Status().Text.Contains("Préparation en cours"));
                 assert(preparations == 1 && publications == 0 && !Descendants(cloud).OfType<Button>().Any(button => Object.Equals(button.Content, "Publier l’environnement")), "démarrer une préparation ne publie pas automatiquement l’environnement");
-                Button("Suivre la préparation").RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                Invoke("Suivre la préparation");
                 await Until(() => Descendants(cloud).OfType<Button>().Any(button => Object.Equals(button.Content, "Publier l’environnement")));
                 assert(follows == 1 && publications == 0, "fin de préparation propose une publication explicitement séparée");
-                Button("Publier l’environnement").RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                Invoke("Publier l’environnement");
                 await Until(() => Status().Text.Contains("Publication de l’environnement en cours"));
-                Button("Suivre la préparation").RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                Invoke("Suivre la préparation");
                 await Until(() => Status().Text.Contains("publication vérifiée"));
                 assert(preparations == 1 && publications == 1 && follows == 2, "suivi terminé ne rejoue ni chat ni prompt ni publication");
+                published=true;await cloud.Reload(added);shell.UpdateLayout();
+                string missionOwner=null,missionEnvironment=null;cloud.CreateMissionFixture=(instanceId,environmentId)=>{missionOwner=instanceId;missionEnvironment=environmentId;return Task.CompletedTask;};
+                assert(Button("Créer une mission").IsEnabled&&!Descendants(cloud).OfType<Button>().Any(item=>Object.Equals(item.Content,"Renommer l’environnement")||Object.Equals(item.Content,"Modifier et publier…")),"environnement prêt : une action de mission, les réglages sont regroupés dans le menu");
+                Invoke("Créer une mission");await Until(()=>missionOwner!=null);
+                assert(missionOwner==owner.Id&&missionEnvironment==added,"créer une mission préserve exactement l’instance et l’environnement sélectionnés sans appel Cloud de mutation");
+                cloud.SetFixtureUpdate(new CloudEnvironmentUpdateResult{Id="fixture-failed-update",ConfigurationId=added,State="failed",Stage="draft-creation",FailureCode="unexpected-html"});shell.UpdateLayout();
+                assert(Button("Créer une mission").IsEnabled&&!Descendants(cloud).OfType<Button>().Any(item=>Object.Equals(item.Content,"Suivre la publication"))&&!cloud.ActionsMenu.Items.OfType<MenuItem>().Any(item=>Object.Equals(item.Header,"Suivre la publication")),"ancien échec terminal ne masque pas la version prête et ne propose plus un suivi inutile");
+                assert(Descendants(cloud).OfType<Expander>().All(expander=>!expander.IsExpanded),"configuration, diagnostic et ancienne erreur restent repliés par défaut");
+                double originalWidth=shell.Width,originalHeight=shell.Height;
+                foreach(var size in new[]{new Size(1280,860),new Size(980,620)}){
+                    shell.Width=size.Width;shell.Height=size.Height;shell.UpdateLayout();await Task.Delay(20);shell.UpdateLayout();
+                    var primary=Button("Créer une mission");var refresh=Button("Actualiser le Cloud");
+                    bool Within(FrameworkElement element){var point=element.TranslatePoint(new Point(),shell);return point.X>=0&&point.Y>=0&&point.X+element.ActualWidth<=shell.ActualWidth+1&&point.Y+element.ActualHeight<=shell.ActualHeight+1;}
+                    assert(Within(primary)&&Within(refresh)&&cloud.ActualHeight>200,"actions Cloud visibles sans défilement imbriqué à "+size.Width+" × "+size.Height);
+                    assert(size.Width==1280?cloud.EnvironmentList.IsVisible:cloud.EnvironmentChoice.IsVisible,"catalogue Cloud s’adapte à la largeur "+size.Width);
+                    Capture(shell,Path.Combine(root,"Instance-cloud-"+size.Width+"x"+size.Height+".png"));
+                }
+                shell.Width=originalWidth;shell.Height=originalHeight;shell.UpdateLayout();
                 instances.ShowTab(1);
                 shell.UpdateLayout();
             }
