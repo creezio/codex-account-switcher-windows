@@ -22,6 +22,10 @@ namespace Creezio.Switcher
             foreach(var instance in data.Instances) {
                 if(String.IsNullOrWhiteSpace(instance.Name)) instance.Name = instance.IsLocal ? "Session habituelle" : "Instance Codex";
                 if(instance.IsLocal) instance.Archived = false;
+                if(String.IsNullOrEmpty(instance.HeadlessSandbox))instance.HeadlessSandbox="workspace-write";
+                if(String.IsNullOrEmpty(instance.HeadlessApprovalPolicy))instance.HeadlessApprovalPolicy="on-request";
+                if(!new[]{"read-only","workspace-write","danger-full-access"}.Contains(instance.HeadlessSandbox)||!new[]{"on-request","never"}.Contains(instance.HeadlessApprovalPolicy))
+                    throw new InvalidDataException("Permissions du moteur sans fenêtre invalides.");
             }
             foreach(var profile in data.Profiles) {
                 if(data.Version == 1) profile.AllInstances = true;

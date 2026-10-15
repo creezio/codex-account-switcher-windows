@@ -34,7 +34,7 @@ function Assert-IncompleteApplicationDirectory([string]$Directory) {
 }
 
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-if(-not $OutputDirectory){$OutputDirectory=Join-Path $repo 'outputs\v0.17.2-beta.1'}
+if(-not $OutputDirectory){$OutputDirectory=Join-Path $repo 'outputs\v0.18.0-beta.1'}
 if(-not $RuntimeDirectory){$RuntimeDirectory=Join-Path $repo 'outputs\v0.16.1-beta.1'}
 $target=[IO.Path]::GetFullPath($OutputDirectory).TrimEnd('\')
 $source=[IO.Path]::GetFullPath($RuntimeDirectory).TrimEnd('\')

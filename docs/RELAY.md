@@ -1,5 +1,12 @@
 # Relais configurable — interface 0.7, protocole 0.6
 
+Depuis 0.18, les destinations locales fermées peuvent utiliser un moteur sans
+fenêtre avec leur compte permanent et leurs permissions configurées. Les
+questions et confirmations sont traitées dans **Tâches → Interventions**.
+Les règles ci-dessous sur les permissions et l’ouverture des chats concernent
+le transport des fenêtres Codex déjà ouvertes. Voir [les instances](SIMPLE-INSTANCES.md)
+et [la validation actuelle](VALIDATION.md) pour le nouveau mode.
+
 Le relais transmet des travaux entre des chats de comptes Codex différents sur le même PC Windows. Chaque utilisateur définit ses rôles, projets, ressources et règles. Revue, tests, recherche, accès à un plugin privé et publication sont des usages possibles ; aucun n'est imposé.
 
 ## Installation et mise à jour

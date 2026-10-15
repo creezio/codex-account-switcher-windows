@@ -180,8 +180,11 @@ namespace Creezio.Switcher.Desktop
             try
             {
                 await Pages[page].Refresh();
-                if (CurrentPage == page)
-                    status.Text = "À jour · " + DateTime.Now.ToString("HH:mm");
+                if (CurrentPage == page){
+                    var pending=await context.Read(a=>new HeadlessApprovals(context.Store).Pending());
+                    status.Text = pending.Length>0?pending.Length+" intervention(s) · voir Tâches":"À jour · " + DateTime.Now.ToString("HH:mm");
+                    if(!context.Fixture&&tray!=null&&await context.Read(a=>a.Settings.Notifications))foreach(var request in pending)if(notified.Add("headless:"+request.Id))tray.ShowBalloonTip(6000,"Un agent attend votre réponse","Ouvrez Tâches → Interventions dans Account Switcher.",System.Windows.Forms.ToolTipIcon.Info);
+                }
             }
             catch (Exception e) { if (CurrentPage == page) status.Text = Program.SafeError(e); }
             finally { refreshing.Remove(page); }

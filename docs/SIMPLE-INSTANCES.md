@@ -1,4 +1,9 @@
-# Instances nommées — 0.9.0-beta.2
+# Instances nommées — 0.18.0-beta.1
+
+Une destination fermée peut désormais travailler sans ouvrir Codex. Réglez
+**Instances → Compte → Fonctionnement sans fenêtre** et ses permissions, puis
+déléguez par son nom. Les confirmations et questions apparaissent dans
+**Tâches → Interventions**. Le Cloud utilise directement le compte associé.
 
 ## Utilisation
 
@@ -6,8 +11,8 @@
    enregistré ou **Connecter un nouveau compte**. Terminez la connexion officielle
    dans le navigateur, puis utilisez **Préparer et ouvrir**.
 2. Le switcher associe définitivement ce compte, installe son plugin et ses skills,
-   puis ouvre son espace Codex indépendant. Une instance entièrement neuve doit
-   recevoir un premier message dans Codex pour disposer d'une conversation native.
+   puis ouvre son espace Codex indépendant. Le moteur sans fenêtre peut créer
+   sa propre conversation native sans premier message visible préalable.
 3. Dans un nouveau chat de votre instance de travail, demandez :
    **« Analyse ces fichiers et délègue la relecture à Léa. Rapporte-moi son résultat. »**
    Utilisez le nom exact de votre instance. Le skill connecte le chat, choisit

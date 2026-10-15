@@ -15,12 +15,14 @@ namespace Creezio.Switcher
         internal long? Resident,PrivateBytes;
         internal double? CpuSeconds,CpuPercent;
     }
+    internal sealed class ResourceRoot {internal int Pid;internal long Started;}
     internal sealed class ResourceScope
     {
         internal string Id=null,Name=null,Account=null;
         internal bool Primary=false,Managed=false;
         internal InstanceState State=null;
         internal string Home=null;
+        internal ResourceRoot[] Background=new ResourceRoot[0];
     }
     internal sealed class ResourceGroup
     {
@@ -89,8 +91,10 @@ namespace Creezio.Switcher
         internal static ResourceSnapshot Build(ResourceProcess[] rows,ResourceScope[] scopes,ResourceProcess[] before,double elapsed,int processors)
         {
             var byPid=rows.ToDictionary(p=>p.Pid);var roots=new Dictionary<int,string>();
-            foreach(var scope in scopes){var state=scope.State;if(state==null||!state.Running)continue;
-                foreach(var pair in new[]{new KeyValuePair<int,long>(state.DesktopPid,state.DesktopStartTicks),new KeyValuePair<int,long>(state.HostPid,state.HostStartTicks)}){
+            foreach(var scope in scopes){var state=scope.State;
+                var candidates=(scope.Background??new ResourceRoot[0]).Select(root=>new KeyValuePair<int,long>(root.Pid,root.Started));
+                if(state!=null&&state.Running)candidates=candidates.Concat(new[]{new KeyValuePair<int,long>(state.DesktopPid,state.DesktopStartTicks),new KeyValuePair<int,long>(state.HostPid,state.HostStartTicks)});
+                foreach(var pair in candidates){
                     ResourceProcess process;if(pair.Key>0&&pair.Value>0&&byPid.TryGetValue(pair.Key,out process)&&process.Started==pair.Value){if(roots.ContainsKey(pair.Key)&&roots[pair.Key]!=scope.Id)throw new InvalidOperationException("Attribution de processus ambiguë. Aucune action de fermeture n’est proposée.");roots[pair.Key]=scope.Id;}
                 }
             }

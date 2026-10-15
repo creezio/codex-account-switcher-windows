@@ -128,6 +128,7 @@ namespace Creezio.Switcher
         private const int MaximumResponseBytes = 2097152;
         private readonly HttpClient client;
         private readonly Func<AuthIdentity> readIdentity;
+        internal Action<CancellationToken> RefreshReadAuthentication {get;set;}
         private readonly CloudBackendBinding binding;
         private bool ownsClient;
         private bool disposed;
@@ -237,7 +238,9 @@ namespace Creezio.Switcher
             if (observed.AccountKey != binding.AccountKey || observed.AccountId != binding.AccountId || observed.UserId != binding.UserId) throw Authentication();
             return identity;
         }
-        private async Task<T> Request<T>(HttpMethod method, string path, object body, Func<object, T> parse, CancellationToken token)
+        private Task<T> Request<T>(HttpMethod method, string path, object body, Func<object, T> parse, CancellationToken token)
+        {return RequestCore(method,path,body,parse,token,true);}
+        private async Task<T> RequestCore<T>(HttpMethod method, string path, object body, Func<object, T> parse, CancellationToken token,bool mayRefresh)
         {
             if (disposed) throw new ObjectDisposedException("CloudBackend");
             bool mutation = method != HttpMethod.Get, sent = false; int? status = null; string requestId = null;
@@ -254,7 +257,7 @@ namespace Creezio.Switcher
                 request.Headers.Add("ChatGPT-Account-Id", binding.AccountId);
                 request.Headers.Add("X-OpenAI-Product-Sku", "codex");
                 request.Headers.Add("originator", "creezio_account_switcher");
-                request.Headers.UserAgent.ParseAdd("creezio-switcher-cloud-prototype/0.17.2-beta.1");
+                request.Headers.UserAgent.ParseAdd("creezio-switcher-cloud-prototype/0.18.0-beta.1");
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
                 if (body != null) request.Content = new StringContent(Json.Write(body), Encoding.UTF8, "application/json");
                 try
@@ -267,6 +270,7 @@ namespace Creezio.Switcher
                         if (status >= 300 && status < 400) throw new CloudBackendException("redirect", "La redirection du service Cloud a été refusée.", status, requestId);
                         if (response.RequestMessage != null && response.RequestMessage.RequestUri != request.RequestUri) throw new CloudBackendException("redirect", "La destination de la réponse Cloud a changé.", status, requestId);
                         if (!response.IsSuccessStatusCode) {
+                            if(status==401&&!mutation&&mayRefresh&&RefreshReadAuthentication!=null){RefreshReadAuthentication(token);return await RequestCore(method,path,body,parse,token,false).ConfigureAwait(false);}
                             string media=MediaType(response); bool challenge=IsEdgeChallenge(response);
                             if(status==403&&media=="text/html")throw new CloudBackendException("unexpected-html", "Le service Cloud a refusé cet appel et renvoyé une page HTML. Le motif concernant les droits du compte n'est pas confirmé ; aucun renvoi automatique.",status,requestId,media,challenge);
                             throw HttpFailure(status.Value, requestId, media, challenge);

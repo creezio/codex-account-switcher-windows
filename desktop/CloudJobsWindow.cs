@@ -95,10 +95,11 @@ namespace Creezio.Switcher.Desktop
             if (!job.ReturnToSource) return "Non demandé";
             switch (job.ReturnState)
             {
-                case "delivered": return "Remis au chat source";
+                case "delivered": return job.SourceReturnState=="running"?"Remis · traitement local en cours":job.SourceReturnState=="attention"?"Remis · traitement local à vérifier":new[]{"failed","interrupted"}.Contains(job.SourceReturnState)?"Remis · traitement local interrompu":job.SourceReturnState=="completed"?"Remis · traitement local terminé":"Remis au chat source";
                 case "pending": return "Prêt pour remise";
                 case "sending": return "Remise en cours";
                 case "uncertain": return "Remise à vérifier";
+                case "attention": return "Remise bloquée · résultat disponible";
                 default: return "En attente du résultat";
             }
         }
@@ -139,7 +140,7 @@ namespace Creezio.Switcher.Desktop
         {
             var row = list.SelectedItem as Row; var job = row?.Job;
             if (job == null) { detail.Visibility = Visibility.Collapsed; selectedId = detailStamp = null; return; }
-            string stamp = Json.Write(new { job.Id, job.Title, row.AccountLine, job.State, job.Branch, job.Result, job.Error, job.ConfigurationId, job.ThreadId, job.ReturnState, job.ReturnToSource, acting });
+            string stamp = Json.Write(new { job.Id, job.Title, row.AccountLine, job.State, job.Branch, job.Result, job.Error, job.ConfigurationId, job.ThreadId, job.ReturnState, job.SourceReturnState, job.ReturnToSource, acting });
             if (stamp == detailStamp) return;
             bool same = selectedId == job.Id; double outer = same ? detailScroll.VerticalOffset : 0, inner = same ? result.VerticalOffset : 0;
             int selectionStart = same ? result.SelectionStart : 0, selectionLength = same ? result.SelectionLength : 0;

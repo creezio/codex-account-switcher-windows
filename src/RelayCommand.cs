@@ -53,8 +53,9 @@ namespace Creezio.Switcher
                 store.Register(channel);return channel;
             }
         }
-        internal static void RequireSource(RelayChannel channel)
+        internal static void RequireSource(RelayStore store,RelayChannel channel)
         {
+            if(AgentProviders.Kind(channel)=="codex-headless"){HeadlessSourceBroker.RequireCaller(store,channel,Environment.GetEnvironmentVariable("CODEX_THREAD_ID"));return;}
             if(Environment.GetEnvironmentVariable("CODEX_APP_TOOLS_PIPE_PATH")!=channel.PipePath || !RelayStore.SamePath(CodexEnvironment.DefaultHome(),channel.Home))
                 throw new InvalidOperationException("Cette conversation n'appartient pas à l'instance du canal source.");
             new DesktopRelayTransport().Verify(channel);
@@ -76,14 +77,14 @@ namespace Creezio.Switcher
             if(op=="policy")return RelayPolicies.Load(store);
             if(op=="submit"){
                 var spec=Json.Read<RelayJobSpec>(Json.Write(Json.Get(input,"job")));if(spec==null)throw new InvalidOperationException("Job requis.");
-                var source=store.Channel(spec.From);RequireSource(source);
+                var source=store.Channel(spec.From);RequireSource(store,source);
                 var m=await new RelayRouter(store).Submit(spec,Environment.GetEnvironmentVariable("CODEX_THREAD_ID"),token);RelayWorker.Ensure(store);return MessageSummary(m,true);
             }
             if(op=="channels")return store.Channels().Select(ChannelSummary).ToArray();
             if(op=="list")return store.Messages().Take(100).Select(m=>MessageSummary(m,false)).ToArray();
             if(op=="get")return MessageSummary(store.Message(Required(input,"id")),true);
             if(op=="send") {
-                var source=store.Channel(Required(input,"from"));RequireSource(source);
+                var source=store.Channel(Required(input,"from"));RequireSource(store,source);
                 string thread=Environment.GetEnvironmentVariable("CODEX_THREAD_ID");
                 var spec=new RelayJobSpec{From=source.Id,To=Required(input,"to"),Title=Required(input,"title"),Prompt=Required(input,"prompt"),Revision=Json.Str(Json.Get(input,"revision")),ReturnToSource=Object.Equals(Json.Get(input,"returnToSource"),true),ReplyTo=Json.Str(Json.Get(input,"replyTo")),Id=String.IsNullOrWhiteSpace(Json.Str(Json.Get(input,"id")))?null:Json.Str(Json.Get(input,"id")),ExplicitDelegation=true};
                 var message=await new RelayRouter(store).Submit(spec,thread,token);RelayWorker.Ensure(store);return MessageSummary(message,true);

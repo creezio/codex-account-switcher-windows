@@ -12,6 +12,8 @@ namespace Creezio.Switcher
     public sealed class RelayChannel
     {
         public string Provider {get;set;}
+        public string HeadlessSandbox {get;set;}
+        public string HeadlessApprovalPolicy {get;set;}
         public string Executable {get;set;}
         public string PeerId {get;set;}
         public string RemoteChannel {get;set;}
@@ -40,6 +42,7 @@ namespace Creezio.Switcher
         public bool OperatorOrigin {get;set;}
         public string RequestedThreadId {get;set;}
         public string TargetBinding {get;set;}
+        public string TargetProvider {get;set;}
         public string TargetExecutionWorkspace {get;set;}
         public string TargetDevice {get;set;}
         public string Id {get;set;}

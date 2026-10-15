@@ -1,5 +1,9 @@
 # Appels d’outils entre instances — plan et contrat
 
+Depuis 0.18, **Fonctionnement sans fenêtre** permet d’utiliser le profil
+propriétaire fermé. Un moteur temporaire réalise les appels puis libère ses
+processus. Une reconnexion ou un consentement interactif reste explicite.
+
 Depuis la version 0.12.2, les réponses utilisent des liens nommés qui ouvrent
 la ressource dans le Codex propriétaire, sans éditeur supplémentaire ni prompt.
 Voir [les liens interinstances](RESOURCE-LINKS.md). Les cartes natives restent
@@ -27,7 +31,7 @@ les réglages avancés. Voir [le guide des ressources](INSTANCE-RESOURCES.md).
 ## Contrat
 
 Le transport utilise le serveur officiel livré avec Codex, sous le profil de
-l’instance propriétaire. Codex doit rester ouvert. Un contexte technique
+l’instance propriétaire. Si son mode sans fenêtre est désactivé, Codex doit rester ouvert. Un contexte technique
 éphémère permet l’appel MCP ; il ne reçoit aucun prompt et ne lance aucun modèle.
 Les conversations existantes ne sont ni reprises ni modifiées.
 
@@ -60,7 +64,8 @@ Windows courant, pas contre un programme exécuté avec les mêmes droits Window
 
 ## Parcours utilisateur
 
-1. Ouvrir les deux instances nommées, chacune avec son compte permanent.
+1. Choisir les deux instances nommées, chacune avec son compte permanent.
+   Le propriétaire peut rester fermé si son mode sans fenêtre est activé.
 2. Dans **Outils partagés**, cliquer **Partager des outils**, choisir le compte
    propriétaire puis **Charger les plugins**.
 3. Cocher les opérations autorisées et les instances clientes. Si le partage

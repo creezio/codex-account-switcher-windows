@@ -119,6 +119,8 @@ namespace Creezio.Switcher.Desktop
                 var close=MenuAction("Fermer",()=>ManageInstance(info,"close"));close.IsEnabled=restart.IsEnabled;ActionsMenu.Items.Add(close);
             }
             lifecycle.Children.Add(more);
+            ActionsMenu.Items.Add(new Separator());
+            var headless=MenuAction("Fonctionnement sans fenêtre…",async()=>{await HeadlessSettingsWindow.Open(Context,Shell,info.Instance.Id);await Refresh();});headless.IsEnabled=info.Instance.AccountKey!=null;ActionsMenu.Items.Add(headless);
             if(!busy&&state.Running&&!state.WindowReady)Notice.Text=state.Phase=="background"?"La fenêtre est fermée ; Codex fonctionne encore en arrière-plan.":state.Message??state.Caption;
             if(!busy&&!state.Running&&state.Phase=="error")Notice.Text=state.Message??"Le lancement a échoué. Réessayez ou consultez le diagnostic.";
         }
@@ -197,13 +199,14 @@ namespace Creezio.Switcher.Desktop
         private void RenderAccount()
         {
             bool verifying=verifications.TryGetValue(current.Instance.Id,out var check)&&check.Busy;
-            string stamp=Json.Write(new{current.Instance.Id,current.Instance.Name,current.Instance.Archived,current.Instance.AccountKey,current.Active,current.State.Running,current.State.Phase,current.State.Message,current.Integration.Status,current.Integration.Healthy,current.Integration.Updated,current.Integration.InstalledVersion,verifying,quota=current.Account?.Quotas,fresh=current.Account?.IsFresh});
+            string stamp=Json.Write(new{current.Instance.Id,current.Instance.Name,current.Instance.Archived,current.Instance.AccountKey,current.Instance.HeadlessEnabled,current.Instance.HeadlessSandbox,current.Instance.HeadlessApprovalPolicy,current.Active,current.State.Running,current.State.Phase,current.State.Message,current.Integration.Status,current.Integration.Healthy,current.Integration.Updated,current.Integration.InstalledVersion,verifying,quota=current.Account?.Quotas,fresh=current.Account?.IsFresh});
             if(detail.Content is ScrollViewer previous&&Object.Equals(previous.Tag,stamp))return;
             var info=current;var i=info.Instance;var body=new StackPanel();var account=new StackPanel();account.Children.Add(Ui.Text("COMPTE ASSOCIÉ",11,true));account.Children.Add(Ui.Text(info.Account?.Label??"À connecter",21));account.Children.Add(Ui.Text(info.Account?.Email??"Connectez un compte GPT pour préparer cet espace.",14,true));
             var actions=Ui.Actions(account);
             if(i.Archived)actions.Children.Add(Ui.AsyncButton("Restaurer l’instance",()=>Change(a=>{a.Instances.Archive(a.Data.Instances.Single(x=>x.Id==i.Id),false);return Task.CompletedTask;}),Error,true));
             else if(i.AccountKey==null)actions.Children.Add(Ui.AsyncButton("Connecter un compte",async()=>{await InstanceWizard.Open(Context,Shell,i.Id);await Refresh();},Error,true));
             body.Children.Add(Ui.Card(account));
+            if(!i.Archived&&i.AccountKey!=null){account.Children.Add(Ui.Text(HeadlessSettingsWindow.Caption(i),13,true));account.Children.Add(Ui.Text("Cloud : connexion vérifiée à chaque demande, même si la fenêtre est fermée.",12,true));var modes=Ui.Actions(account);modes.Children.Add(Ui.AsyncButton("Fonctionnement sans fenêtre…",async()=>{await HeadlessSettingsWindow.Open(Context,Shell,i.Id);await Refresh();},Error));}
             if(info.Account!=null){
                 var limits=new StackPanel();limits.Children.Add(Ui.Text("Limites d’utilisation",18));
                 foreach(var bucket in info.Account.Quotas)foreach(var q in new[]{bucket.Primary,bucket.Secondary}.Where(q=>q!=null)){

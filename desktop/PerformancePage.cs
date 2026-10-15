@@ -175,9 +175,10 @@ namespace Creezio.Switcher.Desktop
         {
             ResourceActivity cached;
             activities.TryGetValue(row.Id, out cached);
+            bool headless=(row.Group.Scope.Background??new ResourceRoot[0]).Any(root=>row.Group.Processes.Any(p=>p.Pid==root.Pid&&p.Started==root.Started));
             row.Busy = cached?.State == "busy";
-            row.Activity = row.Id == "switcher" ? "Supervision et relais" : row.Id == "unassigned" ? "Aucune fermeture automatique" : row.Group.Scope.State?.Running != true ? (row.Count > 0 ? "Processus encore présents · état à vérifier" : "Instance fermée") : cached?.Message ?? "Activité non vérifiée";
-            row.Status = row.Id == "switcher" ? "Supervision" : row.Id == "unassigned" ? "À examiner" : row.Group.Scope.State?.Running != true ? (row.Count > 0 ? "À vérifier" : "Fermée") : row.Busy ? "Actif" : "Ouverte";
+            row.Activity = row.Id == "switcher" ? "Supervision et relais" : row.Id == "unassigned" ? "Aucune fermeture automatique" : row.Group.Scope.State?.Running != true ? (headless?"Moteur sans fenêtre · suivi dans Tâches":row.Count > 0 ? "Processus encore présents · état à vérifier" : "Instance fermée") : cached?.Message ?? "Activité non vérifiée";
+            row.Status = row.Id == "switcher" ? "Supervision" : row.Id == "unassigned" ? "À examiner" : row.Group.Scope.State?.Running != true ? (headless?"Sans fenêtre":row.Count > 0 ? "À vérifier" : "Fermée") : row.Busy ? "Actif" : "Ouverte";
         }
 
         private void RecordHistory(ResourceRow row)

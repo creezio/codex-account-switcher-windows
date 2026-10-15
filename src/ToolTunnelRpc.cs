@@ -21,66 +21,25 @@ namespace Creezio.Switcher
     // A short-lived official app-server client. Never starts a model turn or resumes a user's chat.
     internal sealed class ToolTunnelRpc : IToolTunnelConnection
     {
-        private readonly Process process;
-        private readonly ProcessJob job;
-        private readonly StreamWriter input;
-        private readonly object writeLock=new object();
-        private readonly ConcurrentDictionary<int,TaskCompletionSource<object>> pending=new ConcurrentDictionary<int,TaskCompletionSource<object>>();
-        private int sequence;
-        private bool disposed,interaction;
+        private readonly IHeadlessRpc client;
+        private readonly HeadlessProcesses tracking;
         private string thread;
         private readonly string home;
-        public ToolTunnelRpc(string executable,string profile)
+        internal ToolTunnelRpc(string executable,string profile,string accountKey=null,RelayStore store=null)
         {
             home=Path.GetFullPath(profile);SafeFiles.RejectLinks(home);
-            var start=new ProcessStartInfo(executable,"app-server --listen stdio://"){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8,WorkingDirectory=home};
-            start.EnvironmentVariables["CODEX_HOME"]=home;start.EnvironmentVariables["CODEX_SQLITE_HOME"]=home;
-            foreach(string key in new[]{"CODEX_THREAD_ID","CODEX_APP_TOOLS_PIPE_PATH","OPENAI_API_KEY","CODEX_API_KEY","CODEX_ACCESS_TOKEN","OPENAI_IDENTITY_TOKEN","OPENAI_IDENTITY_TOKEN_FILE","OPENAI_IDENTITY_PROVIDER_ID","OPENAI_ORGANIZATION","CHATGPT_BASE_URL","CODEX_CHATGPT_BASE_URL"})start.EnvironmentVariables.Remove(key);
-            process=new Process{StartInfo=start,EnableRaisingEvents=true};
-            process.OutputDataReceived+=Output;process.ErrorDataReceived+=delegate{};
-            process.Exited+=delegate{Fail(new IOException("Le serveur d'outils Codex s'est arrêté."));};
-            try{process.Start();job=new ProcessJob(process);input=new StreamWriter(process.StandardInput.BaseStream,new UTF8Encoding(false)){AutoFlush=true};process.BeginOutputReadLine();process.BeginErrorReadLine();}
-            catch{Dispose();throw;}
+            client=new HeadlessRpc(executable,home,accountKey??AuthIdentity.Parse(SafeFiles.ReadText(Path.Combine(home,"auth.json"))).Key);
+            try{tracking=new HeadlessProcesses(store,client,home,accountKey);}catch{client.Dispose();throw;}
         }
-        private void Send(object value){lock(writeLock){if(disposed)throw new ObjectDisposedException("ToolTunnelRpc");input.WriteLine(Json.Write(value));}}
+        internal ToolTunnelRpc(IHeadlessRpc connection,string profile){client=connection;home=Path.GetFullPath(profile);}
         private async Task<object> Rpc(string method,object args,CancellationToken token)
         {
-            int id=Interlocked.Increment(ref sequence);var completion=new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);pending[id]=completion;
-            try{
-                Send(new{id=id,method=method,@params=args});
-                using(var deadline=CancellationTokenSource.CreateLinkedTokenSource(token)){
-                    deadline.CancelAfter(TimeSpan.FromSeconds(50));
-                    using(deadline.Token.Register(()=>completion.TrySetCanceled()))return await completion.Task.ConfigureAwait(false);
-                }
-            }finally{TaskCompletionSource<object> ignored;pending.TryRemove(id,out ignored);}
+            try{return await client.Call(method,args,token).ConfigureAwait(false);}
+            catch(HeadlessInteractionException){throw new TunnelInteractionException();}
         }
-        private void Output(object sender,DataReceivedEventArgs e)
-        {
-            if(String.IsNullOrWhiteSpace(e.Data))return;
-            try{
-                // Connector inventories may exceed the normal 4 MiB record limit; never persist them wholesale.
-                if(e.Data.Length>32*1024*1024)throw new IOException("Inventaire d'outils trop volumineux.");
-#if NETCOREAPP
-                var value=System.Text.Json.JsonSerializer.Deserialize<Dictionary<string,object>>(e.Data,Desktop.JsonCompatibility.Options);
-#else
-                var value=new System.Web.Script.Serialization.JavaScriptSerializer{MaxJsonLength=32*1024*1024}.Deserialize<Dictionary<string,object>>(e.Data);
-#endif
-                if(Json.Get(value,"method")!=null){
-                    if(Json.Get(value,"id")!=null){interaction=true;Send(new{id=Json.Get(value,"id"),error=new{code=-32000,message="Interactive approval must be handled in Codex; the tool tunnel cannot grant it."}});}
-                    return;
-                }
-                TaskCompletionSource<object> completion;int id=Convert.ToInt32(Json.Get(value,"id"));if(!pending.TryGetValue(id,out completion))return;
-                if(interaction)completion.TrySetException(new TunnelInteractionException());
-                else if(Json.Get(value,"error")!=null)completion.TrySetException(new InvalidOperationException("Codex a refusé l'appel d'outil (code "+Convert.ToString(Json.Get(Json.Get(value,"error"),"code"))+"). Vérifiez la connexion et les autorisations du plugin dans l'instance propriétaire."));
-                else completion.TrySetResult(Json.Get(value,"result"));
-            }catch(Exception error){Fail(new IOException("Réponse du serveur d'outils invalide ("+error.GetType().Name+")."));}
-        }
-        private void Fail(Exception error){foreach(var p in pending)p.Value.TrySetException(error);}
         private async Task Ready(CancellationToken token)
         {
             if(thread!=null)return;
-            await Rpc("initialize",new{clientInfo=new{name="creezio_tool_tunnel",version=RelayWorker.Version},capabilities=new{experimentalApi=true}},token).ConfigureAwait(false);
-            Send(new{method="initialized"});
             var context=await Rpc("thread/start",new{cwd=home,ephemeral=true},token).ConfigureAwait(false);
             thread=Json.Str(Json.Get(Json.Get(context,"thread"),"id"));if(String.IsNullOrEmpty(thread))throw new IOException("Contexte d'outils Codex absent.");
         }
@@ -110,12 +69,6 @@ namespace Creezio.Switcher
         }
         public async Task<object> Invoke(string server,string tool,object arguments,CancellationToken token)
         {await Ready(token).ConfigureAwait(false);return await Rpc("mcpServer/tool/call",new{threadId=thread,server=server,tool=tool,arguments=arguments},token).ConfigureAwait(false);}
-        public void Dispose()
-        {
-            if(disposed)return;disposed=true;
-            try{if(input!=null)input.Dispose();else process.StandardInput.Close();}catch{}
-            try{if(!process.WaitForExit(1500))process.Kill();}catch{}
-            if(job!=null)job.Dispose();process.Dispose();Fail(new ObjectDisposedException("ToolTunnelRpc"));
-        }
+        public void Dispose(){try{client.Dispose();}finally{if(tracking!=null)tracking.Dispose();}}
     }
 }

@@ -14,8 +14,8 @@ internal static class CloudGitHubTests
     private static void Assert(bool ok,string why){if(!ok)throw new Exception(why);}
     private static Exception Reject(Action action){try{action();}catch(Exception error){return error;}throw new Exception("Expected GitHub catalogue refusal");}
     private static string Encode(object value){return Convert.ToBase64String(Encoding.UTF8.GetBytes(Json.Write(value))).TrimEnd('=').Replace('+','-').Replace('/','_');}
-    private static AuthIdentity Identity(string account="account-a")
-    {return new AuthIdentity{Key=account+":user-a",AccountId=account,AccessToken="e30."+Encode(new Dictionary<string,object>{{"exp",DateTimeOffset.UtcNow.ToUnixTimeSeconds()+3600},{"https://api.openai.com/auth",new{chatgpt_account_id=account,chatgpt_user_id="user-a"}}})+".fixture"};}
+    private static AuthIdentity Identity(string account="account-a",string revision="old")
+    {return new AuthIdentity{Key=account+":user-a",AccountId=account,AccessToken="e30."+Encode(new Dictionary<string,object>{{"exp",DateTimeOffset.UtcNow.ToUnixTimeSeconds()+3600},{"https://api.openai.com/auth",new{chatgpt_account_id=account,chatgpt_user_id="user-a"}},{"revision",revision}})+".fixture"};}
     private static object Repository(string id="repo_fixture",bool permissions=true)
     {
         var value=new Dictionary<string,object>{{"id",id},{"repository_full_name","fixture/lab"},{"default_branch","main"},{"archived",false},{"clone_url","https://"+Secret+"@github.com/fixture/lab.git"},{"access_token",Secret}};
@@ -121,6 +121,28 @@ internal static class CloudGitHubTests
             using(var f=new Fixture()){
                 f.Transport.Reply=r=>{f.Current=Identity("account-b");return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK){Content=new StringContent(Json.Write(new{repositories=new[]{Repository()}}))});};
                 var error=Reject(()=>f.List()) as CloudBackendException;Assert(error!=null&&error.Code=="authentication"&&f.Transport.Requests.Count==1,"post-read account change returned metadata");
+            }
+        });
+        check("cloud GitHub renews a rejected read once using the same account and never retries other failures",()=>{
+            using(var f=new Fixture()){
+                int refreshes=0;string old=f.Current.AccessToken;
+                f.Backend.RefreshReadAuthentication=token=>{refreshes++;f.Current=Identity(revision:"renewed");};
+                f.Transport.Reply=r=>Task.FromResult(new HttpResponseMessage(f.Transport.Requests.Count==1?HttpStatusCode.Unauthorized:HttpStatusCode.OK){Content=new StringContent("{\"repositories\":[]}")});
+                f.List();Assert(refreshes==1&&f.Transport.Requests.Count==2&&f.Transport.Requests.All(r=>r.Method=="GET"&&r.Account==f.Current.AccountId)&&f.Transport.Requests[0].Authorization=="Bearer "+old&&f.Transport.Requests[1].Authorization=="Bearer "+f.Current.AccessToken,"renewed catalogue read lost account pinning or repeated a mutation");
+            }
+            using(var f=new Fixture()){
+                int refreshes=0;f.Backend.RefreshReadAuthentication=token=>refreshes++;f.Reply(new{},HttpStatusCode.Unauthorized);
+                Reject(()=>f.List());Assert(refreshes==1&&f.Transport.Requests.Count==2,"catalogue authentication retried indefinitely");
+            }
+            using(var f=new Fixture()){
+                int refreshes=0;f.Backend.RefreshReadAuthentication=token=>refreshes++;f.Reply(new{},HttpStatusCode.Forbidden);
+                Reject(()=>f.List());Assert(refreshes==0&&f.Transport.Requests.Count==1,"catalogue retried a non-authentication refusal");
+            }
+        });
+        check("cloud GitHub refuses a different account during rejected-read renewal before retrying",()=>{
+            using(var f=new Fixture()){
+                f.Backend.RefreshReadAuthentication=token=>f.Current=Identity("account-b");f.Reply(new{},HttpStatusCode.Unauthorized);
+                var error=Reject(()=>f.List()) as CloudBackendException;Assert(error!=null&&error.Code=="authentication"&&f.Transport.Requests.Count==1,"catalogue renewal sent a request under another account");
             }
         });
         check("cloud GitHub cancellation and timeouts remain read-only without retries",()=>{

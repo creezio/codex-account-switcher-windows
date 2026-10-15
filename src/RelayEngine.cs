@@ -146,11 +146,12 @@ namespace Creezio.Switcher
                             message.OriginVerified=true;
                         }
                         var agent=policy.Agents.FirstOrDefault(a=>a.Channel==target.Id);
-                        if(agent!=null&&agent.ReuseConversation&&message.Job!=null&&String.IsNullOrEmpty(message.TargetThreadId)){
+                        if(AgentProviders.Kind(target)=="codex-headless"&&agent!=null&&agent.Permission=="full-access"&&Permissions(target,null)!="full-access"){message.BlockReason="permissions";message.Error="Cet agent exige Accès complet. Réglez explicitement les permissions sans fenêtre de son instance avant une nouvelle mission.";Store.Save(message);return;}
+                        if(AgentProviders.Kind(target)!="codex-headless"&&agent!=null&&agent.ReuseConversation&&message.Job!=null&&String.IsNullOrEmpty(message.TargetThreadId)){
                             var history=Store.Messages();var reusable=history.FirstOrDefault(old=>old.State=="completed"&&old.Job!=null&&old.Job.Project==message.Job.Project&&old.TargetChannelId==target.Id&&old.TargetAccountKey==target.AccountKey&&RelayStore.SamePath(old.TargetHome,target.Home)&&RelayStore.SamePath(old.Workspace,message.Workspace)&&!String.IsNullOrEmpty(old.TargetThreadId)&&!history.Any(active=>RelayRouter.Executing(active)&&active.TargetThreadId==old.TargetThreadId));
                             if(reusable!=null){message.TargetThreadId=reusable.TargetThreadId;message.DispatchPhase="work";message.ExpectedPermission=reusable.ExpectedPermission;}
                         }
-                        if(!String.IsNullOrEmpty(message.TargetThreadId)||message.SchemaVersion<2||!AgentProviders.Codex(target))transport.VerifySend(target,message.TargetThreadId);
+                        if(!String.IsNullOrEmpty(message.TargetThreadId)||message.SchemaVersion<2||!AgentProviders.Codex(target)||AgentProviders.Kind(target)=="codex-headless")transport.VerifySend(target,message.TargetThreadId);
                         if(!String.IsNullOrEmpty(message.RequestedThreadId)){
                             var current=await Read(target,message.TargetThreadId,token);
                             DirectMessages.RequireThread(current,message.TargetThreadId);
@@ -170,7 +171,8 @@ namespace Creezio.Switcher
                         }
                         try {
                             if(String.IsNullOrEmpty(message.TargetThreadId)) {
-                                if(message.SchemaVersion>=2){message.DispatchPhase="preflight";message.ExpectedPermission=target.RequireFullAccess||(agent!=null&&agent.Permission=="full-access")||Permissions(target,target.AnchorThreadId)=="full-access"?"full-access":"inherit";Store.Save(message);text=Preflight(message);}
+                                if(message.SchemaVersion>=2&&AgentProviders.Kind(target)!="codex-headless"){message.DispatchPhase="preflight";message.ExpectedPermission=target.RequireFullAccess||(agent!=null&&agent.Permission=="full-access")||Permissions(target,target.AnchorThreadId)=="full-access"?"full-access":"inherit";Store.Save(message);text=Preflight(message);}
+                                else if(AgentProviders.Kind(target)=="codex-headless"){message.DispatchPhase="work";message.ObservedPermission=Permissions(target,null);Store.Save(message);}
                                 object destination=String.IsNullOrEmpty(target.CodexProjectId)?(object)new {type="projectless"}:new {type="project",projectId=target.CodexProjectId,environment=new {type="local"}};
                                 var args=new Dictionary<string,object>{{"title","["+message.Id+"] "+message.Title},{"prompt",text},{"target",destination}};
                                 if(agent!=null&&!String.IsNullOrWhiteSpace(agent.Model))args["model"]=agent.Model;
@@ -187,6 +189,7 @@ namespace Creezio.Switcher
                         } catch {message.State="uncertain";message.Error="Résultat de l'envoi inconnu. Aucun renvoi automatique : vérifiez la conversation destinataire.";Store.Save(message);throw;}
                     }
                     if(message.State=="waiting") {
+                        if(message.CancellationRequested&&AgentProviders.Kind(target)=="codex-headless")await transport.Call(target,"interrupt_thread",new{threadId=message.TargetThreadId,turnId=message.TargetTurnId},token);
                         var turn=await FindTurn(target,message,token);
                         if(turn==null) {message.Error="En attente de la demande dans la conversation destinataire.";Store.Save(message);return;}
                         message.TargetTurnId=Json.Str(Json.Get(turn,"id"));
@@ -210,6 +213,7 @@ namespace Creezio.Switcher
                     }
                     if(PendingReturn(message))await Return(message,source,target,token);
                 } catch(OperationCanceledException){throw;}
+                catch(HeadlessRuntimeLostException ex){message.State="attention";message.BlockReason="headless-runtime";message.Error=Program.SafeError(ex);Store.Save(message);}
                 catch(Exception ex){if(message.State!="uncertain" && message.ReturnState!="uncertain")message.Error=Program.SafeError(ex);Store.Save(message);}
                 finally {message.LastPollUtc=DateTime.UtcNow.ToString("o");Store.Save(message);}
             }

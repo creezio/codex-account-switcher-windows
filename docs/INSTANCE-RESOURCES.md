@@ -14,7 +14,9 @@
    natives des chats et ne recharge pas l’intégration dans un chat déjà ouvert.
 3. **Ressources & accès** affiche les ressources du compte. La détection démarre
    à la sélection de l’instance si son inventaire a plus de dix minutes. Le bouton
-   **Actualiser** permet de la relancer. Codex propriétaire doit rester ouvert.
+   **Actualiser** permet de la relancer. Depuis 0.18, le propriétaire peut rester
+   fermé si **Fonctionnement sans fenêtre** est activé ; un moteur temporaire
+   utilise uniquement son compte et ses plugins autorisés.
 4. Dans **Partager avec**, choisir l’instance qui utilisera ces ressources.
 5. Rechercher par nom, filtrer par plugin, cocher les ressources et choisir les
    droits. **Enregistrer les accès** applique les changements ensemble. **Annuler**

@@ -42,7 +42,7 @@ namespace Creezio.Switcher
         public static List<AssistanceRule> Rules(RelayStore store){return store.ReadRecord<List<AssistanceRule>>("assistance-rules.dpapi");}
         public static void SaveRule(RelayStore store,AssistanceRule rule)
         {
-            var c=store.Channel(rule.Channel);if(!AgentProviders.Codex(c))throw new InvalidOperationException("Configurez les règles sur le PC propriétaire du canal.");
+            var c=store.Channel(rule.Channel);if(AgentProviders.Kind(c)!="codex")throw new InvalidOperationException("Configurez les règles sur un canal Codex avec interface du PC propriétaire.");
             if((rule.Instructions??"").Length>4000||(rule.Keywords??"").Length>2000||rule.PromptLength<0||rule.PromptLength>24000)throw new InvalidOperationException("Règle trop longue ou seuil invalide.");
             using(store.Lease("assistance-rules")){var all=Rules(store);if(rule.Enabled&&rule.HookEnabled&&all.Where(r=>r.Enabled&&r.HookEnabled&&r.Channel!=rule.Channel).Select(r=>store.Channel(r.Channel)).Any(other=>RelayStore.SamePath(other.Home,c.Home)&&RelayStore.SamePath(other.Workspace,c.Workspace)))throw new InvalidOperationException("Un autre canal de ce profil utilise déjà un filtre pour ce dossier. Modifiez cette règle pour éviter deux routages concurrents.");all.RemoveAll(r=>r.Channel==rule.Channel);all.Add(rule);store.WriteRecord("assistance-rules.dpapi",all);}
         }
@@ -55,7 +55,7 @@ namespace Creezio.Switcher
         {
             RelayStore.MessageId(id);var c=store.Channel(channel);var rule=Rules(store).FirstOrDefault(r=>r.Channel==channel&&r.Enabled);
             if(!explicitRequest&&rule==null)throw new InvalidOperationException("Aucune règle d'assistance active ; demande utilisateur explicite nécessaire.");
-            if(!AgentProviders.Codex(c)||String.IsNullOrWhiteSpace(thread)||String.IsNullOrWhiteSpace(title)||title.Length>120||String.IsNullOrWhiteSpace(reason)||reason.Length>4000||(context??"").Length>16000)throw new InvalidOperationException("Demande d'assistance invalide.");
+            if(AgentProviders.Kind(c)!="codex"||String.IsNullOrWhiteSpace(thread)||String.IsNullOrWhiteSpace(title)||title.Length>120||String.IsNullOrWhiteSpace(reason)||reason.Length>4000||(context??"").Length>16000)throw new InvalidOperationException("Demande d'assistance invalide. Le moteur sans fenêtre ne peut pas initier ce parcours dans cette version.");
             transport.Verify(c);DirectMessages.RequireThread(await transport.Call(c,"read_thread",new{threadId=thread,turnLimit=1,includeOutputs=false,maxOutputCharsPerItem=1000},token),thread);
             using(store.Lease("assistance-"+id)){
                 var old=store.ReadRecord<AssistanceTicket>(Record(id));

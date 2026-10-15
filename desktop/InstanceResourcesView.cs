@@ -44,7 +44,7 @@ namespace Creezio.Switcher.Desktop
             clients=accounts.Data.Instances.Where(i=>!i.Archived&&i.Id!=owner.Id&&!String.IsNullOrEmpty(i.AccountKey)).ToDictionary(i=>i.Id);
             clientHomes=clients.ToDictionary(p=>p.Key,p=>accounts.Instances.Home(p.Value));
             inventory=service.Cached(owner.Id,owner.AccountKey,ownerHome);
-            state.Text=String.IsNullOrEmpty(inventory.Updated)?"Ouvrez Codex pour détecter les ressources de ce compte.":$"Dernier inventaire · {inventory.Plugins.Count} plugins · {inventory.Resources.Count} ressources";
+            state.Text=String.IsNullOrEmpty(inventory.Updated)?"Détection des ressources du compte, sans ouvrir sa fenêtre…":$"Dernier inventaire · {inventory.Plugins.Count} plugins · {inventory.Resources.Count} ressources";
             ConfirmDiscard=()=>Ui.Confirm(shell,"Abandonner les changements d'accès non enregistrés ?","Accès en cours de modification");
             RowDefinitions.Add(new RowDefinition());RowDefinitions.Add(new RowDefinition{Height=GridLength.Auto});
             var content=new StackPanel();var top=new StackPanel();content.Children.Add(top);

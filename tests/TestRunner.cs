@@ -30,6 +30,12 @@ internal static class TestRunner
         try
         {
             string a=FakeAuth("alice","workspace-a"),b=FakeAuth("bob","workspace-b");
+            if(args.Length==2&&args[1]=="--headless"){
+                HeadlessToolTests.RunAll(Check,sandbox);HeadlessRuntimeTests.RunAll(Check,sandbox,a);
+                HeadlessTransportTests.RunAll(Check,sandbox,a);HeadlessApprovalTests.RunAll(Check,sandbox,a);HeadlessSourceTests.RunAll(Check,sandbox,a);
+                CloudBackendTests.RunAll(Check);CloudTasksBackendTests.RunAll(Check);CloudGitHubTests.RunAll(Check);CloudJobTests.RunAll(Check,sandbox,a);ProcessResourceTests.RunAll(Check);
+                Console.WriteLine(passed+" tests passed.");return 0;
+            }
             Check("identity distinguishes workspace and user",delegate {Assert(AuthIdentity.Parse(a).Key!=AuthIdentity.Parse(FakeAuth("alice","workspace-b")).Key,"workspace collision");Assert(AuthIdentity.Parse(a).Key!=AuthIdentity.Parse(FakeAuth("bob","workspace-a")).Key,"user collision");});
             Check("invalid / API-key / mismatched auth rejected",delegate {Throws(()=>AuthIdentity.Parse("{}"));Throws(()=>AuthIdentity.Parse("{\"auth_mode\":\"apikey\",\"OPENAI_API_KEY\":\"fake\"}"));Throws(()=>AuthIdentity.Parse(a.Replace("\"account_id\":\"workspace-a\"","\"account_id\":\"wrong\"")));});
             Check("unknown quota is not 100 percent",delegate {var q=Quotas.Parse(Json.Read<object>("{\"rateLimits\":{\"primary\":{\"usedPercent\":null}}}"));Assert(!q[0].Primary.Remaining.HasValue,"null treated as zero");Assert(q[0].Secondary==null,"missing secondary fabricated");});
@@ -66,6 +72,11 @@ internal static class TestRunner
             ThreadCopyTests.RunAll(Check,sandbox,a,b);
             TransferTests.RunAll(Check,sandbox);
             ToolTunnelTests.RunAll(Check,sandbox);SharedPagesTests.RunAll(Check,sandbox);ResourceLinksTests.RunAll(Check,sandbox);
+            HeadlessToolTests.RunAll(Check,sandbox);
+            HeadlessRuntimeTests.RunAll(Check,sandbox,a);
+            HeadlessTransportTests.RunAll(Check,sandbox,a);
+            HeadlessApprovalTests.RunAll(Check,sandbox,a);
+            HeadlessSourceTests.RunAll(Check,sandbox,a);
             ResourceCatalogTests.RunAll(Check,sandbox);
             RelayTests.RunAll(Check,sandbox);
             GeneralRelayTests.RunAll(Check,sandbox);

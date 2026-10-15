@@ -11,21 +11,24 @@ namespace Creezio.Switcher
     internal static class AgentProviders
     {
         public static string Kind(RelayChannel channel){return String.IsNullOrEmpty(channel.Provider)?"codex":channel.Provider;}
-        public static bool Codex(RelayChannel channel){return Kind(channel)=="codex";}
-        public static string Binding(RelayChannel c){return RemotePeers.Hash(Kind(c)+"|"+c.AccountKey+"|"+c.Home+"|"+c.Workspace+"|"+c.PeerId+"|"+c.RemoteChannel+"|"+c.RemoteWorkspace+"|"+c.RemoteAccount+"|"+c.RemoteDevice);}
-        public static void Pin(RelayMessage m,RelayChannel c){m.TargetBinding=Binding(c);m.TargetExecutionWorkspace=Codex(c)?c.Workspace:c.RemoteWorkspace;m.TargetDevice=Codex(c)?"local":c.RemoteDevice;}
-        public static string Caption(RelayChannel c){return Kind(c)=="remote"?"PC distant · connexion à vérifier":DesktopRuntime.SameProcess(c.ServerPid,c.ServerStartTicks)?"Connecté":"À reconnecter";}
+        public static bool Codex(RelayChannel channel){return Kind(channel)=="codex"||Kind(channel)=="codex-headless";}
+        public static string Binding(RelayChannel c){string value=Kind(c)+"|"+c.AccountKey+"|"+c.Home+"|"+c.Workspace+"|"+c.PeerId+"|"+c.RemoteChannel+"|"+c.RemoteWorkspace+"|"+c.RemoteAccount+"|"+c.RemoteDevice;if(Kind(c)=="codex-headless")value+="|"+c.Executable+"|"+c.HeadlessSandbox+"|"+c.HeadlessApprovalPolicy;return RemotePeers.Hash(value);}
+        public static void Pin(RelayMessage m,RelayChannel c){m.TargetProvider=Kind(c);m.TargetBinding=Binding(c);m.TargetExecutionWorkspace=Codex(c)?c.Workspace:c.RemoteWorkspace;m.TargetDevice=Codex(c)?"local":c.RemoteDevice;}
+        public static string Caption(RelayChannel c){if(Kind(c)=="remote")return "PC distant · connexion à vérifier";if(Kind(c)=="codex-headless")return "Agent sans fenêtre · démarrage à la demande";try{return DesktopRuntime.SameProcess(c.ServerPid,c.ServerStartTicks)?"Connecté":"À reconnecter";}catch(System.ComponentModel.Win32Exception){return "À vérifier";}}
+        public static bool? Online(RelayStore store,RelayChannel c){if(Kind(c)=="codex-headless"){try{HeadlessRelayTransport.Validate(store,c);return true;}catch(InvalidOperationException){return false;}}try{return Kind(c)=="codex"?(bool?)DesktopRuntime.SameProcess(c.ServerPid,c.ServerStartTicks):null;}catch(System.ComponentModel.Win32Exception){return null;}}
         public static IRelayTransport Create(RelayStore store){return new AgentTransport(store);}
     }
     internal sealed class AgentTransport : IRelayTransport, IRelayPermissionTransport
     {
         private readonly IRelayTransport desktop=new DesktopRelayTransport();
         private readonly RemoteTransport remote;
-        public AgentTransport(RelayStore store){remote=new RemoteTransport(store);}
+        private readonly HeadlessRelayTransport headless;
+        public AgentTransport(RelayStore store){remote=new RemoteTransport(store);headless=new HeadlessRelayTransport(store);}
         private IRelayTransport For(RelayChannel c)
         {
             switch(AgentProviders.Kind(c)){
                 case "codex": return desktop;
+                case "codex-headless": return headless;
                 case "remote": return remote;
                 default: throw new InvalidOperationException("Fournisseur non pris en charge : "+c.Provider);
             }

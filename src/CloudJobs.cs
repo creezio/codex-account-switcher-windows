@@ -45,6 +45,8 @@ namespace Creezio.Switcher
         public string SourceAccount {get;set;}
         public bool ReturnToSource {get;set;}
         public string ReturnState {get;set;}
+        public string SourceReturnTurn {get;set;}
+        public string SourceReturnState {get;set;}
         public string CreatedUtc {get;set;}
         public string UpdatedUtc {get;set;}
     }
@@ -71,7 +73,7 @@ namespace Creezio.Switcher
         }
         private void Save(CloudJob job){job.UpdatedUtc=DateTime.UtcNow.ToString("o");store.WriteRecord(Record(job.Id),job);}
         internal static object Summary(CloudJob job,bool result)
-        {return new{job.Id,job.Title,job.InstanceId,job.InstanceName,job.ConfigurationId,job.ConfigurationVersion,job.Branch,job.State,job.ThreadId,job.TurnId,job.ReturnState,job.Error,Result=result?job.Result:null,job.CreatedUtc,job.UpdatedUtc};}
+        {return new{job.Id,job.Title,job.InstanceId,job.InstanceName,job.ConfigurationId,job.ConfigurationVersion,job.Branch,job.State,job.ThreadId,job.TurnId,job.ReturnState,job.SourceReturnState,job.Error,Result=result?job.Result:null,job.CreatedUtc,job.UpdatedUtc};}
         internal CloudJob Authorize(RelaySession session,string id)
         {
             var job=Get(id);if(session==null||job.SourceChannel!=session.Channel||job.SourceThread!=session.Thread||job.SourceAccount!=session.Account||!RelayStore.SamePath(job.SourceHome,session.Home))throw new InvalidOperationException("Cette mission Cloud appartient à un autre chat.");return job;
@@ -214,9 +216,37 @@ namespace Creezio.Switcher
                 job.ReturnState="sending";Save(job);
                 try{
                     string body=String.IsNullOrWhiteSpace(job.Result)?job.Error??"Résultat absent.":job.Result;if(body.Length>16000)body=body.Substring(0,16000)+"\n[Suite via get_cloud_job]";
-                    await transport.Call(source,"send_message_to_thread",new{threadId=job.SourceThread,prompt="[CREEZIO_CLOUD_RESULT:"+job.Id+"]\nRésultat de "+job.InstanceName+" · état "+job.State+" · branche "+job.Branch+"\nCe résultat ne constitue pas une autorisation de fusionner. Vérifie les preuves avant intégration.\n\n"+body},token);
+                    var delivered=await transport.Call(source,"send_message_to_thread",new{threadId=job.SourceThread,prompt="[CREEZIO_CLOUD_RESULT:"+job.Id+"]\nRésultat de "+job.InstanceName+" · état "+job.State+" · branche "+job.Branch+"\nCe résultat ne constitue pas une autorisation de fusionner. Vérifie les preuves avant intégration.\n\n"+body},token);
+                    if(AgentProviders.Kind(source)=="codex-headless"){
+                        job.SourceReturnTurn=Json.Str(Json.Get(Json.Read<object>(Json.Write(delivered)),"turnId"));
+                        if(String.IsNullOrEmpty(job.SourceReturnTurn))throw new InvalidOperationException("Le traitement local du retour n'a pas confirmé son tour. Aucun renvoi automatique.");
+                        job.SourceReturnState="running";
+                    }
                     job.ReturnState="delivered";if(job.State=="completed")job.Error=null;Save(job);
                 }catch{job.ReturnState="uncertain";job.Error="Remise au chat source incertaine. Aucun renvoi automatique.";Save(job);throw;}
+            }
+        }
+        internal bool HeadlessSource(CloudJob job)
+        {return job.ReturnToSource&&store.Channels().Any(channel=>channel.Id==job.SourceChannel&&AgentProviders.Kind(channel)=="codex-headless");}
+        internal CloudJob[] LocalReturns()
+        {return List().Where(job=>HeadlessSource(job)&&(job.ReturnState=="pending"||job.ReturnState=="sending"||job.SourceReturnState=="running")).OrderBy(job=>job.UpdatedUtc).ToArray();}
+        internal async Task PumpLocalReturns(IRelayTransport transport,CancellationToken token)
+        {
+            // The relay worker owns local inference engines. A Cloud worker only
+            // persists their results; it must never launch a competing engine.
+            foreach(var job in LocalReturns().Take(4)){
+                try{
+                    if(job.SourceReturnState!="running")await Deliver(job.Id,transport,token).ConfigureAwait(false);
+                    else using(store.Lease("cloud-run-"+job.Id)){
+                        var current=Get(job.Id);RequireSource(new RelaySession{Channel=current.SourceChannel,Thread=current.SourceThread,Home=current.SourceHome,Account=current.SourceAccount});
+                        var snapshot=await transport.Call(store.Channel(current.SourceChannel),"read_thread",new{threadId=current.SourceThread},token).ConfigureAwait(false);
+                        DirectMessages.RequireThread(snapshot,current.SourceThread);
+                        var turn=RelayEngine.Rows(Json.Get(snapshot,"turns")).SingleOrDefault(value=>Json.Str(Json.Get(value,"id"))==current.SourceReturnTurn);
+                        string status=Json.Str(Json.Get(turn,"status"));
+                        if(new[]{"completed","failed","interrupted"}.Contains(status)){current.SourceReturnState=status;if(status!="completed")current.Error="Le traitement local du résultat Cloud s’est terminé avec l’état "+status+". Le résultat Cloud reste disponible.";Save(current);}
+                    }
+                }catch(OperationCanceledException){throw;}
+                catch(Exception error){var io=error as IOException;if(io!=null&&((io.HResult&0xffff)==32||(io.HResult&0xffff)==33))continue;using(store.Lease("cloud-run-"+job.Id)){var current=Get(job.Id);if(current.SourceReturnState=="running")current.SourceReturnState="attention";else if(current.ReturnState=="pending")current.ReturnState="attention";current.Error="Retour local à vérifier : "+Program.SafeError(error);Save(current);}}
             }
         }
         internal CloudJob CancelQueued(string id)
@@ -231,6 +261,9 @@ namespace Creezio.Switcher
             return jobs.Where(j=>(!new[]{"completed","failed","uncertain","cancelled"}.Contains(j.State)&&!(j.State=="attention"&&String.IsNullOrEmpty(j.ThreadId)))||j.ReturnState=="pending"||j.ReturnState=="sending")
                 .OrderBy(j=>j.State=="queued"?1:0).ThenBy(j=>j.UpdatedUtc).Take(4).ToArray();
         }
+        internal static CloudJob[] SelectRemotePending(IEnumerable<CloudJob> jobs,Func<CloudJob,bool> headlessSource)
+        {return SelectPending(jobs.Where(job=>!headlessSource(job)||!new[]{"completed","failed","cancelled"}.Contains(job.State)));}
+        internal static bool HasRemotePending(CloudJobs jobs){return SelectRemotePending(jobs.List(),jobs.HeadlessSource).Length>0;}
         internal static bool CanStart(CloudJob current,IEnumerable<CloudJob> jobs)
         {
             if(current.State!="queued")return true;
@@ -239,7 +272,17 @@ namespace Creezio.Switcher
         }
         internal static void Ensure(RelayStore store)
         {
-            var active=store.ReadRecord<RelayWorkerState>("cloud-worker-v1.dpapi");if(DesktopRuntime.SameProcess(active.Pid,active.Started))return;
+            EnsureCore(()=>HeadlessSourceBroker.IsOwnedChild(store),()=>{var active=store.ReadRecord<RelayWorkerState>("cloud-worker-v1.dpapi");return DesktopRuntime.SameProcess(active.Pid,active.Started);},()=>Start(store));
+        }
+        internal static void EnsureCore(Func<bool> ownedNativeChild,Func<bool> running,Action spawn)
+        {
+            // A model's MCP process belongs to the inference server's kill-on-close
+            // job. The durable queue is already saved; its owner starts the worker.
+            if(ownedNativeChild()||running())return;
+            spawn();
+        }
+        private static void Start(RelayStore store)
+        {
             string executable=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"CodexAccountSwitcher.exe");
             if(!File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"CodexAccountSwitcher.dll"))||!File.Exists(executable))throw new InvalidOperationException("Le suivi Cloud requiert le Switcher avec son runtime .NET 10. Utilisez la livraison complète ; le moteur Framework seul n'est pas un hôte Cloud.");
             // A detached worker must not inherit its caller's stdio handles: an MCP
@@ -255,13 +298,17 @@ namespace Creezio.Switcher
                     var jobs=new CloudJobs(store);int empty=0;
                     while(empty<3){
                         heartbeat.Updated=DateTime.UtcNow.ToString("o");store.WriteRecord("cloud-worker-v1.dpapi",heartbeat);
-                        var active=SelectPending(jobs.List());
+                        // A completed result for a local source is consumed by
+                        // RelayWorker, which may already own that profile's engine.
+                        // Do not retain this separate Cloud host just to wait for it.
+                        if(jobs.LocalReturns().Any())RelayWorker.Ensure(store);
+                        var active=SelectRemotePending(jobs.List(),jobs.HeadlessSource);
                         empty=active.Length==0?empty+1:0;
                         foreach(var job in active){
                             try{using(var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(45))){
                                 var updated=jobs.Get(job.Id);
                                 if(!CanStart(updated,jobs.List()))continue;
-                                awaitableAdvance(jobs,updated,deadline.Token);
+                                awaitableAdvance(store,jobs,updated,deadline.Token);
                             }}catch(Exception e){heartbeat.Error=Program.SafeError(e);}
                         }
                         Thread.Sleep(5000);
@@ -270,7 +317,12 @@ namespace Creezio.Switcher
             }
             return 0;
         }
-        private static void awaitableAdvance(CloudJobs jobs,CloudJob job,CancellationToken token)
-        {jobs.Advance(job.Id,token).GetAwaiter().GetResult();jobs.Deliver(job.Id,new DesktopRelayTransport(),token).GetAwaiter().GetResult();}
+        private static void awaitableAdvance(RelayStore store,CloudJobs jobs,CloudJob job,CancellationToken token)
+        {
+            var current=jobs.Advance(job.Id,token).GetAwaiter().GetResult();
+            if(jobs.HeadlessSource(current)){
+                if(current.ReturnState=="pending"||current.ReturnState=="sending")RelayWorker.Ensure(store);
+            }else jobs.Deliver(job.Id,AgentProviders.Create(store),token).GetAwaiter().GetResult();
+        }
     }
 }

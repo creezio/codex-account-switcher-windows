@@ -107,7 +107,7 @@ namespace Creezio.Switcher
             var projects=p.Projects.Where(x=>RelayStore.SamePath(x.Workspace,source.Workspace)&&RelayPolicies.Allows(x.SourceChannels,sourceId)).ToArray();
             return new {version=1,source=source.Id,workspace=source.Workspace,
                 projects=projects,
-                agents=store.Channels().Where(c=>c.Enabled&&c.Id!=sourceId&&RelayStore.SamePath(c.Workspace,source.Workspace)).Select(c=>new {channel=c.Id,name=c.Name,provider=AgentProviders.Kind(c),profile=p.Agents.FirstOrDefault(a=>a.Channel==c.Id),online=AgentProviders.Codex(c)?(bool?)DesktopRuntime.SameProcess(c.ServerPid,c.ServerStartTicks):null,connection=AgentProviders.Caption(c),remaining=quota(c.AccountKey),capabilityEvidence="user-declared; verify tools and resource access in destination chat"}).ToArray(),
+                agents=store.Channels().Where(c=>c.Enabled&&c.Id!=sourceId&&RelayStore.SamePath(c.Workspace,source.Workspace)).Select(c=>new {channel=c.Id,name=c.Name,provider=AgentProviders.Kind(c),profile=p.Agents.FirstOrDefault(a=>a.Channel==c.Id),online=AgentProviders.Online(store,c),connection=AgentProviders.Caption(c),remaining=quota(c.AccountKey),capabilityEvidence="user-declared; verify tools and resource access in destination chat"}).ToArray(),
                 resources=p.Resources.Where(x=>projects.Any(project=>project.Id==x.Project)).ToArray(),
                 rules=p.Rules.Where(x=>x.Enabled&&RelayPolicies.Allows(x.Sources,sourceId)&&(x.Project=="*"||projects.Any(project=>project.Id==x.Project))).ToArray()};
         }

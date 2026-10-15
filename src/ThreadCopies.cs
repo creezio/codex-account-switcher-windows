@@ -247,7 +247,7 @@ namespace Creezio.Switcher
         private static DesktopInstance Instance(AccountService a,string id){var i=a.Data.Instances.SingleOrDefault(x=>x.Id==id&&!x.Archived);if(i==null)throw new InvalidOperationException("Instance introuvable ou archivée.");NamedInstances.VerifyAccount(a,i);return i;}
         private async Task CheckIdle(AccountService a,DesktopInstance source,string folder,string thread,CancellationToken token)
         {
-            var channel=await NamedInstances.Connect(store,a,source,folder,token,thread).ConfigureAwait(false);
+            var channel=await NamedInstances.Connect(store,a,source,folder,token,thread,false).ConfigureAwait(false);
             var live=await new DesktopRelayTransport().Call(channel,"read_thread",new{threadId=thread,turnLimit=1,includeOutputs=false,maxOutputCharsPerItem=1000},token).ConfigureAwait(false);
             DirectMessages.RequireThread(live,thread);if(DirectMessages.Busy(live))throw new InvalidOperationException("Ce thread travaille encore ou attend une réponse. Terminez ou arrêtez son tour dans Codex avant de le copier.");
         }
@@ -384,7 +384,7 @@ namespace Creezio.Switcher
             // Read their state from Desktop's sidebar instead of opening them.
             var state=accounts.Instances.Runtime.Probe(instance);
             if(!state.Running||!DesktopRuntime.SameProcess(state.DesktopPid,state.DesktopStartTicks))throw new InvalidOperationException("Ouvrez l’instance destinataire avant de vérifier la copie.");
-            var channel=await NamedInstances.Connect(store,accounts,instance,Environment.CurrentDirectory,token).ConfigureAwait(false);
+            var channel=await NamedInstances.Connect(store,accounts,instance,Environment.CurrentDirectory,token,null,false).ConfigureAwait(false);
             var listed=await new DesktopRelayTransport().Call(channel,"list_threads",new{limit=50},token).ConfigureAwait(false);
             var row=RelayEngine.Rows(Json.Get(listed,"threads")).Concat(RelayEngine.Rows(Json.Get(listed,"pinnedThreads"))).SingleOrDefault(t=>Json.Str(Json.Get(t,"id"))==thread&&Json.Str(Json.Get(t,"kind"))=="codex"&&new[]{"","local"}.Contains(Json.Str(Json.Get(t,"hostId"))));
             if(row==null||!TransferBackend.IdleStatus(Json.Str(Json.Get(row,"status"))))throw new InvalidOperationException("La copie n’est pas confirmée au repos dans Codex. Terminez son travail avant de la vérifier.");
@@ -437,7 +437,7 @@ namespace Creezio.Switcher
         public async Task Open(ThreadCopyRecord record,CancellationToken token)
         {
             if(String.IsNullOrEmpty(record.TargetThread))throw new InvalidOperationException("Aucune copie confirmée à ouvrir.");var a=Accounts();var owner=Instance(a,record.Destination);if(owner.AccountKey!=record.DestinationAccount)throw new InvalidOperationException("Le compte destinataire a changé.");
-            var channel=await NamedInstances.Connect(store,a,owner,record.Folder,token,record.TargetThread).ConfigureAwait(false);await new DesktopRelayTransport().Call(channel,"navigate_to_codex_page",new{threadId=record.TargetThread},token).ConfigureAwait(false);
+            var channel=await NamedInstances.Connect(store,a,owner,record.Folder,token,record.TargetThread,false).ConfigureAwait(false);await new DesktopRelayTransport().Call(channel,"navigate_to_codex_page",new{threadId=record.TargetThread},token).ConfigureAwait(false);
         }
     }
 }

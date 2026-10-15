@@ -11,6 +11,7 @@ namespace Creezio.Switcher
     {
         internal static string ChannelId(string home,string workspace)
         {return "instance-"+RelayReturns.Key(Path.GetFullPath(home).TrimEnd('\\').ToUpperInvariant()+"|"+Path.GetFullPath(workspace).TrimEnd('\\').ToUpperInvariant());}
+        internal static string HeadlessChannelId(string home,string workspace){return ChannelId(home,workspace)+"-headless";}
         internal static DesktopInstance Resolve(AccountService accounts,string name)
         {
             name=(name??"").Trim();
@@ -28,8 +29,9 @@ namespace Creezio.Switcher
             var a=new AccountService(Path.GetDirectoryName(store.Root));
             return a.Data.Instances.Where(i=>!i.Archived).Select(i=>{
                 string issue=null;try{VerifyAccount(a,i);}catch(Exception e){issue=Program.SafeError(e);}
-                bool online=i.IsLocal?store.Channels().Any(c=>RelayStore.SamePath(c.Home,a.Instances.Home(i))&&DesktopRuntime.SameProcess(c.ServerPid,c.ServerStartTicks)):a.Instances.Runtime.Probe(i).Running;
-                return (object)new{id=i.Id,name=i.Name,account=a.Data.Profiles.Where(p=>p.Key==i.AccountKey).Select(p=>p.Label).FirstOrDefault(),online=online,issue=issue,integration=RelayIntegration.Status(store,a.Instances.Home(i)).Status};
+                var state=a.Instances.Runtime.Probe(i);bool desktopOpen=state.Running;
+                bool headless=issue==null&&i.HeadlessEnabled&&!state.Running&&state.Phase!="unknown"&&File.Exists(a.Settings.CodexExecutable);
+                return (object)new{id=i.Id,name=i.Name,account=a.Data.Profiles.Where(p=>p.Key==i.AccountKey).Select(p=>p.Label).FirstOrDefault(),online=desktopOpen||headless,desktopOpen=desktopOpen,headlessAvailable=headless,executionMode=desktopOpen?"desktop":headless?"headless":"unavailable",issue=issue,integration=RelayIntegration.Status(store,a.Instances.Home(i)).Status};
             }).ToArray();
         }
         internal static async Task<RelayChannel> BindSource(RelayStore store,CancellationToken token)
@@ -61,6 +63,8 @@ namespace Creezio.Switcher
         }
         internal static bool AppPipeName(string value)
         {return System.Text.RegularExpressions.Regex.IsMatch(value??"",@"^\\\\\.\\pipe\\codex-browser-use-[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$");}
+        private static bool CachedDesktopAlive(RelayChannel channel)
+        {try{return DesktopRuntime.SameProcess(channel.ServerPid,channel.ServerStartTicks);}catch(System.ComponentModel.Win32Exception){return false;}}
         private static string PrimaryPipe(InstanceState state)
         {
             if(!state.Running||state.DesktopPid<=0||state.DesktopStartTicks<=0||state.Phase=="unknown")return null;
@@ -72,19 +76,26 @@ namespace Creezio.Switcher
             }
             return null;
         }
-        internal static async Task<RelayChannel> Connect(RelayStore store,AccountService a,DesktopInstance instance,string workspace,CancellationToken token,string preferredThread=null)
+        internal static async Task<RelayChannel> Connect(RelayStore store,AccountService a,DesktopInstance instance,string workspace,CancellationToken token,string preferredThread=null,bool allowHeadless=true)
         {
             VerifyAccount(a,instance);workspace=RelayStore.WorkspacePath(workspace);string home=a.Instances.Home(instance),id=ChannelId(home,workspace);
-            var channels=store.Channels().Where(c=>RelayStore.SamePath(c.Home,home)&&c.AccountKey==instance.AccountKey&&AgentProviders.Codex(c)).ToArray();
+            var channels=store.Channels().Where(c=>RelayStore.SamePath(c.Home,home)&&c.AccountKey==instance.AccountKey&&AgentProviders.Kind(c)=="codex").ToArray();
             var old=channels.FirstOrDefault(c=>c.Id==id);
             if(old!=null&&!old.Enabled)throw new InvalidOperationException("Cette connexion a été désactivée dans les réglages avancés.");
+            var state=a.Instances.Runtime.Probe(instance);
+            if(allowHeadless&&!state.Running&&state.Phase!="unknown"&&instance.HeadlessEnabled){
+                string headlessId=HeadlessChannelId(home,workspace);var previous=store.Channels().FirstOrDefault(c=>c.Id==headlessId);
+                if(previous!=null&&!previous.Enabled)throw new InvalidOperationException("Cette connexion sans interface a été désactivée dans les réglages avancés.");
+                var channel=new RelayChannel{Id=headlessId,Provider="codex-headless",Name=instance.Name,Home=home,AccountKey=instance.AccountKey,Email=a.Data.Profiles.Where(p=>p.Key==instance.AccountKey).Select(p=>p.Email).FirstOrDefault(),Executable=a.Settings.CodexExecutable,HeadlessSandbox=instance.HeadlessSandbox,HeadlessApprovalPolicy=instance.HeadlessApprovalPolicy,Workspace=workspace,Enabled=true,InstanceId=instance.Id,RequireFullAccess=previous!=null?previous.RequireFullAccess:old!=null&&old.RequireFullAccess,ConnectedUtc=DateTime.UtcNow.ToString("o")};
+                VerifyAccount(a,instance);store.Register(channel);HeadlessRelayTransport.Validate(store,channel);return channel;
+            }
             string pipe=null;int pid=0;long ticks=0;
-            if(!instance.IsLocal){var state=a.Instances.Runtime.Probe(instance);if(state.Running){pipe=state.AppToolsPipe;pid=state.DesktopPid;ticks=state.DesktopStartTicks;}}
-            if(String.IsNullOrEmpty(pipe)){
-                var live=channels.FirstOrDefault(c=>DesktopRuntime.SameProcess(c.ServerPid,c.ServerStartTicks));
+            if(!instance.IsLocal&&state.Running){pipe=state.AppToolsPipe;pid=state.DesktopPid;ticks=state.DesktopStartTicks;}
+            if(String.IsNullOrEmpty(pipe)&&state.Running){
+                var live=channels.FirstOrDefault(CachedDesktopAlive);
                 if(live!=null){pipe=live.PipePath;pid=live.ServerPid;ticks=live.ServerStartTicks;}
             }
-            if(String.IsNullOrEmpty(pipe)&&instance.IsLocal){var state=a.Instances.Runtime.Probe(instance);pipe=PrimaryPipe(state);pid=state.DesktopPid;ticks=state.DesktopStartTicks;}
+            if(String.IsNullOrEmpty(pipe)&&instance.IsLocal){pipe=PrimaryPipe(state);pid=state.DesktopPid;ticks=state.DesktopStartTicks;}
             if(String.IsNullOrEmpty(pipe))throw new InvalidOperationException("Ouvrez « "+instance.Name+" » dans le switcher. Pour la session habituelle, utilisez une fois le skill de délégation dans un chat de cette instance.");
             using(var client=new AppToolsClient(pipe,pid,ticks)){
                 var anchors=new[]{preferredThread}.Concat(Anchors(home)).Concat(channels.Where(c=>c.Enabled).Select(c=>c.AnchorThreadId)).Where(t=>!String.IsNullOrEmpty(t)).Distinct().Take(12);
@@ -103,7 +114,8 @@ namespace Creezio.Switcher
             RelayStore.MessageId(spec.Id);spec.From=session.Channel;spec.To=ChannelId(a.Instances.Home(destination),source.Workspace);spec.Project=null;spec.Kind="general";
             if(store.Exists(spec.Id)){
                 var old=store.Message(spec.Id);
-                if(old.SourceThreadId!=session.Thread||old.TargetAccountKey!=destination.AccountKey||old.Job==null||RelayPolicies.Fingerprint(old.Job)!=RelayPolicies.Fingerprint(spec))throw new InvalidOperationException("Cet identifiant de mission existe avec un autre contenu ou destinataire.");
+                if(old.Job!=null)spec.To=old.Job.To;
+                if(old.SourceThreadId!=session.Thread||old.TargetAccountKey!=destination.AccountKey||String.IsNullOrEmpty(old.TargetHome)||!RelayStore.SamePath(old.TargetHome,a.Instances.Home(destination))||old.Job==null||RelayPolicies.Fingerprint(old.Job)!=RelayPolicies.Fingerprint(spec))throw new InvalidOperationException("Cet identifiant de mission existe avec un autre contenu ou destinataire.");
                 return old;
             }
             // Advanced scope restrictions cannot be silently bypassed by creating an automatic alias.

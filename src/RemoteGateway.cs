@@ -61,7 +61,7 @@ namespace Creezio.Switcher
         }
         internal void CheckChannel(RemoteGrant grant,RelayChannel c,RemoteRequest r)
         {
-            if(!AgentProviders.Codex(c)||!grant.Channels.Contains(c.Id)||!c.Enabled||!grant.Accounts.ContainsKey(c.Id)||grant.Accounts[c.Id]!=c.AccountKey||!RelayStore.SamePath(grant.Workspaces[c.Id],c.Workspace)||r.Account!=c.AccountKey||!RelayStore.SamePath(r.Workspace,c.Workspace))throw new InvalidOperationException("Canal, compte ou dossier hors du partage autorisé.");
+            if(AgentProviders.Kind(c)!="codex"||!grant.Channels.Contains(c.Id)||!c.Enabled||!grant.Accounts.ContainsKey(c.Id)||grant.Accounts[c.Id]!=c.AccountKey||!RelayStore.SamePath(grant.Workspaces[c.Id],c.Workspace)||r.Account!=c.AccountKey||!RelayStore.SamePath(r.Workspace,c.Workspace))throw new InvalidOperationException("Canal, compte ou dossier hors du partage autorisé.");
         }
         private static bool ThreadAllowed(RemoteGrant grant,string channel,string id){string owner;return id!=null&&grant.Threads.TryGetValue(id,out owner)&&owner==channel;}
         private void AddThread(RemoteRequest r,string thread)
@@ -71,7 +71,7 @@ namespace Creezio.Switcher
         public async Task<object> Handle(RemoteRequest r,CancellationToken token)
         {
             var grant=Authorize(r);
-            if(r.Operation=="channels")return grant.Channels.Select(id=>store.Channel(id)).Where(c=>c.Enabled&&AgentProviders.Codex(c)&&grant.Accounts[c.Id]==c.AccountKey&&RelayStore.SamePath(grant.Workspaces[c.Id],c.Workspace)).Select(c=>new SharedChannel{Id=c.Id,Name=c.Name,Account=c.AccountKey,Workspace=c.Workspace,Anchor=ThreadAllowed(grant,c.Id,c.AnchorThreadId)?c.AnchorThreadId:null,CanSend=grant.CanSend,CanCreate=grant.CanCreate,RequireFullAccess=c.RequireFullAccess}).ToArray();
+            if(r.Operation=="channels")return grant.Channels.Select(id=>store.Channel(id)).Where(c=>c.Enabled&&AgentProviders.Kind(c)=="codex"&&grant.Accounts[c.Id]==c.AccountKey&&RelayStore.SamePath(grant.Workspaces[c.Id],c.Workspace)).Select(c=>new SharedChannel{Id=c.Id,Name=c.Name,Account=c.AccountKey,Workspace=c.Workspace,Anchor=ThreadAllowed(grant,c.Id,c.AnchorThreadId)?c.AnchorThreadId:null,CanSend=grant.CanSend,CanCreate=grant.CanCreate,RequireFullAccess=c.RequireFullAccess}).ToArray();
             var channel=store.Channel(r.Channel);CheckChannel(grant,channel,r);transport.Verify(channel);
             object args=String.IsNullOrEmpty(r.Arguments)?new Dictionary<string,object>():Json.Read<object>(r.Arguments);
             string thread=Json.Str(Json.Get(args,"threadId"));

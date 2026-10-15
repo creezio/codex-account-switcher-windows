@@ -110,15 +110,26 @@ namespace Creezio.Switcher
             socket.Options.SetRequestHeader("originator", "creezio_account_switcher");
 #if NETCOREAPP
             Stage = "header-user-agent";
-            socket.Options.SetRequestHeader("User-Agent", "creezio-switcher-cloud-prototype/0.17.2-beta.1");
+            socket.Options.SetRequestHeader("User-Agent", "creezio-switcher-cloud-prototype/0.18.0-beta.1");
 #endif
             socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(20);
 #if !NETCOREAPP
             System.Net.ServicePointManager.SecurityProtocol |= System.Net.SecurityProtocolType.Tls12;
 #endif
             Stage = "connect";
-            await socket.ConnectAsync(new Uri("wss://codex-cloud-backend.chatgpt.com/"), token).ConfigureAwait(false);
+            try{await socket.ConnectAsync(new Uri("wss://codex-cloud-backend.chatgpt.com/"), token).ConfigureAwait(false);}
+            catch(Exception error){if(Unauthorized(error))throw new CloudBackendException("connection-authentication","La connexion Cloud a refusé les identifiants avant tout appel métier.");throw;}
             Stage = "connected";
+        }
+        private static bool Unauthorized(Exception error)
+        {
+            for(int index=0;error!=null&&index<5;index++,error=error.InnerException){
+                var web=error as System.Net.WebException;var response=web==null?null:web.Response as System.Net.HttpWebResponse;
+                if(response!=null&&(int)response.StatusCode==401)return true;
+                var property=error.GetType().GetProperty("StatusCode");
+                if(property!=null){try{var value=property.GetValue(error,null);if(value!=null&&Convert.ToInt32(value,System.Globalization.CultureInfo.InvariantCulture)==401)return true;}catch{}}
+            }
+            return false;
         }
         public async Task Send(string message, CancellationToken token)
         {
@@ -149,6 +160,7 @@ namespace Creezio.Switcher
         public const string ProtocolVersion = CloudBackend.ProtocolVersion;
         private readonly ICloudTasksTransport transport;
         private readonly Func<AuthIdentity> readIdentity;
+        internal Action<CancellationToken> RefreshConnectionAuthentication {get;set;}
         private readonly CloudBackendBinding binding;
         private readonly Func<string, CancellationToken, Task<CloudConfiguration>> readConfiguration;
         private readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
@@ -165,10 +177,10 @@ namespace Creezio.Switcher
             this.transport = transport; this.readIdentity = readIdentity; this.readConfiguration = readConfiguration;
             this.binding = new CloudBackendBinding { AccountKey = binding.AccountKey, AccountId = binding.AccountId, UserId = binding.UserId };
         }
-        public static CloudTasksBackend Create(Func<AuthIdentity> readIdentity, CloudBackendBinding binding)
+        public static CloudTasksBackend Create(Func<AuthIdentity> readIdentity, CloudBackendBinding binding,Action<CancellationToken> refreshAuthentication=null)
         {
             var captured = new CloudBackendBinding { AccountKey = binding.AccountKey, AccountId = binding.AccountId, UserId = binding.UserId };
-            return new CloudTasksBackend(new CloudTaskWebSocket(), readIdentity, captured, async (id, token) => { using (var client = CloudBackend.Create(readIdentity, captured)) return await client.Get(id, token).ConfigureAwait(false); });
+            return new CloudTasksBackend(new CloudTaskWebSocket(), readIdentity, captured, async (id, token) => { using (var client = CloudBackend.Create(readIdentity, captured)){client.RefreshReadAuthentication=refreshAuthentication;return await client.Get(id, token).ConfigureAwait(false);} }){RefreshConnectionAuthentication=refreshAuthentication};
         }
         public async Task Connect(CancellationToken token)
         {
@@ -349,9 +361,16 @@ namespace Creezio.Switcher
             try
             {
                 var identity = Current();
-                await transport.Connect(identity.AccessToken, binding.AccountId, token).ConfigureAwait(false); Current();
+                bool refreshConnection=false;
+                try{await transport.Connect(identity.AccessToken, binding.AccountId, token).ConfigureAwait(false);}
+                catch(CloudBackendException error){
+                    if(error.Code!="connection-authentication"||RefreshConnectionAuthentication==null)throw;
+                    refreshConnection=true;
+                }
+                if(refreshConnection){transport.Abort();RefreshConnectionAuthentication(token);identity=Current();await transport.Connect(identity.AccessToken,binding.AccountId,token).ConfigureAwait(false);}
+                Current();
                 string id = NextId();
-                await transport.Send(Json.Write(new { id = id, method = "initialize", @params = new { clientInfo = new { name = "creezio_account_switcher", title = "Creezio Account Switcher", version = "0.17.2-beta.1" }, capabilities = new { experimentalApi = true, requestAttestation = false } } }), token).ConfigureAwait(false);
+                await transport.Send(Json.Write(new { id = id, method = "initialize", @params = new { clientInfo = new { name = "creezio_account_switcher", title = "Creezio Account Switcher", version = "0.18.0-beta.1" }, capabilities = new { experimentalApi = true, requestAttestation = false } } }), token).ConfigureAwait(false);
                 var result = await Receive(id, token).ConfigureAwait(false);
                 if (String.IsNullOrWhiteSpace(Optional(result, "userAgent"))) throw Incompatible();
                 await transport.Send(Json.Write(new { method = "initialized", @params = new { } }), token).ConfigureAwait(false); Current();

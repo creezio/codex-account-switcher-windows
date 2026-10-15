@@ -101,7 +101,7 @@ namespace Creezio.Switcher
             var config=Config(store);if(String.IsNullOrEmpty(config.Certificate))throw new InvalidOperationException("Configurez d'abord le partage de ce PC.");
             var grant=new RemoteGrant{Id=Guid.NewGuid().ToString("N"),Name=name,Expires=DateTime.UtcNow.AddDays(days).ToString("o"),CanSend=send,CanCreate=create,CanAssist=assist};string secret=Secret();grant.TokenHash=Hash(secret);
             foreach(string id in channels.Distinct()){
-                var c=store.Channel(id);if(!c.Enabled||!AgentProviders.Codex(c))throw new InvalidOperationException("Seuls les canaux Codex locaux activés peuvent être partagés.");
+                var c=store.Channel(id);if(!c.Enabled||AgentProviders.Kind(c)!="codex")throw new InvalidOperationException("Seuls les canaux Codex avec interface activés peuvent être partagés avec un autre PC dans cette version.");
                 grant.Channels.Add(id);grant.Threads[c.AnchorThreadId]=id;grant.Accounts[id]=c.AccountKey;grant.Workspaces[id]=c.Workspace;
             }
             foreach(var entry in additionalThreads??new Dictionary<string,string>()){

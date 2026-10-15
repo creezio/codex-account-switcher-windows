@@ -52,6 +52,7 @@ namespace Creezio.Switcher
         private readonly Func<AuthIdentity> readIdentity;
         private readonly CloudBackendBinding binding;
         private bool ownsClient, disposed;
+        internal Action<CancellationToken> RefreshReadAuthentication {get;set;}
 
         public CloudGitHubBackend(HttpClient client, Func<AuthIdentity> readIdentity, CloudBackendBinding binding)
         {
@@ -115,7 +116,9 @@ namespace Creezio.Switcher
             }
             catch { throw new CloudBackendException("authentication", "Le compte actif ne correspond plus à cette instance, ou sa connexion a expiré."); }
         }
-        private async Task<T> Read<T>(string path, Func<object, T> parse, CancellationToken token)
+        private Task<T> Read<T>(string path, Func<object, T> parse, CancellationToken token)
+        {return ReadCore(path,parse,token,true);}
+        private async Task<T> ReadCore<T>(string path, Func<object, T> parse, CancellationToken token,bool mayRefresh)
         {
             if (disposed) throw new ObjectDisposedException("CloudGitHubBackend");
             token.ThrowIfCancellationRequested(); var identity = Current();
@@ -127,7 +130,7 @@ namespace Creezio.Switcher
                 request.Headers.Add("ChatGPT-Account-Id", binding.AccountId);
                 request.Headers.Add("X-OpenAI-Product-Sku", "codex");
                 request.Headers.Add("originator", "creezio_account_switcher");
-                request.Headers.UserAgent.ParseAdd("creezio-switcher-cloud-prototype/0.17.2-beta.1");
+                request.Headers.UserAgent.ParseAdd("creezio-switcher-cloud-prototype/0.18.0-beta.1");
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
                 try
                 {
@@ -138,6 +141,7 @@ namespace Creezio.Switcher
                         if ((status >= 300 && status < 400) || (response.RequestMessage != null && response.RequestMessage.RequestUri != request.RequestUri)) throw new CloudBackendException("redirect", "La redirection du catalogue GitHub a été refusée.", status, requestId);
                         if (!response.IsSuccessStatusCode)
                         {
+                            if(status==401&&mayRefresh&&RefreshReadAuthentication!=null){RefreshReadAuthentication(token);Current();return await ReadCore(path,parse,token,false).ConfigureAwait(false);}
                             string media = response.Content == null || response.Content.Headers.ContentType == null ? null : response.Content.Headers.ContentType.MediaType;
                             bool html = String.Equals(media, "text/html", StringComparison.OrdinalIgnoreCase);
                             IEnumerable<string> mitigated; bool challenge = response.Headers.TryGetValues("cf-mitigated", out mitigated) && mitigated.Any(v => String.Equals(v, "challenge", StringComparison.OrdinalIgnoreCase));

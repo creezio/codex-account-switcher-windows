@@ -210,6 +210,9 @@ namespace Creezio.Switcher
     }
     public sealed class DesktopInstance
     {
+        public bool HeadlessEnabled { get; set; }
+        public string HeadlessSandbox { get; set; }
+        public string HeadlessApprovalPolicy { get; set; }
         public string Id { get; set; }
         public string Name { get; set; }
         public string AccountKey { get; set; }
@@ -217,6 +220,7 @@ namespace Creezio.Switcher
         public string PreviousAuthJson { get; set; }
         public bool Archived { get; set; }
         public bool IsLocal { get { return Id == "local"; } }
+        public DesktopInstance() { HeadlessEnabled = true; HeadlessSandbox = "workspace-write"; HeadlessApprovalPolicy = "on-request"; }
     }
     public sealed class Settings
     {

@@ -67,7 +67,7 @@ internal static class CloudJobTests
         public void VerifySend(RelayChannel channel,string thread){}
         public Task<object> Call(RelayChannel channel,string tool,object args,CancellationToken token)
         {
-            if(tool=="read_thread")return Task.FromResult(Json.Read<object>(Json.Write(new{thread=new{id="source-chat",status=new{type="idle",activeFlags=Flag==null?new string[0]:new[]{Flag}}},turns=new[]{new{id="source-turn",status=TurnStatus}}})));
+            if(tool=="read_thread")return Task.FromResult(Json.Read<object>(Json.Write(new{thread=new{id="source-chat",status=new{type="idle",activeFlags=Flag==null?new string[0]:new[]{Flag}}},turns=new[]{new{id=Sends>0?"source-return":"source-turn",status=TurnStatus}}})));
             Assert(tool=="send_message_to_thread","unexpected source operation");Sends++;return Task.FromResult<object>(new{turnId="source-return"});
         }
     }
@@ -161,6 +161,29 @@ internal static class CloudJobTests
             transport.Occupied=false;transport.WrongThread=true;Reject(()=>f.Jobs.Deliver(job.Id,transport,CancellationToken.None).GetAwaiter().GetResult());Assert(transport.Sends==0,"unverified source received result");
             transport.WrongThread=false;transport.UnknownSend=true;Reject(()=>f.Jobs.Deliver(job.Id,transport,CancellationToken.None).GetAwaiter().GetResult());f.Jobs.Deliver(job.Id,transport,CancellationToken.None).GetAwaiter().GetResult();
             Assert(transport.Sends==1&&f.Jobs.Get(job.Id).ReturnState=="uncertain","uncertain return replayed");
+        });
+        check("cloud results for headless sources wait in the owner's durable local queue",()=>{
+            var f=new Fixture(root,++number,auth);var job=f.Submit();job.State="completed";job.Result="Fixture result";job.ReturnState="pending";f.Save(job);
+            Assert(f.Jobs.LocalReturns().Length==0,"desktop return consumed by local engine pump");
+            var channel=f.Store.Channel(f.Source.Channel);channel.Provider="codex-headless";f.Store.Register(channel);
+            var transport=new SourceStateTransport{Flag="waitingOnApproval"};
+            f.Jobs.PumpLocalReturns(transport,CancellationToken.None).GetAwaiter().GetResult();
+            Assert(f.Jobs.LocalReturns().Single().Id==job.Id&&transport.Sends==0,"queue lost its result or interrupted busy source");
+            transport.Flag=null;f.Jobs.PumpLocalReturns(transport,CancellationToken.None).GetAwaiter().GetResult();
+            transport.TurnStatus="inProgress";f.Jobs.PumpLocalReturns(transport,CancellationToken.None).GetAwaiter().GetResult();
+            Assert(f.Jobs.LocalReturns().Length==1&&f.Jobs.Get(job.Id).SourceReturnState=="running"&&transport.Sends==1,"local result processing lost its durable keepalive or was resent");
+            transport.TurnStatus="completed";f.Jobs.PumpLocalReturns(transport,CancellationToken.None).GetAwaiter().GetResult();
+            Assert(transport.Sends==1&&f.Jobs.Get(job.Id).ReturnState=="delivered"&&f.Jobs.LocalReturns().Length==0,"local return was duplicated or left pending");
+        });
+        check("headless cloud return queue preserves uncertainty and rechecks source credentials",()=>{
+            foreach(bool lost in new[]{false,true}){
+                var f=new Fixture(root,++number,auth);var job=f.Submit();job.State="completed";job.Result="Fixture result";job.ReturnState=lost?"sending":"pending";f.Save(job);
+                var channel=f.Store.Channel(f.Source.Channel);channel.Provider="codex-headless";f.Store.Register(channel);
+                var transport=new SourceStateTransport();
+                if(!lost){File.WriteAllText(Path.Combine(f.Source.Home,"auth.json"),"{}");f.Jobs.PumpLocalReturns(transport,CancellationToken.None).GetAwaiter().GetResult();Assert(f.Jobs.Get(job.Id).ReturnState=="attention","invalid source blocked the whole return queue");}
+                else{f.Jobs.PumpLocalReturns(transport,CancellationToken.None).GetAwaiter().GetResult();f.Jobs.PumpLocalReturns(transport,CancellationToken.None).GetAwaiter().GetResult();}
+                Assert(transport.Sends==0&&(!lost||f.Jobs.Get(job.Id).ReturnState=="uncertain"),"unverified or uncertain return replayed");
+            }
         });
         check("cloud jobs mark interrupted result delivery uncertain without sending",()=>{
             var f=new Fixture(root,++number,auth);var job=f.Submit();job.State="completed";job.Result="Verified";job.ReturnState="sending";f.Save(job);var transport=new ConsoleTests.Fake();

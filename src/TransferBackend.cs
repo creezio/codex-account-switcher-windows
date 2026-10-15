@@ -16,7 +16,7 @@ namespace Creezio.Switcher
         private static DesktopInstance Instance(AccountService a,string id){var i=a.Data.Instances.SingleOrDefault(x=>x.Id==id&&!x.Archived);if(i==null)throw new InvalidOperationException("Instance introuvable.");NamedInstances.VerifyAccount(a,i);return i;}
         public string Identity(string id){var a=Accounts();return Instance(a,id).AccountKey;}
         private async Task<object> Native(string instance,string method,object args,CancellationToken token,string thread=null)
-        {var a=Accounts();var i=Instance(a,instance);var channel=await NamedInstances.Connect(store,a,i,Environment.CurrentDirectory,token,thread).ConfigureAwait(false);return await new DesktopRelayTransport().Call(channel,method,args,token).ConfigureAwait(false);}
+        {var a=Accounts();var i=Instance(a,instance);var channel=await NamedInstances.Connect(store,a,i,Environment.CurrentDirectory,token,thread,false).ConfigureAwait(false);return await new DesktopRelayTransport().Call(channel,method,args,token).ConfigureAwait(false);}
         private static object State(string home)
         {string path=Path.Combine(home,".codex-global-state.json");SafeFiles.RejectLinks(path);if(!File.Exists(path))return new Dictionary<string,object>();using(var reader=new StreamReader(new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete)))return Json.Read<object>(reader.ReadToEnd());}
         private static bool Local(object project){return Json.Str(Json.Get(project,"projectKind"))=="local"&&new[]{"","local"}.Contains(Json.Str(Json.Get(project,"hostId")));}

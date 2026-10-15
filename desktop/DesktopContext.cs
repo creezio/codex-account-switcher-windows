@@ -15,6 +15,19 @@ namespace Creezio.Switcher.Desktop
         internal LoginBrowser[] LoginBrowsersFixture;
         internal Func<Action<string>,CancellationToken,Task<string>> LoginAuthFixture;
         internal Action<LoginBrowserTarget,string> LoginOpenFixture;
+        internal Func<string,Task<string>> HeadlessAccountFixture;
+        internal async Task<string> VerifyHeadlessAccount(string id)
+        {
+            if(Fixture)return await (HeadlessAccountFixture?.Invoke(id)??Task.FromResult("Connexion de test vérifiée."));
+            var target=await Read(a=>new{Accounts=a,Instance=a.Data.Instances.Single(i=>i.Id==id&&!i.Archived)});
+            return await Task.Run(async()=>{
+                using(var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(45)))
+                using(var client=CloudInstanceConnection.Open(target.Accounts,target.Instance,timeout.Token)){
+                    await client.List("user",null,timeout.Token).ConfigureAwait(false);
+                    return "Connexion Cloud vérifiée auprès du serveur pour "+target.Accounts.Data.Profiles.Single(p=>p.Key==target.Instance.AccountKey).Email+". Aucun outil de plugin n’a été exécuté.";
+                }
+            });
+        }
         private ResourceLinkServer resourceLinks;
         internal void StopResourceLinks(){resourceLinks?.Dispose();resourceLinks=null;}
         internal Func<DesktopInstance,InstanceState> InstanceStateFixture;
@@ -27,8 +40,8 @@ namespace Creezio.Switcher.Desktop
         {
             if(Fixture)return ResourceSnapshotFixture?.Invoke()??new ResourceSnapshot{Captured=DateTime.UtcNow,Groups=new ResourceGroup[0],Unassigned=new ResourceProcess[0]};
             return await Read(a=>{
-                var scopes=a.Data.Instances.Where(i=>!i.Archived).Select(i=>new ResourceScope{Id=i.Id,Name=i.Name,Primary=i.IsLocal,Managed=!i.IsLocal,Home=a.Instances.Home(i),Account=a.Data.Profiles.Where(p=>p.Key==i.AccountKey).Select(p=>p.Email).FirstOrDefault()??"Compte non associé",State=InstanceState(a,i)}).ToList();
-                using(var self=System.Diagnostics.Process.GetCurrentProcess())scopes.Add(new ResourceScope{Id="switcher",Name="Account Switcher",Account="Application de gestion",State=new InstanceState{Running=true,DesktopPid=self.Id,DesktopStartTicks=self.StartTime.ToUniversalTime().Ticks,Phase="running"}});
+                var scopes=a.Data.Instances.Where(i=>!i.Archived).Select(i=>new ResourceScope{Id=i.Id,Name=i.Name,Primary=i.IsLocal,Managed=!i.IsLocal,Home=a.Instances.Home(i),Background=HeadlessProcesses.Roots(Store,a.Instances.Home(i),i.AccountKey),Account=a.Data.Profiles.Where(p=>p.Key==i.AccountKey).Select(p=>p.Email).FirstOrDefault()??"Compte non associé",State=InstanceState(a,i)}).ToList();
+                using(var self=System.Diagnostics.Process.GetCurrentProcess())scopes.Add(new ResourceScope{Id="switcher",Name="Account Switcher",Account="Application de gestion",Background=HeadlessProcesses.Controllers(Store),State=new InstanceState{Running=true,DesktopPid=self.Id,DesktopStartTicks=self.StartTime.ToUniversalTime().Ticks,Phase="running"}});
                 return resourceMonitor.Capture(scopes.ToArray());
             });
         }

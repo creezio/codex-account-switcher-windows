@@ -16,10 +16,11 @@ namespace Creezio.Switcher
         }
         public static string JobState(RelayMessage m)
         {
-            if(m.CancellationRequested&&m.State=="waiting")return "Arrêt à effectuer dans Codex";
+            if(m.CancellationRequested&&m.State=="waiting")return m.TargetProvider=="codex-headless"?"Interruption demandée":"Arrêt à effectuer dans Codex";
             switch(m.BlockReason){
                 case "permissions":return "Permissions à régler";
-                case "approval":return "Approbation Codex";
+                case "approval":return m.TargetProvider=="codex-headless"?"Autorisation dans le Switcher":"Approbation Codex";
+                case "headless-runtime":return "Moteur interrompu · résultat à vérifier";
                 case "user-input":return "Réponse attendue";
                 case "quota":return "Quota insuffisant ou inconnu";
                 case "capacity-or-dependency":return "Place ou dépendance attendue";
@@ -30,11 +31,12 @@ namespace Creezio.Switcher
         }
         public static string Resolution(RelayMessage m)
         {
-            if(m.CancellationRequested)return "Ouvrez la conversation destinataire et utilisez Arrêter dans Codex. Le travail reste actif tant que son arrêt n'a pas été constaté.";
+            if(m.CancellationRequested)return m.TargetProvider=="codex-headless"?"L’interruption a été demandée au moteur. Le statut reste actif jusqu’à confirmation native.":"Ouvrez la conversation destinataire et utilisez Arrêter dans Codex. Le travail reste actif tant que son arrêt n'a pas été constaté.";
             switch(m.BlockReason){
-                case "permissions":return "Ouvrez CE chat destinataire, choisissez le mode autorisé puis envoyez « Permissions confirmées, réponds sans outil ». Le relais relira son contexte.";
-                case "approval":return "Ouvrez le chat destinataire pour traiter la demande native Codex.";
-                case "user-input":return "Ouvrez le chat destinataire et répondez à sa question.";
+                case "permissions":return m.TargetProvider=="codex-headless"?"Vérifiez Instances → Fonctionnement sans fenêtre et les permissions exigées par cet agent. Une mission bloquée avant envoi peut ensuite être relancée.":"Ouvrez CE chat destinataire, choisissez le mode autorisé puis envoyez « Permissions confirmées, réponds sans outil ». Le relais relira son contexte.";
+                case "approval":return m.TargetProvider=="codex-headless"?"Ouvrez Interventions dans le Switcher pour examiner puis autoriser ou refuser cette demande.":"Ouvrez le chat destinataire pour traiter la demande native Codex.";
+                case "user-input":return m.TargetProvider=="codex-headless"?"Répondez à la question dans Tâches → Interventions.":"Ouvrez le chat destinataire et répondez à sa question.";
+                case "headless-runtime":return "Le moteur a été interrompu. Relisez le résultat conservé ; aucun mandat n’est renvoyé automatiquement. Une nouvelle mission doit être préparée explicitement si nécessaire.";
                 case "quota":return "Actualisez les limites du compte et consultez la politique de réinitialisation. Une ressource privée reste réservée à ses agents autorisés.";
                 case "capacity-or-dependency":return m.Error;
                 case "policy":return "Vérifiez le projet, ses règles et les agents autorisés, puis relancez la vérification.";

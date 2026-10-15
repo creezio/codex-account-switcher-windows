@@ -35,7 +35,7 @@ namespace Creezio.Switcher
             if(Json.Str(Json.Get(input,"hook_event_name"))!="UserPromptSubmit")return null;
             string prompt=Json.Str(Json.Get(input,"prompt")),thread=Json.Str(Json.Get(input,"session_id")),cwd=Json.Str(Json.Get(input,"cwd"));
             if(prompt.Length>64000||String.IsNullOrEmpty(thread)||String.IsNullOrEmpty(cwd))return null;
-            var channels=store.Channels().Where(c=>c.Enabled&&AgentProviders.Codex(c)&&RelayStore.SamePath(c.Home,home)&&RelayStore.SamePath(c.Workspace,cwd)).ToArray();
+            var channels=store.Channels().Where(c=>c.Enabled&&AgentProviders.Kind(c)=="codex"&&RelayStore.SamePath(c.Home,home)&&RelayStore.SamePath(c.Workspace,cwd)).ToArray();
             var rules=Assistance.Rules(store);var channel=channels.FirstOrDefault(c=>Matches(rules.FirstOrDefault(r=>r.Channel==c.Id),prompt));if(channel==null)return null;
             var rule=rules.First(r=>r.Channel==channel.Id);var assistance=new Assistance(store,adapter);
             try{

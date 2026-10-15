@@ -3,10 +3,48 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.17.2-beta.1 — assistants de configuration des environnements Cloud.** Windows 10/11 x64, interface en
+**Version 0.18.0-beta.1 — Cloud, outils et agents locaux sans fenêtre.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
+
+Le Cloud fonctionne avec le compte permanent de l’instance même lorsque sa
+fenêtre Codex est fermée. Les outils partagés démarrent un moteur temporaire
+pour interroger les plugins connectés. Une mission locale destinée à une
+instance fermée démarre également un moteur, avec son compte et son dossier
+isolés ; les fenêtres déjà ouvertes conservent leur transport habituel.
+
+Dans **Instances → Compte → Fonctionnement sans fenêtre**, choisissez si les
+outils et agents locaux sont autorisés, puis les permissions des nouvelles
+missions. Le réglage initial permet de modifier le dossier de travail avec
+confirmations. L’accès complet nécessite un choix explicite. Une mission
+annoncée « lecture » dans son mandat conserve le sandbox configuré pour
+l’instance : cette indication ne remplace pas une restriction technique.
+**Tâches → Interventions** reçoit les confirmations et questions du moteur ;
+aucune demande n’est approuvée automatiquement. **Performances** attribue les
+processus temporaires à leur compte et affiche « Sans fenêtre ».
+
+Les connexions sont relues à chaque opération et renouvelées à la demande via
+Codex lorsque le profil fermé est disponible. Une session révoquée, un consentement
+de plugin expiré ou un défi interactif nécessite une reconnexion officielle.
+Le Switcher ne renouvelle pas de force les identifiants d’une fenêtre ouverte,
+ni ceux de la session principale dont il ne contrôle pas le verrou de lancement.
+Un seul moteur temporaire utilise un profil à la fois. Les demandes concurrentes
+hors du moteur actif peuvent donc signaler un profil occupé.
+
+Les moteurs locaux se libèrent à la fin du travail ; ils ne maintiennent pas un
+serveur de développement permanent. Les conversations créées restent enregistrées
+dans leur profil. Après une interruption, le Switcher relit le résultat disponible
+et signale un résultat incertain ; il ne renvoie pas automatiquement le mandat.
+Les conversations existantes, leurs copies et les opérations de transfert restent
+des fonctions distinctes et peuvent nécessiter la fenêtre Codex.
+
+La recette réelle a confirmé le Cloud, une lecture de pages et la connexion
+d’un agent local au relais avec la fenêtre propriétaire fermée. Pics observés :
+environ **396 Mio** pour le tunnel de production et **390 Mio** pour l’agent,
+puis zéro processus de recette restant. L’écriture locale de test a demandé
+une confirmation native qui a expiré ; elle n’est pas présentée comme validée.
+[Preuves, mesures, tests et limites de la recette](docs/VALIDATION.md).
 
 La création d’un environnement Cloud suit désormais un assistant : choisir le
 compte charge automatiquement ses dépôts GitHub, puis l’assistant déroule

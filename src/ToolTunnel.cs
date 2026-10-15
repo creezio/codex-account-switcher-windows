@@ -74,12 +74,13 @@ namespace Creezio.Switcher
         private readonly Func<TunnelOwner,IToolTunnelConnection> connect;
         private readonly Action<RelaySession> verifySource;
         public ToolTunnel(RelayStore data,Func<string,TunnelOwner> resolver=null,Func<TunnelOwner,IToolTunnelConnection> connector=null,Action<RelaySession> verifier=null)
-        {store=data;resolveOwner=resolver??ResolveOwner;connect=connector??(o=>new ToolTunnelRpc(o.Executable,o.Home));verifySource=verifier??VerifySource;}
+        {store=data;resolveOwner=resolver??ResolveOwner;connect=connector??(o=>new ToolTunnelRpc(o.Executable,o.Home,o.Account,store));verifySource=verifier??VerifySource;}
         internal static bool AllowedServer(string name)
         {return !String.IsNullOrWhiteSpace(name)&&!new[]{"creezio-relay","codex_app","cua_repl","node_repl","code-review"}.Contains(name);}
         private TunnelOwner ResolveOwner(string id)
         {
             var a=new AccountService(Path.GetDirectoryName(store.Root));var i=NamedInstances.Resolve(a,id);NamedInstances.VerifyAccount(a,i);
+            if(i.HeadlessEnabled){HeadlessAccounts.Read(a,i,false,CancellationToken.None);return new TunnelOwner{Id=i.Id,Name=i.Name,Home=a.Instances.Home(i),Account=i.AccountKey,Executable=a.Settings.CodexExecutable};}
             string home=a.Instances.Home(i),pipe=null;int pid=0;long ticks=0;
             if(!i.IsLocal){var runtime=a.Instances.Runtime.Probe(i);if(runtime.Running){pipe=runtime.AppToolsPipe;pid=runtime.DesktopPid;ticks=runtime.DesktopStartTicks;}}
             else{

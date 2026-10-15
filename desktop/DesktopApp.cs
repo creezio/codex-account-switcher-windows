@@ -33,6 +33,10 @@ namespace Creezio.Switcher.Desktop
             app.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/CodexAccountSwitcher;component/Theme.xaml", UriKind.Relative) });
             if (args.Length == 2 && args[0] == "--ui-test")
                 return DesktopTests.Run(app, Path.GetFullPath(args[1]));
+            if(args.Length==1&&args[0]=="--interventions"){
+                var root=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Creezio","CodexAccountSwitcher");
+                return app.Run(new HeadlessInterventionsWindow(new DesktopContext(root),null){WindowStartupLocation=WindowStartupLocation.CenterScreen});
+            }
             if (args.Length == 3 && args[0] == "--shared-pages-live-test")
                 return DesktopTests.SharedPagesLive(app,args[1],Path.GetFullPath(args[2]));
             bool first;
