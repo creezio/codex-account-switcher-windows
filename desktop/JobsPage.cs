@@ -18,6 +18,7 @@ namespace Creezio.Switcher.Desktop
         {
             Command("Envoyer un message", async delegate { await DirectComposer.Open(Context, Shell, null); await Refresh(); }, true);
             Command("Déléguer depuis un agent", async delegate { await JobComposer.Open(Context, Shell, null); await Refresh(); });
+            Command("Missions Cloud", delegate {new CloudJobsWindow(Context,Shell).ShowDialog();return Task.CompletedTask;});
             filter = new ComboBox { ItemsSource = new[] { "Toutes", "À traiter", "En cours", "Terminées" }, SelectedIndex = 0, Width = 150, Margin = new Thickness(0, 0, 8, 6) };
             Commands.Children.Add(filter);
             filter.SelectionChanged += async delegate { try { page = 0; await Refresh(); } catch (Exception e) { Error(e); } };

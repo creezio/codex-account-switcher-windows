@@ -51,6 +51,14 @@ internal static class TestRunner
             Check("previous API-key mode can be restored without accepting it as a profile",delegate {string home=Folder("api-restore");string api="{\"auth_mode\":\"apikey\",\"OPENAI_API_KEY\":\"fictional-api-key\"}";Throws(()=>new SwitchTransaction(home,()=>false).Execute(api,s=>{},delegate{}));new SwitchTransaction(home,()=>false,true).Execute(api,s=>{},delegate{});Assert(File.ReadAllText(Path.Combine(home,"auth.json"))==api,"API backup not restored");});
             Check("switch does not touch conversations",delegate {string home=Folder("history");Directory.CreateDirectory(Path.Combine(home,"sessions"));string history=Path.Combine(home,"sessions","conversation.jsonl");File.WriteAllText(history,"keep me");new SwitchTransaction(home,()=>false).Execute(a,s=>{},delegate{});Assert(File.ReadAllText(history)=="keep me","history changed");});
             ResetTests.RunAll(Check);
+            AtomicReplaceTests.RunAll(Check,sandbox);
+            CloudBackendTests.RunAll(Check);
+            CloudMutationJournalTests.RunAll(Check,sandbox);
+            CloudEnvironmentUpdateTests.RunAll(Check,sandbox);
+            CloudJobTests.RunAll(Check,sandbox,a);
+            CloudTasksBackendTests.RunAll(Check);
+            CloudEnvironmentSetupTests.RunAll(Check,sandbox);
+            CloudGitHubTests.RunAll(Check);
             LoginBrowserTests.RunAll(Check,sandbox);
             InstanceTests.RunAll(Check,sandbox,a,b);
             ProcessResourceTests.RunAll(Check);

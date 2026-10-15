@@ -6,6 +6,7 @@ $localSdk=Join-Path $env:LOCALAPPDATA 'Creezio\tools\dotnet\dotnet.exe'
 $dotnet=if(Test-Path -LiteralPath $localSdk){$localSdk}else{'dotnet'}
 if(-not $OutputDirectory){$OutputDirectory=Join-Path $repo 'work\desktop-bin'}
 $target=[IO.Path]::GetFullPath($OutputDirectory)
+if(Test-Path -LiteralPath (Join-Path $target 'RUNTIME-SHARED.json')){throw 'Cette livraison partage un runtime immuable. Compiler dans un nouveau dossier ; ne pas republier sur ces liens physiques.'}
 $active=Get-Process -Name CodexAccountSwitcher,CreezioRelay -ErrorAction SilentlyContinue | Where-Object { $_.Path -and [IO.Path]::GetDirectoryName($_.Path) -eq $target }
 if($active){throw 'Un exécutable de ce dossier est actif. Choisir un dossier de livraison libre.'}
 $free=(Get-PSDrive -Name ([IO.Path]::GetPathRoot($target).Substring(0,1))).Free

@@ -16,7 +16,7 @@ namespace Creezio.Switcher.Desktop
         private readonly TextBlock heading=Ui.Text("Choisissez une instance",24),accountLine=Ui.Text("",14,true);
         private readonly ContentControl detail=new ContentControl();
         private readonly WrapPanel tabs=new WrapPanel();
-        private readonly Button[] tabButtons=new Button[3];
+        private readonly Button[] tabButtons=new Button[4];
         private readonly ComboBox compactChoice=new ComboBox{DisplayMemberPath="Title",Visibility=Visibility.Collapsed};
         private readonly Button rename,copyThread;
         private readonly WrapPanel lifecycle=new WrapPanel();
@@ -33,6 +33,7 @@ namespace Creezio.Switcher.Desktop
         private string renderedAccount;
         private Info current;
         private InstanceResourcesView resources;
+        private CloudEnvironmentPanel cloud;
         private sealed class Info
         {public DesktopInstance Instance;public Profile Account;public InstanceState State;public RelayIntegrationState Integration;public string Active;}
         internal InstancesPage(DesktopContext context,ShellWindow shell):base(context,shell,"Instances","Un compte, ses ressources et ses accès, réunis dans chaque espace Codex.")
@@ -54,10 +55,10 @@ namespace Creezio.Switcher.Desktop
             System.Windows.Automation.AutomationProperties.SetName(compactChoice,"Instance sélectionnée");
             SizeChanged+=delegate{bool compact=ActualWidth<750;left.Visibility=compact?Visibility.Collapsed:Visibility.Visible;split.ColumnDefinitions[0].MinWidth=compact?0:170;split.ColumnDefinitions[0].Width=compact?new GridLength(0):new GridLength(.26,GridUnitType.Star);split.ColumnDefinitions[1].Width=new GridLength(compact?0:20);compactChoice.Visibility=compact?Visibility.Visible:Visibility.Collapsed;heading.Visibility=compact?Visibility.Collapsed:Visibility.Visible;Header.Children[1].Visibility=compact?Visibility.Collapsed:Visibility.Visible;};
             compactChoice.SelectionChanged+=delegate{if(changing)return;List.SelectedItem=compactChoice.SelectedItem;};
-            for(int n=0;n<3;n++){int index=n;tabButtons[n]=Ui.Button(new[]{"Compte","Ressources & accès","Activité"}[n],()=>ShowTab(index));tabs.Children.Add(tabButtons[n]);}
+            for(int n=0;n<4;n++){int index=n;tabButtons[n]=Ui.Button(new[]{"Compte","Ressources & accès","Activité","Cloud"}[n],()=>ShowTab(index));tabs.Children.Add(tabButtons[n]);}
             List.SelectionChanged+=async delegate{if(changing)return;try{var row=List.SelectedItem as ItemRow;if(row==null)return;if(row.Id!=selected&&!CanLeave()){changing=true;List.SelectedItem=List.Items.Cast<ItemRow>().FirstOrDefault(r=>r.Id==selected);compactChoice.SelectedItem=List.SelectedItem;changing=false;return;}changing=true;compactChoice.SelectedItem=row;changing=false;await Select(row);}catch(Exception e){changing=false;Error(e);}};
             search.TextChanged+=async delegate{try{if(changing||!CanLeave())return;await Refresh();}catch(Exception e){Error(e);}};
-            Shell.Closed+=delegate{resources?.Dispose();};
+            Shell.Closed+=delegate{resources?.Dispose();cloud?.Dispose();};
         }
         public override async Task Refresh()
         {
@@ -70,16 +71,16 @@ namespace Creezio.Switcher.Desktop
             var rows=data.Where(r=>(r.Title+" "+r.Summary).IndexOf(search.Text,StringComparison.CurrentCultureIgnoreCase)>=0||(dirty&&r.Id==selected)).ToArray();
             string fingerprint=Json.Write(rows.Select(r=>new{r.Id,r.Title,r.Summary,r.State}));
             if(fingerprint!=listStamp){listStamp=fingerprint;changing=true;List.ItemsSource=rows;List.SelectedItem=rows.FirstOrDefault(r=>r.Id==selected)??rows.FirstOrDefault();compactChoice.ItemsSource=rows;compactChoice.SelectedItem=List.SelectedItem;changing=false;}
-            if(List.SelectedItem is ItemRow chosen)await Select(rows.First(r=>r.Id==chosen.Id));else if(selected!=null){resources?.Dispose();resources=null;selected=null;identity=null;current=null;heading.Text="Aucune instance";accountLine.Text="Créez une instance ou modifiez votre recherche.";detail.Content=null;rename.IsEnabled=false;copyThread.IsEnabled=false;UpdateVerification();RenderLifecycle();}
+            if(List.SelectedItem is ItemRow chosen)await Select(rows.First(r=>r.Id==chosen.Id));else if(selected!=null){resources?.Dispose();resources=null;cloud?.Dispose();cloud=null;selected=null;identity=null;current=null;heading.Text="Aucune instance";accountLine.Text="Créez une instance ou modifiez votre recherche.";detail.Content=null;rename.IsEnabled=false;copyThread.IsEnabled=false;UpdateVerification();RenderLifecycle();}
         }
         private static string Identity(ItemRow row){var info=(Info)row.Value;return row.Id+"/"+info.Instance.AccountKey+"/"+info.Instance.Archived;}
         private async Task Select(ItemRow row)
         {
             current=(Info)row.Value;string stamp=Identity(row);rename.IsEnabled=true;copyThread.IsEnabled=!current.Instance.Archived&&current.Instance.AccountKey!=null;
             bool changed=identity!=stamp;identity=stamp;heading.Text=row.Title;accountLine.Text=(current.Account?.Email??"Compte à connecter")+" · "+(current.Account?.Plan??"Connexion requise")+" · "+row.State;
-            if(changed){Notice.Text="";resources?.Dispose();resources=null;selected=row.Id;if(current.Instance.AccountKey!=null&&!current.Instance.Archived)resources=new InstanceResourcesView(Context,Shell,current.Instance);ShowTab(tab);}
+            if(changed){Notice.Text="";resources?.Dispose();resources=null;cloud?.Dispose();cloud=null;selected=row.Id;if(current.Instance.AccountKey!=null&&!current.Instance.Archived)resources=new InstanceResourcesView(Context,Shell,current.Instance);ShowTab(tab);}
             else if(tab==0)RenderAccount();
-            resources?.UpdateOwnerName(current.Instance.Name);UpdateVerification();RenderLifecycle();
+            resources?.UpdateOwnerName(current.Instance.Name);cloud?.UpdateOwnerName(current.Instance.Name,current.Account?.Email);UpdateVerification();RenderLifecycle();
             if(resources!=null)await resources.Discover();
         }
         private void RenderLifecycle()
@@ -143,10 +144,15 @@ namespace Creezio.Switcher.Desktop
         {Shell.Navigate("Instances");if(Shell.CurrentPage!="Instances")return;await Refresh();var row=List.Items.Cast<ItemRow>().FirstOrDefault(r=>r.Id==id);if(row!=null){if(row.Id!=selected&&!CanLeave())return;changing=true;List.SelectedItem=row;compactChoice.SelectedItem=row;changing=false;await Select(row);}if(showResources)ShowTab(1);}
         internal void ShowTab(int index)
         {
+            if(index!=tab&&cloud?.CanLeave()==false)return;
             tab=index;for(int n=0;n<tabButtons.Length;n++)tabButtons[n].SetResourceReference(FrameworkElement.StyleProperty,n==index?"PrimaryButton":typeof(Button));
             if(current==null)return;
             if(index==0)RenderAccount();
             else if(index==1)detail.Content=resources??(object)Ui.Card(Ui.Text("Connectez le compte de cette instance pour détecter ses ressources.",15,true));
+            else if(index==3){
+                if(current.Instance.AccountKey==null||current.Instance.Archived)detail.Content=Ui.Card(Ui.Text("Connectez le compte de cette instance pour accéder à ses environnements Cloud.",15,true));
+                else{cloud??=new CloudEnvironmentPanel(Context,Shell,current.Instance,current.Account?.Email);detail.Content=cloud;}
+            }
             else{
                 var activity=new StackPanel();var grants=new ToolTunnel(Context.Store).Grants();var calls=new ToolTunnel(Context.Store).Recent().Where(c=>c.Instance==selected||grants.Any(g=>g.Id==c.Grant&&g.Instance==selected)).Take(30).ToArray();
                 activity.Children.Add(Ui.Text("Derniers appels aux outils de cette instance",18));
@@ -181,6 +187,6 @@ namespace Creezio.Switcher.Desktop
             var scroll=renderedAccount==i.Id&&detail.Content is ScrollViewer existing&&existing.Tag!=null?existing:new ScrollViewer();
             scroll.Content=body;scroll.Tag=stamp;renderedAccount=i.Id;detail.Content=scroll;
         }
-        public override bool CanLeave()=>resources?.CanLeave()??true;
+        public override bool CanLeave()=>(cloud?.CanLeave()??true)&&(resources?.CanLeave()??true);
     }
 }

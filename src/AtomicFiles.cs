@@ -81,6 +81,41 @@ namespace Creezio.Switcher
                 }
             }
         }
+        private sealed class FileFingerprint
+        {internal long Length;internal byte[] Digest;}
+        private static FileFingerprint Fingerprint(string path)
+        {
+            SafeFiles.RejectLinks(path);
+            using(var input=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read|FileShare.Delete))
+            using(var sha=SHA256.Create())return new FileFingerprint{Length=input.Length,Digest=sha.ComputeHash(input)};
+        }
+        private static bool Unchanged(string path,FileFingerprint fingerprint)
+        {
+            try {
+                var current=Fingerprint(path);
+                if(current.Length!=fingerprint.Length||current.Digest.Length!=fingerprint.Digest.Length)return false;
+                for(int i=0;i<current.Digest.Length;i++)if(current.Digest[i]!=fingerprint.Digest[i])return false;
+                return true;
+            }catch(IOException){return false;}catch(UnauthorizedAccessException){return false;}catch(InvalidOperationException){return false;}
+        }
+        internal static void ReplaceVerified(string source,string destination,Action<string,string> replace=null,Action<int> delay=null)
+        {
+            // Windows can transiently refuse the atomic rename with ERROR_SHARING_
+            // VIOLATION or ERROR_UNABLE_TO_REMOVE_REPLACED. Retry only while both
+            // exact file contents still match the snapshots taken before dispatch.
+            var original=Fingerprint(destination);var replacement=Fingerprint(source);
+            Action<string,string> primitive=replace??((from,to)=>File.Replace(from,to,null));
+            Action<int> wait=delay??new Action<int>(Thread.Sleep);
+            for(int attempt=0;;attempt++) {
+                try {primitive(source,destination);return;}
+                catch(IOException error) {
+                    uint status=unchecked((uint)error.HResult);int code=(int)(status&65535);
+                    if(attempt>=2||(status&0xffff0000)!=0x80070000||(code!=32&&code!=33&&code!=1175))throw;
+                    wait(attempt==0?20:50);
+                    if(!Unchanged(destination,original)||!Unchanged(source,replacement))throw;
+                }
+            }
+        }
         internal static void Write(string path,byte[] data)
         {
             path=Path.GetFullPath(path);SafeFiles.RejectLinks(path);
@@ -101,7 +136,7 @@ namespace Creezio.Switcher
                     RecoverOwned(path);
                     SafeFiles.RejectLinks(temp);
                     using(var stream=new FileStream(temp,FileMode.CreateNew,FileAccess.Write,FileShare.None)) {created=true;stream.Write(data,0,data.Length);stream.Flush(true);}
-                    if(File.Exists(path))File.Replace(temp,path,null);else File.Move(temp,path);
+                    if(File.Exists(path))ReplaceVerified(temp,path);else File.Move(temp,path);
                 } finally {
                     try{if(created&&temp!=null&&File.Exists(temp))File.Delete(temp);}
                     finally{try{if(reservation!=null)reservation.Dispose();if(reserved&&File.Exists(legacy))File.Delete(legacy);}finally{if(held)mutex.ReleaseMutex();}}

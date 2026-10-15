@@ -6,6 +6,21 @@ description: Delegate a mission to a named Codex instance with Account Switcher 
 Use the user's configured roles and rules. There is no built-in preferred account,
 provider, project or publishing workflow.
 
+For an explicitly requested **Codex Cloud** mission, keep that execution mode:
+call `list_instances`, then `list_cloud_environments` for the named account.
+Select the requested ready environment, or ask which one if the choice is
+ambiguous. Use `delegate_to_cloud` with a fresh 32-character hex ID and the
+human's actual mandate. Cloud tasks use their own repository checkout; local
+uncommitted files are not available there. Put prepared work on an explicitly
+authorized GitHub branch first when required. The Switcher assigns a distinct
+`codex/switcher/<job-id>` branch for changes. Never silently replace Cloud with
+local execution or another account. Follow with `get_cloud_job`, or finish this
+turn to receive its configured result. A returned PR and SHA need independent
+verification before integration. Do not merge unless the user or a configured
+project policy has authorized it. A pending native approval stays pending.
+After an uncertain send, reuse the same ID; never create a second mission as a
+retry. `cancel_cloud_job` only cancels work that has not started.
+
 Before a bootstrap command, check this chat's effective sandbox and approval
 context. Full access shown in another chat is not inherited. If the user expects
 full access but this chat is sandboxed, explain how to select it in this chat and

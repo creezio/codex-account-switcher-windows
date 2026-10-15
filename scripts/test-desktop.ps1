@@ -1,11 +1,11 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param([string]$BinaryDirectory)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $bundledSdk=Join-Path $env:LOCALAPPDATA 'Creezio\tools\dotnet'
 # Development builds may use the SDK's private runtime; portable delivery includes its own.
 if(Test-Path -LiteralPath (Join-Path $bundledSdk 'dotnet.exe')){$env:DOTNET_ROOT=$bundledSdk}
-$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.16.1-beta.1'}
+$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.17.0-beta.2'}
 $exe=Join-Path $bin 'CodexAccountSwitcher.exe'
 $fixture=Join-Path $repo 'work\desktop-validation'
 $p=Start-Process -FilePath $exe -ArgumentList @('--ui-test',('"'+$fixture+'"')) -WindowStyle Hidden -PassThru -Wait
@@ -17,7 +17,7 @@ $testBin=Join-Path $repo 'work\test-bin'
 New-Item -ItemType Directory -Path $testBin -Force | Out-Null
 $probe=Join-Path $testBin 'CompatibilitySmoke.exe'
 $sources=Get-ChildItem -LiteralPath (Join-Path $repo 'src') -Filter '*.cs' | ForEach-Object FullName
-$flags=@('/nologo','/target:exe','/main:CompatibilitySmoke','/warn:4','/warnaserror+','/reference:System.dll','/reference:System.Core.dll','/reference:System.Drawing.dll','/reference:System.Windows.Forms.dll','/reference:System.Web.Extensions.dll','/reference:System.Security.dll',('/out:'+$probe),(Join-Path $repo 'tests\CompatibilitySmoke.cs'))
+$flags=@('/nologo','/target:exe','/main:CompatibilitySmoke','/warn:4','/warnaserror+','/reference:System.dll','/reference:System.Core.dll','/reference:System.Drawing.dll','/reference:System.Windows.Forms.dll','/reference:System.Web.Extensions.dll','/reference:System.Security.dll','/reference:System.Net.Http.dll',('/out:'+$probe),(Join-Path $repo 'tests\CompatibilitySmoke.cs'))
 & $compiler ($flags+$sources)
 if($LASTEXITCODE -ne 0){throw 'Compatibility test compilation failed.'}
 & $probe (Join-Path $fixture 'data')

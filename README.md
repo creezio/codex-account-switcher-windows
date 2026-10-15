@@ -3,15 +3,34 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.16.1-beta.1 — lancements fiables et récupération des temporaires.** Windows 10/11 x64, interface en
+**Version 0.17.0-beta.2 — environnements et missions Codex Cloud par compte.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
 
-Cette version corrige les lancements bloqués par un temporaire d’état abandonné.
-Elle récupère les fichiers orphelins identifiables, respecte les hôtes encore
-actifs et affiche l’étape ainsi que le code Windows réel en cas d’échec.
-[Récupération et diagnostics de lancement](docs/STARTUP-RECOVERY.md).
+Cette version ajoute **Instances → Cloud** pour choisir un dépôt GitHub accessible
+au compte, créer un environnement privé, suivre sa préparation et demander sa
+publication. **Tâches → Missions Cloud** permet d’envoyer un mandat à un
+compte et un environnement explicitement choisis, puis de suivre son résultat.
+Chaque mission de code reçoit une branche distincte ; l’intégration reste une
+décision séparée après vérification dans GitHub.
+
+La recette native a exécuté une mission dans un environnement neuf avec un accès
+réseau GitHub explicite, publié sa branche et créé une PR distincte ; ses 24
+tests ont réussi dans la CI. La PR de laboratoire est restée ouverte, sans fusion.
+Le retour automatique dans un vrai chat orchestrateur et la première connexion
+GitHub depuis le Switcher restent à qualifier.
+
+Le transport utilise directement le service natif Codex Cloud avec le compte
+permanent de l’instance, sans ChatGPT web. Il dépend d’un protocole interne,
+donc une évolution du service peut interrompre une opération. Les fichiers
+locaux ne sont pas transférés automatiquement au conteneur. La première connexion
+GitHub et les autorisations interactives restent des étapes
+officielles distinctes. [Parcours, validations et limites Cloud](docs/CLOUD-NATIVE-PILOT.md)
+· [Notes de version 0.17](docs/RELEASE-0.17.md).
+
+La récupération des temporaires d’instance et les diagnostics de lancement
+introduits en 0.16.1 sont conservés. [Détails](docs/STARTUP-RECOVERY.md).
 
 L’écran **Performances** conserve un sélecteur d’instances à côté du détail du
 compte choisi. **Vue d’ensemble** résume les familles de processus et les plus
@@ -27,6 +46,29 @@ de contrôle d’activité et de fermeture protégée restent accessibles.
 ![Gestion des instances, avec des comptes fictifs](assets/screenshot.png)
 
 ![Tableau de bord des performances, avec des comptes fictifs](assets/performance-dashboard.png)
+
+## Confier une mission à Codex Cloud
+
+1. Dans **Instances**, sélectionnez le compte exécutant puis l’onglet **Cloud**.
+2. Créez un environnement sur un dépôt du catalogue GitHub de ce compte. Choisissez
+   explicitement son accès réseau ; un réseau désactivé empêche notamment un push.
+3. Lancez **Préparer l’environnement**, consultez son suivi, puis demandez sa
+   publication avec l’action séparée proposée une fois la préparation terminée.
+4. Dans **Tâches → Missions Cloud → Nouvelle mission Cloud**, choisissez
+   ce compte et son environnement publié, puis indiquez le titre et le mandat.
+5. Suivez l’état et le résultat dans cette fenêtre. Vérifiez la branche, le SHA,
+   la PR et la CI dans GitHub avant de décider d’une intégration.
+
+Depuis un nouveau chat Codex équipé du plugin, vous pouvez aussi demander :
+**« Délègue cette mission à Léa dans Codex Cloud, avec l’environnement Validation :
+ajoute ces tests et propose une PR sans fusionner. »** Le compte de l’instance Léa
+effectue le travail. Un environnement ambigu nécessite un choix explicite.
+
+Publiez sur une branche autorisée les fichiers dont le conteneur a besoin : le
+dossier local n’est pas partagé avec Cloud. Une mission en attente peut être
+annulée ; une mission déjà envoyée n’est pas interrompue par cette action. Un
+refus du service ou une approbation interactive reste visible et n’est pas
+automatiquement contourné.
 
 ## Continuer une conversation dans une autre instance
 
@@ -81,7 +123,7 @@ les plugins connectés, Sites et Pages sont détectés automatiquement auprès d
 Choisissez **Partager avec**, cochez les ressources par leur nom, sélectionnez
 **Lecture** ou **Lecture et modification**, puis **Enregistrer les accès**.
 
-**Renommer l’instance** reste visible au-dessus des trois onglets ; le compte et
+**Renommer l’instance** reste visible au-dessus des onglets ; le compte et
 le dossier restent associés à la même instance. Dans **Compte**, **Vérifier
 l’intégration** affiche immédiatement sa progression, puis un résultat daté ou
 l’erreur à corriger. La date du dernier contrôle et la version installée sont
@@ -204,7 +246,7 @@ expurgé et vérification des versions publiées.
 
 - Relais local : nouvelles conversations, réponses automatiques et poursuite dans le même chat.
 - Moteur séparé de la fenêtre, file persistante et arrêt manuel conservé.
-- Plugin intégré : quatre skills et vingt outils MCP, installation par profil et mise à jour idempotente.
+- Plugin intégré : skills et outils MCP de partage, délégation locale et missions Cloud, installation par profil et mise à jour idempotente.
 - Délégation explicite par défaut ; routage selon les règles de chaque utilisateur.
 - Ressources liées à leurs canaux autorisés, limites par compte, dépendances et concurrence bornée.
 - Contrôle des permissions du nouveau chat avant transmission du travail ; réutilisation de chats terminés configurable.
@@ -271,25 +313,25 @@ excluent les valeurs datant de plus de dix minutes et les comptes en erreur.
 
 ### Créer et utiliser plusieurs instances
 
-1. Dans **Comptes**, ajoutez les comptes souhaités ou importez leur fichier `auth.json`.
-2. Dans **Instances → Créer une instance**, choisissez un nom, par exemple Travail.
-3. Dans **Comptes → Associer aux instances**, autorisez le compte pour tous les espaces
-   ou cochez uniquement ceux qui doivent le proposer.
-4. Dans la carte de l'instance fermée, choisissez un compte et cliquez sur
-   **Associer ce compte**, puis **Ouvrir l'instance**.
-5. Vous pouvez aussi ouvrir une instance vide, vous connecter dans Codex et cliquer
-   sur **Importer sa connexion**. Un nouveau compte ainsi importé est associé à cet espace.
+1. Dans **Instances → Créer une instance**, donnez un nom à l’espace, par exemple Travail.
+2. Choisissez un compte déjà enregistré ou **Connecter un nouveau compte…**.
+3. Pour une nouvelle connexion, choisissez le navigateur et son profil, ou copiez
+   le lien dans la session souhaitée sur ce PC.
+4. Cliquez sur **Préparer et ouvrir**. Le compte est associé durablement et le
+   plugin ainsi que ses skills sont installés automatiquement.
+5. Dans **Compte**, utilisez **Vérifier l’intégration** pour consulter sa progression
+   et le résultat. Pour un autre compte, créez une autre instance.
 
-Un changement de compte exige uniquement la fermeture de l'instance concernée.
+Le compte d’une instance reste permanent ; fermer la fenêtre ne le dissocie pas.
 **Fermer** demande confirmation puis ferme sa fenêtre et ses processus : ses tâches
 en cours seront interrompues. Les autres instances restent ouvertes. **Archiver**
 masque un espace fermé sans supprimer ses données ; **Afficher / masquer les archives** permet de le restaurer.
 
-La **Session habituelle** représente le dossier Codex préexistant. Le switcher ne la
-ferme et ne la relance jamais. Sa bascule reste conservatrice : elle exige la fermeture
-de tous les clients Codex/ChatGPT et CLI connus, comme dans les versions précédentes.
-Le compte affiché est celui du fichier du profil ; il ne prouve pas l'identité déjà
-chargée en mémoire par une application externe.
+La **Session habituelle** représente le dossier Codex préexistant. Les actions
+de cycle de vie sont ciblées et les chats actifs restent protégés. Le compte
+affiché est celui du fichier du profil ; il ne prouve pas à lui seul l’identité
+déjà chargée en mémoire par une application externe. Le Switcher vérifie les
+identités avant une opération liée à un compte et refuse les incohérences.
 
 Les associations définissent les comptes proposés par le switcher. Ce ne sont pas
 des permissions Windows : un utilisateur ayant accès au dossier peut se connecter

@@ -13,6 +13,7 @@ namespace Creezio.Switcher.Desktop
         [STAThread]
         public static int Main(string[] args)
         {
+            if(args.Length==2&&args[0]=="--cloud-worker")return CloudJobWorker.Run(args[1]);
             if (args.Length == 2 && args[0] == "--instance-host")
                 return InstanceHost.Run(args[1]);
             if (args.Length == 3 && args[0] == "--instance-show")

@@ -1,17 +1,37 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param([switch]$SkipBuild,[string]$BinaryDirectory)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.16.1-beta.1'}
+$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.17.0-beta.2'}
 if(-not $SkipBuild){& (Join-Path $PSScriptRoot 'build-desktop.ps1') -OutputDirectory $bin -Portable}
 foreach($required in @('CodexAccountSwitcher.exe','CodexAccountSwitcher.dll','CodexAccountSwitcher.runtimeconfig.json','coreclr.dll','PresentationFramework.dll','CreezioRelay.exe','plugins')){if(-not(Test-Path -LiteralPath (Join-Path $bin $required))){throw "Livraison autonome incomplète : $required"}}
 $instructions=@'
-CODEX ACCOUNT SWITCHER — 0.16.1-beta.1 — WINDOWS X64
+CODEX ACCOUNT SWITCHER — 0.17.0-beta.2 — WINDOWS X64
 
 Extraire TOUT le ZIP et lancer CodexAccountSwitcher.exe.
 Garder les DLL, fichiers JSON, exécutables et dossier plugins ensemble.
 Le runtime .NET 10 de cette interface WPF est inclus. Aucun SDK à installer.
 Le moteur de relais utilise .NET Framework 4.8, présent sur Windows 10/11.
+
+Beta.2 : concurrence conservatrice après un envoi incertain, mise en pause
+respectée pendant les lectures Cloud et résultat remis seulement au chat au repos.
+
+0.17 : pilotage de Codex Cloud depuis le compte permanent d'une instance.
+Instances > Cloud : catalogue GitHub du compte, création privée, préparation,
+suivi et publication explicitement séparés. Aucun passage par ChatGPT web.
+Tâches > Missions Cloud : compte exécutant et environnement publié choisis,
+mandat et branche distincte, état et résultat suivis dans une fenêtre dédiée.
+Dans Codex : demander explicitement une mission Cloud à l'instance nommée.
+Une réponse du modèle n'est ni un push, ni une PR, ni une fusion réussie.
+Les changements locaux ne sont pas synchronisés dans le conteneur Cloud.
+Les règles réseau, GitHub et les droits du compte cible restent applicables.
+La connexion initiale GitHub et les demandes interactives ne sont pas automatisées.
+La modification d'un environnement publié peut recevoir un refus HTTP 403 HTML ;
+aucun contournement ni élargissement automatique des droits n'est effectué.
+Le protocole Cloud est interne à Codex et peut évoluer : voir CLOUD-NATIVE-PILOT.md.
+Les tâches, intentions et références de reprise sont conservées sans renvoi aveugle.
+Les statuts de mission sont en français ; l'actualisation conserve la lecture.
+Voir RELEASE-0.17.md pour la recette et les limites exactes de cette version.
 
 0.16.1 : temporaires d'instance abandonnés récupérés automatiquement avant lancement.
 Les écritures actives et les données validées sont préservées.
@@ -97,10 +117,10 @@ https://github.com/creezio/codex-account-switcher-windows
 [IO.File]::WriteAllText((Join-Path $bin 'LIRE-MOI.txt'),$instructions,[Text.UTF8Encoding]::new($false))
 Copy-Item -LiteralPath (Join-Path $repo 'LICENSE') -Destination (Join-Path $bin 'LICENSE.txt') -Force
 Copy-Item -LiteralPath (Join-Path $repo 'docs\PERFORMANCE-DASHBOARD.md') -Destination $bin -Force
-foreach($name in @('STARTUP-RECOVERY.md','TRANSFERS.md','THREAD-COPY.md','LOGIN-BROWSER.md','INSTANCE-WIZARD-FIX.md','RESOURCE-LINKS.md','RESOURCE-LINKS-VALIDATION.md','INSTANCE-LIFECYCLE.md','SHARED-PAGES.md','SHARED-PAGES-VALIDATION.md','INSTANCE-RESOURCES.md','TOOL-TUNNEL.md','SIMPLE-INSTANCES.md','UI-VALIDATION.md','UI-REBUILD-PLAN.md','RELAY.md','WINDOWS-CONSOLE.md','WINDOWS-CONSOLE-VALIDATION.md')){Copy-Item -LiteralPath (Join-Path $repo ('docs\'+$name)) -Destination $bin -Force}
-$zip=Join-Path $repo 'outputs\CodexAccountSwitcher-0.16.1-beta.1-windows-x64.zip'
+foreach($name in @('CLOUD-NATIVE-PILOT.md','RELEASE-0.17.md','STARTUP-RECOVERY.md','TRANSFERS.md','THREAD-COPY.md','LOGIN-BROWSER.md','INSTANCE-WIZARD-FIX.md','RESOURCE-LINKS.md','RESOURCE-LINKS-VALIDATION.md','INSTANCE-LIFECYCLE.md','SHARED-PAGES.md','SHARED-PAGES-VALIDATION.md','INSTANCE-RESOURCES.md','TOOL-TUNNEL.md','SIMPLE-INSTANCES.md','UI-VALIDATION.md','UI-REBUILD-PLAN.md','RELAY.md','WINDOWS-CONSOLE.md','WINDOWS-CONSOLE-VALIDATION.md')){Copy-Item -LiteralPath (Join-Path $repo ('docs\'+$name)) -Destination $bin -Force}
+$zip=Join-Path $repo 'outputs\CodexAccountSwitcher-0.17.0-beta.2-windows-x64.zip'
 # All published runtime assemblies are required. Test helpers and debug symbols are not shipped.
-$items=Get-ChildItem -LiteralPath $bin | Where-Object {$_.Name -notmatch '(Smoke|Tests|\.pdb$)' } | ForEach-Object FullName
+$items=Get-ChildItem -LiteralPath $bin | Where-Object {$_.Name -notmatch '(Smoke|Tests|\.pdb$)' -and $_.Name -ne 'RUNTIME-SHARED.json' } | ForEach-Object FullName
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 # Windows PowerShell Compress-Archive requests write access to DLLs and fails
@@ -126,5 +146,5 @@ try{
 }finally{$archive.Dispose()}
 Move-Item -LiteralPath $temporary -Destination $zip -Force
 $hash=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-[IO.File]::WriteAllText((Join-Path $repo 'outputs\SHA256SUMS-0.16.1-beta.1.txt'),$hash+'  '+[IO.Path]::GetFileName($zip)+"`n")
+[IO.File]::WriteAllText((Join-Path $repo 'outputs\SHA256SUMS-0.17.0-beta.2.txt'),$hash+'  '+[IO.Path]::GetFileName($zip)+"`n")
 Get-Item -LiteralPath $zip | Select-Object Name,Length

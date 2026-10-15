@@ -9,6 +9,7 @@ namespace Creezio.Switcher
     internal static class RelayCli
     {
         private static int Main(string[] args){
+            if(args.Length==2&&args[0]=="--cloud-worker")return CloudJobWorker.Run(args[1]);
             if(args.Length==2&&args[0]=="--worker")return RelayWorker.Run(args[1]);
             if(args.Length==2&&args[0]=="--usage-worker")return UsageCoordinator.Run(args[1]);
             if(args.Length==2&&args[0]=="--remote-worker")return RemoteGateway.Run(args[1]);
@@ -66,6 +67,7 @@ namespace Creezio.Switcher
         {
             string root=Json.Str(Json.Get(input,"root"));var store=new RelayStore(String.IsNullOrWhiteSpace(root)?RelayStore.DefaultRoot:root);
             string op=Required(input,"operation");
+            if(op.StartsWith("cloud-",StringComparison.Ordinal))return await CloudCommands.Execute(store,input,token);
             if(op=="register")return ChannelSummary(await Register(store,input,token));
             if(op=="bind")return await RelaySessions.Bind(store,Json.Str(Json.Get(input,"channel")),token);
             if(op=="worker-status")return RelayWorker.Status(store);

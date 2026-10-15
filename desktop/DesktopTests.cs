@@ -250,6 +250,8 @@ namespace Creezio.Switcher.Desktop
                     await inspectPluginDone.Task;
                     assert(resources.Dirty,"enregistrer les actions du plugin conserve le brouillon des ressources");
                     await InstanceActions(context,shell,instances,resources,toolOwner,toolClient,root,assert);
+                    await CloudAcceptance(context,shell,instances,toolOwner,root,assert);
+                    await CloudJobsAcceptance(context,shell,toolOwner,toolClient,root,assert);
                     resources.ConfirmDiscard=()=>false;shell.Navigate("Accueil");assert(shell.CurrentPage=="Instances","navigation protège les changements de partage");
                     instances.ShowTab(0);shell.UpdateLayout();Capture(shell,Path.Combine(root,"Instance-compte.png"));instances.ShowTab(1);shell.UpdateLayout();
                     assert(resources.Dirty,"onglets Compte et Ressources conservent le brouillon");
