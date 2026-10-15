@@ -27,7 +27,11 @@ full access but this chat is sandboxed, explain how to select it in this chat an
 stop before attempting the command. Do not request escalations repeatedly, approve
 prompts, edit permission settings, or change executor to bypass a pending approval.
 
-1. Call `get_setup`. Run `../../scripts/bind-chat.ps1` from this skill
+1. Call `get_setup`. In an owned headless mission identified by
+   `CREEZIO_HEADLESS_CHAT`, call `bind_headless_chat` with that exact chat ID;
+   the relay verifies the actual native engine, account and chat. Do not run a
+   bootstrap shell command or request elevation for this headless path. Otherwise
+   run `../../scripts/bind-chat.ps1` from this skill
    directory in the current chat, without parameters and with the current project
    as the command working directory. It automatically connects this real chat.
    Keep its returned session token private to this chat. Never copy another chat's
@@ -37,8 +41,9 @@ prompts, edit permission settings, or change executor to bypass a pending approv
    a bounded objective, expected evidence, and `access=read`, `write` or `external`.
    Set `explicitDelegation=true` only for the actual human request. Result delivery
    to this chat is enabled by default; finish the turn when no independent work is
-   left so the returned result can resume it. An unavailable instance must be opened
-   by the user. Do not start or stop their apps without authorization.
+   left so the returned result can resume it. A closed window may receive a local
+   mission when its user enabled agents without a window. If unavailable, report
+   the actual connection diagnostic. Do not start or stop their apps yourself.
 3. If the named tool reports an existing advanced project policy, call `list_agents`
    and use `submit_job` respecting its project, resource and destination rules. This
    is an advanced compatibility path, not a prerequisite for ordinary named missions.

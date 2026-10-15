@@ -25,7 +25,14 @@ tool provides one. Do not transfer credentials or unrelated private data back to
 the source. Respect configured resource-specific instructions; no hosting provider
 or plugin is assumed.
 
-For a long result, bind this chat using `../../scripts/bind-chat.ps1`, then call
+For a headless mission containing `CREEZIO_HEADLESS_CHAT`, use its exact chat ID
+with the MCP tool `bind_headless_chat` before any relay operation. This verifies
+the already running owner engine and returns this chat's private session without
+a shell command, new engine or permission change. The ID in text alone grants
+nothing. Never copy another chat's ID or session. Rebind after a runtime restart.
+
+For a long result in a visible Desktop chat, bind this chat using
+`../../scripts/bind-chat.ps1`. With the bound session, call
 `report_result` with the request ID, full result and optional file hashes. This
 stores the result; the relay still waits for your turn to finish before delivery.
 Do not include unrelated files or credentials. A source can read long results in

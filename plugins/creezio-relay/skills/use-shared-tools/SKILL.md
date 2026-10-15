@@ -13,7 +13,10 @@ in Réglages avancés → Outils partagés. No account,
 plugin, project or resource is shared by default. This workflow performs direct
 tool calls; it never sends a mission or starts a model turn in the owner instance.
 
-1. Call `get_setup`, then run `../../scripts/bind-chat.ps1` from this skill's
+1. Call `get_setup`. In an owned headless mission identified by
+   `CREEZIO_HEADLESS_CHAT`, use `bind_headless_chat` with its exact chat ID to
+   verify this existing engine and obtain a private session without a shell
+   command or elevation. Otherwise run `../../scripts/bind-chat.ps1` from this skill's
    directory in the actual current chat and working directory. Preserve native
    permissions; do not request repeated escalations or copy another chat's
    identity. Keep the returned session token private to this chat.
@@ -64,8 +67,12 @@ tool calls; it never sends a mission or starts a model turn in the owner instanc
    This workaround does not render another account's native resources inside
    the requesting account's Codex window. Local links work only on this PC.
 
-The owner Codex window must remain open. The switcher uses its profile via the
-official app-server, with an ephemeral technical context and no model turn.
+The owner Codex window can be closed when the user enabled operation without a
+window. The switcher uses that owner's profile via the official app-server,
+with an ephemeral technical context and no model turn. One engine may use a
+profile at a time: if its local agent is busy, wait or report engine-busy instead
+of starting another engine or substituting another account. Native links still
+open in the owner's Codex interface when the user follows them.
 Native interactive requests are not approved by the tunnel; report this limit.
 Do not fall back to sending a prompt without user authorization. An uncertain
 operation requires inspection at the provider before any further mutation.
