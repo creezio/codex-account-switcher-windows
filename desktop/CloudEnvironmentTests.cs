@@ -96,6 +96,11 @@ namespace Creezio.Switcher.Desktop
                 handler.Reply = (request, token) => request.RequestUri.Query.Contains("cursor=") ? Task.FromResult(Response(new { data = new object[0], next_cursor = (string)null })) : catalog(request, token);
                 await cloud.Reload(first);
 
+                var githubSuccess=cloud.GitHubFixture;cloud.GitHubFixture=token=>throw new InvalidOperationException("Catalogue GitHub indisponible dans cette recette");
+                await cloud.Reload(first);
+                assert(Button("Nouvel environnement").IsEnabled,"création reste accessible après un échec GitHub du panneau car l’assistant peut choisir un autre compte");
+                cloud.GitHubFixture=githubSuccess;await cloud.Reload(first);
+
                 int created = 0;
                 var operationIds = new List<string>();
                 cloud.CreateFixture = (request, id, token) =>
@@ -120,13 +125,36 @@ namespace Creezio.Switcher.Desktop
                     await done.Task;
                     await Until(() => Button("Actualiser le Cloud").IsEnabled);
                 }
-                await Dialog("Créer un brouillon Codex Cloud", "Nouvel environnement", async form =>
+                async Task EnvironmentDialog(string button,Func<CloudEnvironmentWizard,Task> inspect)
                 {
-                    var input = Descendants(form).OfType<TextBox>().Single();
-                    input.Text = "Création contrôlée";
-                    assert(Descendants(form).OfType<ComboBox>().Single(choice => AutomationProperties.GetName(choice) == "Accès réseau initial").SelectedIndex == 0, "création permet un choix réseau explicite et garde le réseau désactivé par défaut");
-                    form.SaveButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
-                    await Until(() => form.Saved);
+                    var done=new TaskCompletionSource<bool>();
+                    _=shell.Dispatcher.BeginInvoke(new Action(async()=>
+                    {
+                        CloudEnvironmentWizard form=null;
+                        try
+                        {
+                            await Until(()=>Application.Current.Windows.OfType<CloudEnvironmentWizard>().Any(value=>value.IsLoaded));
+                            form=Application.Current.Windows.OfType<CloudEnvironmentWizard>().Single(value=>value.IsLoaded);
+                            await inspect(form);done.SetResult(true);
+                        }
+                        catch(Exception error){done.SetException(error);}
+                        finally{if(form!=null&&!form.Saved){form.ConfirmDiscard=()=>true;form.Close();}}
+                    }),DispatcherPriority.ContextIdle);
+                    Invoke(button);await done.Task;await Until(()=>Button("Actualiser le Cloud").IsEnabled);
+                }
+                void Next(CloudEnvironmentWizard form)=>form.NextButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                async Task PrepareCreation(CloudEnvironmentWizard form,string name,string targetId=null)
+                {
+                    if(targetId!=null)form.Account.SelectedItem=form.Account.Items.Cast<CloudEnvironmentAccountChoice>().Single(value=>value.Id==targetId);
+                    await Until(()=>!form.Loading&&form.RepositoryRows.Count>0);
+                    form.RepositoryRows.First().Selected=true;Next(form);await Until(()=>form.Step==2);
+                    form.EnvironmentName.Text=name;Next(form);await Until(()=>form.Step==3);Next(form);await Until(()=>form.Step==4&&form.NextButton.IsEnabled);
+                }
+                await EnvironmentDialog("Nouvel environnement",async form=>
+                {
+                    await PrepareCreation(form,"Création contrôlée");
+                    assert(form.Network.SelectedIndex==0&&!cloud.CanLeave()&&!Button("Actualiser le Cloud").IsEnabled,"assistant conserve le réseau désactivé par défaut et protège le panneau pendant la configuration");
+                    Next(form);await Until(()=>form.Saved);
                 });
                 await Until(() => cloud.EnvironmentChoice.Items.Count == 3 && Status().Text.Contains("créé et relu"));
                 assert(created == 1 && operationIds.Single().Length == 32, "validation du formulaire envoie une seule intention identifiée avant relecture");
@@ -150,24 +178,76 @@ namespace Creezio.Switcher.Desktop
 
                 int refused = 0;
                 cloud.CreateFixture = (request, id, token) => { refused++; throw new CloudBackendException("fixture", "Refus de recette", 400); };
-                await Dialog("Créer un brouillon Codex Cloud", "Nouvel environnement", async form =>
+                await EnvironmentDialog("Nouvel environnement",async form=>
                 {
-                    var input = Descendants(form).OfType<TextBox>().Single();
-                    input.Text = "Création refusée";
-                    form.SaveButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
-                    await Until(() => form.SaveButton.Visibility == Visibility.Collapsed);
-                    assert(!form.Saved && input.IsReadOnly && refused == 1 && Descendants(form).OfType<TextBlock>().Any(text => text.Text.Contains("nouvelle demande corrigée")), "échec connu ferme la possibilité de renvoi et explique comment corriger une nouvelle intention");
+                    await PrepareCreation(form,"Création refusée");Next(form);await Until(()=>form.IntentLocked&&!form.Submitting);
+                    assert(!form.Saved&&form.EnvironmentName.IsReadOnly&&refused==1&&!form.NextButton.IsEnabled,"échec connu fige l’intention et interdit un second envoi depuis cet assistant");
+                    Next(form);assert(refused==1,"double clic après refus ne rejoue pas la création");
                 });
 
-                int uncertain = 0;
-                cloud.CreateFixture = (request, id, token) => { uncertain++; throw new CloudBackendUncertainException("réponse perdue"); };
-                await Dialog("Créer un brouillon Codex Cloud", "Nouvel environnement", async form =>
+                int uncertain=0;
+                cloud.CreateFixture=(request,id,token)=>{uncertain++;throw new CloudBackendUncertainException("réponse perdue");};
+                await EnvironmentDialog("Nouvel environnement",async form=>
                 {
-                    Descendants(form).OfType<TextBox>().Single().Text = "Résultat incertain";
-                    form.SaveButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
-                    await Until(() => form.SaveButton.Visibility == Visibility.Collapsed);
-                    assert(!form.Saved && uncertain == 1 && Descendants(form).OfType<TextBlock>().Any(text => text.Text.Contains("Référence de suivi")), "création incertaine bloque tout nouvel envoi et expose un rapprochement explicite");
+                    await PrepareCreation(form,"Résultat incertain");Next(form);await Until(()=>form.IntentLocked&&!form.Submitting);
+                    assert(!form.Saved&&uncertain==1&&!form.NextButton.IsEnabled&&Descendants(form).OfType<TextBlock>().Any(text=>text.Text.Contains("Référence :")&&text.Text.Contains(form.IntentId)),"création incertaine reste figée avec sa référence de suivi durable");
                 });
+                int localCreateWrites=0;
+                cloud.CreateFixture=(request,id,token)=>{localCreateWrites++;throw new IOException("Échec local simulé après réponse de création");};
+                await EnvironmentDialog("Nouvel environnement",async form=>
+                {
+                    await PrepareCreation(form,"Réponse reçue puis erreur locale");Next(form);await Until(()=>form.IntentLocked&&!form.Submitting);
+                    assert(form.ErrorText.Text.Contains("incertain")&&!form.ErrorText.Text.Contains("arrêtée")&&Status().Text.Contains("relisez")&&!form.NextButton.IsEnabled,"erreur locale après entrée en création reste incertaine et invite à relire, jamais à recréer");
+                    Next(form);assert(localCreateWrites==1,"erreur locale après création ne rejoue jamais la même intention");
+                });
+                cloud.CreateFixture=(request,id,token)=>throw new CloudBackendException("invalid-response","Réponse de succès non interprétable",200);
+                await EnvironmentDialog("Nouvel environnement",async form=>
+                {
+                    await PrepareCreation(form,"Réponse succès invalide");Next(form);await Until(()=>form.IntentLocked&&!form.Submitting);
+                    assert(form.ErrorText.Text.Contains("incertain")&&!form.NextButton.IsEnabled,"réponse invalide après succès HTTP reste incertaine et ne devient pas un refus confirmé");
+                });
+
+                var other=await context.Read(accounts=>accounts.Data.Instances.Where(instance=>!instance.Archived&&!String.IsNullOrEmpty(instance.AccountKey)&&instance.Id!=owner.Id).Select(instance=>new{instance.Id,instance.AccountKey}).First());
+                int repositoryReads=0;
+                cloud.WizardRepositoriesFixture=(choice,token)=>
+                {
+                    repositoryReads++;return Task.FromResult(new[]{new CloudGitHubRepository{Id=choice.Id==owner.Id?"github/123":"github/other",FullName=choice.Id==owner.Id?"fixture/project":"fixture/other-project",DefaultBranch="main"}});
+                };
+                cloud.WizardCreateFixture=(choice,request,id,token)=>
+                {
+                    assert(choice.Id==other.Id&&choice.AccountKey==other.AccountKey&&request.Repositories.Single().RepositoryId=="github/other","création d’un autre compte utilise son identité permanente et son propre dépôt GitHub");
+                    return Task.FromResult(new CloudConfiguration{Id="foreign-environment-not-in-owner-catalog",Name=request.Name});
+                };
+                int requestsBeforeForeign=handler.Requests;
+                await EnvironmentDialog("Nouvel environnement",async form=>{await PrepareCreation(form,"Autre compte",other.Id);Next(form);await Until(()=>form.Saved);});
+                assert(handler.Requests==requestsBeforeForeign&&((CloudConfiguration)cloud.EnvironmentChoice.SelectedItem).Id==added&&Status().Text.Contains("Sélectionnez cette instance"),"création sur autre compte ne recharge jamais son identifiant dans le catalogue du propriétaire affiché");
+
+                async Task ChangeOwnerKey(string key)=>await context.Mutate(accounts=>{accounts.Data.Instances.Single(value=>value.Id==owner.Id).AccountKey=key;accounts.Save();return Task.CompletedTask;});
+                await EnvironmentDialog("Nouvel environnement",async form=>
+                {
+                    await Until(()=>!form.Loading&&form.RepositoryRows.Count>0);
+                    form.Account.SelectedItem=form.Account.Items.Cast<CloudEnvironmentAccountChoice>().Single(value=>value.Id==other.Id);await Until(()=>!form.Loading&&form.RepositoryRows.Any(row=>row.Id=="github/other"));
+                    try
+                    {
+                        await ChangeOwnerKey("fixture-account-changed");int readsBeforeDrift=repositoryReads;
+                        form.Account.SelectedItem=form.Account.Items.Cast<CloudEnvironmentAccountChoice>().Single(value=>value.Id==owner.Id);
+                        await Until(()=>!form.Loading&&form.Status.Text.Contains("a changé"));
+                        assert(repositoryReads==readsBeforeDrift&&!form.NextButton.IsEnabled,"liaison de compte modifiée bloque la lecture GitHub avant tout appel du compte sélectionné");
+                    }
+                    finally{await ChangeOwnerKey(owner.AccountKey);}
+                });
+                int blockedCreates=0;cloud.WizardCreateFixture=(choice,request,id,token)=>{blockedCreates++;return Task.FromResult(new CloudConfiguration{Id=added,Name=request.Name});};
+                await EnvironmentDialog("Nouvel environnement",async form=>
+                {
+                    await PrepareCreation(form,"Compte changé avant envoi");
+                    try
+                    {
+                        await ChangeOwnerKey("fixture-account-changed");Next(form);await Until(()=>form.IntentLocked&&!form.Submitting);
+                        assert(blockedCreates==0&&form.ErrorText.Text.Contains("a changé"),"liaison de compte modifiée avant confirmation interdit l’envoi de création");
+                    }
+                    finally{await ChangeOwnerKey(owner.AccountKey);}
+                });
+                cloud.WizardCreateFixture=null;
 
                 int preparations = 0, follows = 0, publications = 0;
                 string setupId = null;
@@ -211,6 +291,32 @@ namespace Creezio.Switcher.Desktop
                 assert(Button("Créer une mission").IsEnabled&&!Descendants(cloud).OfType<Button>().Any(item=>Object.Equals(item.Content,"Renommer l’environnement")||Object.Equals(item.Content,"Modifier et publier…")),"environnement prêt : une action de mission, les réglages sont regroupés dans le menu");
                 Invoke("Créer une mission");await Until(()=>missionOwner!=null);
                 assert(missionOwner==owner.Id&&missionEnvironment==added,"créer une mission préserve exactement l’instance et l’environnement sélectionnés sans appel Cloud de mutation");
+                int edits=0;
+                cloud.UpdateFixture=(id,patch,operationId,token)=>
+                {
+                    edits++;assert(id==added&&operationId.Length==32&&patch.BaseVersionId=="11111111-2222-3333-4444-555555555555~cecfgver_fixture"&&patch.ExpectedRevision==0,"édition guidée fige le compte, l’environnement et sa version de départ");
+                    assert(patch.Repositories.Single().Ref=="refs/heads/feature/guided-ui"&&patch.Repositories.Single().Depth==1&&patch.NetworkPolicy==null,"édition conserve la profondeur et la politique réseau tant qu’elles ne sont pas changées");
+                    return Task.FromResult(new CloudEnvironmentUpdateResult{Id=operationId,ConfigurationId=id,State="completed",Stage="completed"});
+                };
+                await EnvironmentDialog("Modifier et publier…",async form=>
+                {
+                    await Until(()=>!form.Loading&&form.RepositoryRows.Count>0);
+                    assert(form.Account.Items.Count==1&&!form.Account.IsEnabled&&form.EnvironmentName.IsReadOnly,"modification verrouille le compte propriétaire et garde le renommage séparé");
+                    form.RepositoryRows.Single(row=>row.Id=="github/123").Ref="refs/heads/feature/guided-ui";
+                    Next(form);await Until(()=>form.Step==2);Next(form);await Until(()=>form.Step==3);Next(form);await Until(()=>form.Step==4&&form.NextButton.IsEnabled);Next(form);await Until(()=>form.Saved);
+                });
+                assert(edits==1&&Status().Text.Contains("publication vérifiée"),"modification guidée envoie une seule intention à la simulation explicite sans contacter une API réelle");
+                int localEditWrites=0;
+                cloud.UpdateFixture=(id,patch,operationId,token)=>{localEditWrites++;throw new IOException("Échec local simulé après réponse de modification");};
+                await EnvironmentDialog("Modifier et publier…",async form=>
+                {
+                    await Until(()=>!form.Loading&&form.RepositoryRows.Count>0);
+                    Next(form);await Until(()=>form.Step==2);Next(form);await Until(()=>form.Step==3);form.Install.Text="python --version";
+                    Next(form);await Until(()=>form.Step==4&&form.NextButton.IsEnabled);Next(form);await Until(()=>form.IntentLocked&&!form.Submitting);
+                    assert(form.ErrorText.Text.Contains("incertain")&&!form.NextButton.IsEnabled,"erreur locale après modification conserve un résultat incertain dans l’assistant");
+                    Next(form);assert(localEditWrites==1,"erreur locale après modification ne rejoue pas la demande");
+                });
+                assert(Button("Suivre la publication").IsEnabled&&!Menu("Modifier et publier…").IsEnabled,"modification localement incertaine garde son suivi et bloque une nouvelle modification avant rapprochement");
                 cloud.SetFixtureUpdate(new CloudEnvironmentUpdateResult{Id="fixture-failed-update",ConfigurationId=added,State="failed",Stage="draft-creation",FailureCode="unexpected-html"});shell.UpdateLayout();
                 assert(Button("Créer une mission").IsEnabled&&!Descendants(cloud).OfType<Button>().Any(item=>Object.Equals(item.Content,"Suivre la publication"))&&!cloud.ActionsMenu.Items.OfType<MenuItem>().Any(item=>Object.Equals(item.Header,"Suivre la publication")),"ancien échec terminal ne masque pas la version prête et ne propose plus un suivi inutile");
                 assert(Descendants(cloud).OfType<Expander>().All(expander=>!expander.IsExpanded),"configuration, diagnostic et ancienne erreur restent repliés par défaut");

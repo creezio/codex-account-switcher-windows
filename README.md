@@ -3,12 +3,18 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.17.1-beta.1 — missions guidées et vue des instances simplifiée.** Windows 10/11 x64, interface en
+**Version 0.17.2-beta.1 — assistants de configuration des environnements Cloud.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
 
-La configuration d’une mission Cloud se fait désormais en quatre étapes :
+La création d’un environnement Cloud suit désormais un assistant : choisir le
+compte charge automatiquement ses dépôts GitHub, puis l’assistant déroule
+**Compte → Dépôts → Réglages → Démarrage → Vérifier**. La modification suit
+le même principe en conservant le compte propriétaire ; changer de compte ne
+transfère pas un environnement ou ses droits.
+
+La configuration d’une mission Cloud se fait en quatre étapes :
 **Compte → Environnement → Mission → Vérifier**. Choisir le compte charge
 automatiquement ses environnements publiés ; le récapitulatif confirme la cible
 et le mandat avant l’envoi. Revenir à une étape conserve le texte saisi.
@@ -33,7 +39,10 @@ permanent de l’instance, sans ChatGPT web. Il dépend d’un protocole interne
 donc une évolution du service peut interrompre une opération. Les fichiers
 locaux ne sont pas transférés automatiquement au conteneur. La première connexion
 GitHub et les autorisations interactives restent des étapes
-officielles distinctes. [Parcours, validations et limites Cloud](docs/CLOUD-NATIVE-PILOT.md)
+officielles distinctes. La modification d’un environnement publié peut toujours
+être refusée par le service avec HTTP 403 ; l’assistant ne contourne pas ce refus.
+[Parcours, validations et limites Cloud](docs/CLOUD-NATIVE-PILOT.md)
+· [Assistants d’environnement 0.17.2](docs/RELEASE-0.17.2.md)
 · [Refonte 0.17.1](docs/RELEASE-0.17.1.md)
 · [Recette Cloud 0.17](docs/RELEASE-0.17.md).
 
@@ -53,6 +62,8 @@ de contrôle d’activité et de fermeture protégée restent accessibles.
 
 ![Gestion des instances, avec des comptes fictifs](assets/screenshot.png)
 
+![Sélection des dépôts dans l’assistant d’environnement Cloud, avec un compte fictif](assets/cloud-environment-wizard.png)
+
 ![Récapitulatif de mission Cloud dans l’assistant guidé, avec des comptes fictifs](assets/cloud-mission-wizard.png)
 
 ![Tableau de bord des performances, avec des comptes fictifs](assets/performance-dashboard.png)
@@ -60,8 +71,10 @@ de contrôle d’activité et de fermeture protégée restent accessibles.
 ## Confier une mission à Codex Cloud
 
 1. Dans **Instances**, sélectionnez le compte exécutant puis l’onglet **Cloud**.
-2. Créez un environnement sur un dépôt du catalogue GitHub de ce compte. Choisissez
-   explicitement son accès réseau ; un réseau désactivé empêche notamment un push.
+2. Ouvrez **Nouvel environnement**. Choisissez le compte : son catalogue GitHub
+   se charge automatiquement. Choisissez les dépôts et leurs branches, puis
+   les réglages et le démarrage. Vérifiez ensuite le récapitulatif. Choisissez l’accès
+   réseau ; un réseau désactivé empêche notamment un push.
 3. Lancez **Préparer l’environnement**, consultez son suivi, puis demandez sa
    publication avec l’action séparée proposée une fois la préparation terminée.
 4. Dans **Tâches → Missions Cloud → Nouvelle mission Cloud**, choisissez le

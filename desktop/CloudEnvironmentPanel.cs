@@ -32,7 +32,8 @@ namespace Creezio.Switcher.Desktop
         private readonly Dictionary<string, CloudEnvironmentUpdateResult> updates = new Dictionary<string, CloudEnvironmentUpdateResult>(StringComparer.Ordinal);
         private readonly Dictionary<string, CloudEnvironmentSetupResult> setups = new Dictionary<string, CloudEnvironmentSetupResult>(StringComparer.Ordinal);
         private CancellationTokenSource operation;
-        private bool busy, mutating, changing, disposed, loaded, githubFailed;
+        private bool busy, mutating, changing, disposed, loaded, githubFailed, composingBusy;
+        private readonly CancellationTokenSource lifetime=new CancellationTokenSource();
         private CloudConfiguration selected;
         private string email;
         internal Func<CloudBackend> ClientFactory = null;
@@ -42,6 +43,9 @@ namespace Creezio.Switcher.Desktop
         internal Func<string, CancellationToken, Task<CloudEnvironmentSetupResult>> SetupFollowFixture = null;
         internal Func<string, CancellationToken, Task<CloudEnvironmentSetupResult>> SetupPublishFixture = null;
         internal Func<CancellationToken, Task<CloudGitHubRepositoryPage>> GitHubFixture = null;
+        internal Func<CloudEnvironmentAccountChoice,CancellationToken,Task<CloudGitHubRepository[]>> WizardRepositoriesFixture;
+        internal Func<CloudEnvironmentAccountChoice,CloudConfigurationCreate,string,CancellationToken,Task<CloudConfiguration>> WizardCreateFixture;
+        internal Func<string,CloudDraftPatch,string,CancellationToken,Task<CloudEnvironmentUpdateResult>> UpdateFixture;
 
         internal CloudEnvironmentPanel(DesktopContext context, ShellWindow shell, DesktopInstance owner, string email)
         {
@@ -79,11 +83,11 @@ namespace Creezio.Switcher.Desktop
             SizeChanged+=delegate{bool compact=ActualWidth<720;left.Visibility=compact?Visibility.Collapsed:Visibility.Visible;workspace.ColumnDefinitions[0].Width=new GridLength(compact?0:185);workspace.ColumnDefinitions[1].Width=new GridLength(compact?0:16);EnvironmentChoice.Visibility=compact?Visibility.Visible:Visibility.Collapsed;};
             EnvironmentChoice.SelectionChanged += async delegate
             {
-                if (changing || busy || disposed) return;
+                if (changing || busy || composingBusy || disposed) return;
                 try { await ReadSelected(); } catch (Exception error) { ShowError(error); }
             };
             EnvironmentList.SelectionChanged+=async delegate{
-                if(changing||busy||disposed)return;
+                if(changing||busy||composingBusy||disposed)return;
                 changing=true;EnvironmentChoice.SelectedItem=EnvironmentList.SelectedItem;changing=false;
                 try{await ReadSelected();}catch(Exception error){ShowError(error);}
             };
@@ -128,7 +132,7 @@ namespace Creezio.Switcher.Desktop
 
         internal async Task Reload(string preferredId = null)
         {
-            if (busy || disposed) return;
+            if (busy || composingBusy || disposed) return;
             if (context.Fixture && ClientFactory == null)
             {
                 status.Text = "Aucun appel Cloud n’est effectué avec les comptes fictifs de cette recette.";
@@ -268,7 +272,7 @@ namespace Creezio.Switcher.Desktop
             bool ready=!initial&&environment.Status=="ready"&&environment.Draft==null&&!String.IsNullOrEmpty(environment.LatestReadyVersionId);
             var summary = new StackPanel();
             var summaryHeader=new DockPanel();
-            ActionsMenu=new ContextMenu();
+            ActionsMenu=new ContextMenu{IsEnabled=!busy&&!composingBusy};
             var menu=Ui.Button("⋯",()=>{ActionsMenu.PlacementTarget=(UIElement)summaryHeader.Children[0];ActionsMenu.Placement=PlacementMode.Bottom;ActionsMenu.IsOpen=true;});
             menu.ContextMenu=ActionsMenu;menu.Margin=new Thickness(8,0,0,0);menu.Padding=new Thickness(11,5,11,5);menu.ToolTip="Actions de l’environnement";AutomationProperties.SetName(menu,"Actions de l’environnement");DockPanel.SetDock(menu,Dock.Right);summaryHeader.Children.Add(menu);
             var name=Ui.Text(environment.Name,20);name.Margin=new Thickness(0,0,0,7);name.FontWeight=FontWeights.SemiBold;summaryHeader.Children.Add(name);summary.Children.Add(summaryHeader);
@@ -280,7 +284,7 @@ namespace Creezio.Switcher.Desktop
             }
             if(environment.Repositories==null||environment.Repositories.Count==0)summary.Children.Add(Ui.Text("Aucun dépôt associé",13,true));
             var actions=Ui.Actions(summary);actions.Margin=new Thickness(0,12,0,0);
-            void Primary(string label,Func<Task> action,bool enabled=true){var button=Ui.AsyncButton(label,action,ShowError,true);button.IsEnabled=!busy&&enabled;actions.Children.Add(button);}
+            void Primary(string label,Func<Task> action,bool enabled=true){var button=Ui.AsyncButton(label,action,ShowError,true);button.IsEnabled=!busy&&!composingBusy&&enabled;actions.Children.Add(button);}
             if(setupPending)
             {
                 if(setup.State=="ready-to-publish")Primary("Publier l’environnement",()=>FollowSetup(setup,true));
@@ -339,7 +343,7 @@ namespace Creezio.Switcher.Desktop
 
         private async Task CreateMission(CloudConfiguration environment)
         {
-            if(busy||disposed)return;
+            if(busy||composingBusy||disposed)return;
             if(context.Fixture){if(CreateMissionFixture!=null)await CreateMissionFixture(owner.Id,environment.Id);return;}
             var jobs=new CloudJobsWindow(context,shell);jobs.Show();await jobs.StartNewMission(owner.Id,environment.Id);
         }
@@ -389,7 +393,7 @@ namespace Creezio.Switcher.Desktop
 
         private async Task Setup(CloudConfiguration environment)
         {
-            if (busy || disposed) return;
+            if (busy || composingBusy || disposed) return;
             var configured = environment.Repositories ?? new List<CloudRepository>();
             if (configured.Count == 0) throw new InvalidOperationException("Choisissez d’abord un dépôt pour cet environnement Cloud.");
             var names = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -430,7 +434,7 @@ namespace Creezio.Switcher.Desktop
 
         private async Task FollowSetup(CloudEnvironmentSetupResult setup, bool publish)
         {
-            if (busy || disposed) return;
+            if (busy || composingBusy || disposed) return;
             Begin(publish ? "Demande de publication de l’environnement Cloud…" : "Lecture du suivi de préparation Cloud…", true, TimeSpan.FromMinutes(15));
             CloudEnvironmentSetupResult outcome = null;
             try
@@ -447,58 +451,52 @@ namespace Creezio.Switcher.Desktop
 
         private async Task Edit(CloudConfiguration environment)
         {
-            if (busy || disposed) return;
-            var form = new EditWindow(shell, "Modifier et publier l’environnement Cloud", "Enregistrer et publier");
-            form.Fields.Children.Add(Ui.Text("Compte : " + email + " · Instance : " + owner.Name, 13, true));
-            form.Fields.Children.Add(Ui.Text("Ces réglages seront exécutés dans un environnement Cloud. La publication utilise un nouveau brouillon et s’arrête si la version affichée a changé.", 13, true));
-            var install = Ui.Input("Commandes d’installation", environment.InstallScript ?? "", form.Fields, true);
-            var cwd = Ui.Input("Dossier de travail Cloud (chemin absolu, par exemple /workspace)", environment.Cwd ?? "", form.Fields);
-            var instructions = Ui.Input("Instructions de démarrage", environment.StartSkill ?? "", form.Fields, true);
-            var network = Ui.Select("Accès réseau", new[] { "Conserver la règle actuelle", "Réseau désactivé", "Gestionnaires de paquets uniquement", "Accès réseau sans restriction" }, "Conserver la règle actuelle", form.Fields);
-            form.Dirty = () => install.Text != (environment.InstallScript ?? "") || cwd.Text != (environment.Cwd ?? "") || instructions.Text != (environment.StartSkill ?? "") || network.SelectedIndex != 0;
-            string operationId = Guid.NewGuid().ToString("N");
-            CloudEnvironmentUpdateResult outcome = null;
-            form.Save = async () =>
+            if (busy || composingBusy || disposed) return;
+            if(environment.IsOwner!=true||environment.Draft!=null||!environment.VersionRevision.HasValue||environment.VersionRevision.Value<=1)
+                throw new InvalidOperationException("Cet environnement doit être publié, sans brouillon, et appartenir au compte de cette instance avant une modification.");
+            composingBusy=true;UpdateButtons();
+            CloudEnvironmentUpdateResult outcome=null;
+            try
             {
-                string installation = install.Text, directory = cwd.Text.Trim(), start = instructions.Text;
-                var patch = new CloudDraftPatch { BaseVersionId = environment.VersionId, ExpectedRevision = 0 };
-                if (installation != (environment.InstallScript ?? "")) patch.InstallScript = installation;
-                if (directory != (environment.Cwd ?? ""))
+                var choices=await WizardAccounts(true);
+                if(disposed)return;
+                var form=new CloudEnvironmentWizard(shell,choices,LoadWizardRepositories,async(intent,token)=>
                 {
-                    if (!directory.StartsWith("/", StringComparison.Ordinal)) throw new InvalidOperationException("Le dossier Cloud doit être un chemin absolu commençant par /.");
-                    patch.Cwd = directory;
-                }
-                if (start != (environment.StartSkill ?? "")) patch.StartSkill = start;
-                if (network.SelectedIndex == 1) patch.NetworkPolicy = new CloudNetworkPolicy { Type = "disabled" };
-                if (network.SelectedIndex == 2) patch.NetworkPolicy = new CloudNetworkPolicy { Type = "restricted", Presets = new List<string> { "package_managers" }, EgressHosts = new List<string>() };
-                if (network.SelectedIndex == 3) patch.NetworkPolicy = new CloudNetworkPolicy { Type = "unrestricted" };
-                if (patch.InstallScript == null && patch.Cwd == null && patch.StartSkill == null && patch.NetworkPolicy == null) throw new InvalidOperationException("Modifiez au moins un réglage avant d’enregistrer.");
-                install.IsReadOnly = cwd.IsReadOnly = instructions.IsReadOnly = true;
-                network.IsEnabled = false;
-                Begin("Enregistrement et préparation de la publication Cloud…", true, TimeSpan.FromMinutes(15));
-                try
-                {
-                    await context.Mutate(async accounts => { outcome = await CloudEnvironmentUpdate.Update(accounts, Current(accounts), environment.Id, patch, operationId, operation.Token); });
-                    updates[environment.Id] = outcome;
-                }
-                catch
-                {
-                    // The same intent can be followed, but it cannot silently become a new draft.
-                    updates[environment.Id] = new CloudEnvironmentUpdateResult { Id = operationId, ConfigurationId = environment.Id, State = "uncertain", Stage = "À vérifier" };
-                    ReconcileRequired(form, operationId);
-                    throw;
-                }
-                finally { End(); }
-            };
-            form.ShowDialog();
-            if (!form.Saved || outcome == null || disposed) return;
+                    ValidateEditIntent(intent,environment);
+                    await VerifyWizardAccount(intent.Account);
+                    Begin("Enregistrement et préparation de la publication Cloud…",true,TimeSpan.FromMinutes(15));
+                    using(var linked=CancellationTokenSource.CreateLinkedTokenSource(operation.Token,token))
+                    try
+                    {
+                        if(context.Fixture){if(UpdateFixture==null)throw new InvalidOperationException("Modification Cloud non configurée dans cette recette.");outcome=await UpdateFixture(environment.Id,intent.Patch,intent.Id,linked.Token);}
+                        else await context.Mutate(async accounts=>{outcome=await CloudEnvironmentUpdate.Update(accounts,Pinned(accounts,intent.Account),environment.Id,intent.Patch,intent.Id,linked.Token);});
+                        updates[environment.Id]=outcome;
+                    }
+                    catch(Exception error)
+                    {
+                        var failure=MutationFailure(error);
+                        updates[environment.Id]=new CloudEnvironmentUpdateResult{Id=intent.Id,ConfigurationId=environment.Id,State=failure is CloudBackendUncertainException?"uncertain":"failed",Stage="À vérifier",FailureCode=failure.Code,HttpStatus=failure.HttpStatus,RequestId=failure.RequestId};
+                        status.Text=UpdateState(updates[environment.Id]);throw failure;
+                    }
+                    finally{End();}
+                },lifetime.Token,owner.Id,environment);
+                form.ShowDialog();
+                if(!form.Saved||outcome==null||disposed)return;
+            }
+            finally{composingBusy=false;if(!disposed){UpdateButtons();Render();}}
             await Reload(environment.Id);
-            status.Text = UpdateState(outcome);
+            status.Text=UpdateState(outcome);
+        }
+
+        private void ValidateEditIntent(CloudEnvironmentWizardIntent intent,CloudConfiguration environment)
+        {
+            if(intent?.Account==null||intent.Account.Id!=owner.Id||intent.Account.AccountKey!=owner.AccountKey||intent.ConfigurationId!=environment.Id||intent.Patch==null||intent.Create!=null||intent.Patch.BaseVersionId!=environment.VersionId||intent.Patch.ExpectedRevision!=0)
+                throw new InvalidOperationException("Le compte, l’environnement ou la version de cette modification ont changé. Fermez l’assistant et actualisez avant une nouvelle demande.");
         }
 
         private async Task Follow(CloudEnvironmentUpdateResult update)
         {
-            if (busy || disposed) return;
+            if (busy || composingBusy || disposed) return;
             Begin("Vérification de la publication Cloud…", true, TimeSpan.FromMinutes(15));
             CloudEnvironmentUpdateResult outcome = null;
             try
@@ -511,85 +509,112 @@ namespace Creezio.Switcher.Desktop
             finally { End(); }
         }
 
-        private sealed class RepositoryChoice
+        private async Task<CloudEnvironmentAccountChoice[]> WizardAccounts(bool edit)
         {
-            public string Label { get; set; }
-            public CloudRepository Repository { get; set; }
+            return await context.Read(accounts=>accounts.Data.Instances.Where(instance=>!instance.Archived&&!String.IsNullOrEmpty(instance.AccountKey)&&(!edit||instance.Id==owner.Id&&instance.AccountKey==owner.AccountKey))
+                .Select(instance=>new CloudEnvironmentAccountChoice{Id=instance.Id,AccountKey=instance.AccountKey,Label=instance.Name+" · "+(accounts.Data.Profiles.FirstOrDefault(profile=>profile.Key==instance.AccountKey)?.Email??"Compte associé")}).ToArray());
         }
 
-        private RepositoryChoice[] RepositoryChoices()
+        private static DesktopInstance Pinned(AccountService accounts,CloudEnvironmentAccountChoice choice)
         {
-            return repositories.Select(repository => new RepositoryChoice
+            var instance=choice==null?null:accounts.Data.Instances.SingleOrDefault(value=>value.Id==choice.Id&&!value.Archived);
+            if(instance==null||String.IsNullOrEmpty(choice.AccountKey)||instance.AccountKey!=choice.AccountKey)
+                throw new InvalidOperationException("Le compte associé à cette instance a changé. Fermez l’assistant et rechargez les comptes avant une nouvelle demande.");
+            return instance;
+        }
+
+        private Task<bool> VerifyWizardAccount(CloudEnvironmentAccountChoice choice)=>context.Read(accounts=>{Pinned(accounts,choice);return true;});
+
+        private async Task<CloudGitHubRepository[]> LoadWizardRepositories(CloudEnvironmentAccountChoice choice,CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();await VerifyWizardAccount(choice);
+            CloudGitHubRepository[] found;
+            if(context.Fixture)
             {
-                Label = repository.FullName + " · " + repository.DefaultBranch,
-                Repository = new CloudRepository { RepositoryId = repository.Id, Ref = repository.DefaultBranch }
-            }).ToArray();
+                if(WizardRepositoriesFixture!=null)found=await WizardRepositoriesFixture(choice,token);
+                else if(choice.Id==owner.Id&&GitHubFixture!=null)found=(await GitHubFixture(token)).Data.ToArray();
+                else throw new InvalidOperationException("Catalogue GitHub de ce compte non configuré dans cette recette.");
+            }
+            else
+            {
+                var repositoriesForAccount=new List<CloudGitHubRepository>();
+                using(var client=await context.Read(accounts=>CloudInstanceConnection.OpenGitHub(accounts,Pinned(accounts,choice))))
+                {
+                    bool more=true;
+                    for(int page=1;page<=50&&more;page++)
+                    {
+                        token.ThrowIfCancellationRequested();var result=await client.ListRepositories(page,token);repositoriesForAccount.AddRange(result.Data);
+                        more=result.HasNextPage??result.Data.Count==20;
+                        if(page==50&&more)throw new InvalidOperationException("Le catalogue dépasse 1 000 dépôts. Réduisez les accès de cette connexion GitHub avant de continuer.");
+                    }
+                }
+                found=repositoriesForAccount.ToArray();
+            }
+            token.ThrowIfCancellationRequested();await VerifyWizardAccount(choice);
+            return found.GroupBy(value=>value.Id,StringComparer.Ordinal).Select(group=>group.First()).OrderBy(value=>value.FullName,StringComparer.CurrentCultureIgnoreCase).ToArray();
         }
 
         private async Task Create()
         {
-            if (busy || disposed) return;
-            var choices = RepositoryChoices();
-            if (choices.Length == 0)
+            if(busy||composingBusy||disposed)return;
+            composingBusy=true;UpdateButtons();
+            CloudConfiguration created=null;CloudEnvironmentAccountChoice target=null;
+            try
             {
-                status.Text = "Aucun dépôt GitHub accessible. Vérifiez la connexion GitHub de cette instance puis actualisez.";
-                return;
+                var choices=await WizardAccounts(false);
+                if(disposed)return;
+                if(choices.Length==0)throw new InvalidOperationException("Connectez un compte permanent à une instance avant de créer un environnement Cloud.");
+                var form=new CloudEnvironmentWizard(shell,choices,LoadWizardRepositories,async(intent,token)=>
+                {
+                    if(intent?.Account==null||intent.Create==null||intent.Patch!=null||!String.IsNullOrEmpty(intent.ConfigurationId))throw new InvalidOperationException("La création de cet environnement n’est plus cohérente. Fermez cet assistant et préparez une nouvelle demande.");
+                    await VerifyWizardAccount(intent.Account);target=intent.Account;
+                    Begin("Création du brouillon Cloud sur « "+target.Label+" »…",true);
+                    using(var linked=CancellationTokenSource.CreateLinkedTokenSource(operation.Token,token))
+                    try
+                    {
+                        if(context.Fixture)
+                        {
+                            if(WizardCreateFixture!=null)created=await WizardCreateFixture(target,intent.Create,intent.Id,linked.Token);
+                            else if(target.Id==owner.Id&&CreateFixture!=null)created=await CreateFixture(intent.Create,intent.Id,linked.Token);
+                            else throw new InvalidOperationException("Création Cloud de ce compte non configurée dans cette recette.");
+                        }
+                        else await context.Mutate(async accounts=>{created=await CloudCommands.Create(accounts,Pinned(accounts,target),intent.Create,intent.Id,linked.Token);});
+                    }
+                    catch(Exception error)
+                    {
+                        var failure=MutationFailure(error);
+                        status.Text=failure is CloudBackendUncertainException?"Enregistrement incertain sur « "+target.Label+" » · relisez les environnements de ce compte avant toute nouvelle création · "+intent.Id:"Enregistrement arrêté sur « "+target.Label+" » · vérifiez ce compte avant une nouvelle demande · "+intent.Id;
+                        throw failure;
+                    }
+                    finally{End();}
+                },lifetime.Token,owner.Id);
+                form.ShowDialog();
+                if(!form.Saved||created==null||disposed)return;
             }
-            var form = new EditWindow(shell, "Créer un brouillon Codex Cloud", "Créer le brouillon");
-            form.Fields.Children.Add(Ui.Text("Compte : " + email + " · Instance : " + owner.Name, 13, true));
-            var name = Ui.Input("Nom de l’environnement", "", form.Fields);
-            name.MaxLength = 256;
-            form.Fields.Children.Add(Ui.Text("Dépôt GitHub accessible à ce compte", 13));
-            var repository = new ComboBox { ItemsSource = choices, DisplayMemberPath = "Label", SelectedIndex = 0 };
-            AutomationProperties.SetName(repository, "Dépôt du nouveau brouillon Cloud");
-            form.Fields.Children.Add(repository);
-            var network = Ui.Select("Accès réseau initial", new[] { "Réseau désactivé", "Gestionnaires de paquets uniquement", "Accès réseau sans restriction" }, "Réseau désactivé", form.Fields);
-            form.Fields.Children.Add(Ui.Text("Le brouillon sera privé. Le réseau est désactivé par défaut ; choisissez les gestionnaires de paquets si la préparation nécessite des dépendances. Vous pourrez ensuite préparer et publier sa première version.", 13, true));
-            form.Dirty = () => !String.IsNullOrWhiteSpace(name.Text);
-            CloudConfiguration created = null;
-            string operationId = Guid.NewGuid().ToString("N");
-            form.Save = async () =>
+            finally{composingBusy=false;if(!disposed){UpdateButtons();Render();}}
+            if(target.Id==owner.Id&&target.AccountKey==owner.AccountKey)
             {
-                string label = name.Text.Trim();
-                var choice = repository.SelectedItem as RepositoryChoice;
-                if (String.IsNullOrEmpty(label) || choice == null) throw new InvalidOperationException("Saisissez un nom et choisissez un dépôt.");
-                var policy = network.SelectedIndex == 1 ? new CloudNetworkPolicy { Type = "restricted", Presets = new List<string> { "package_managers" }, EgressHosts = new List<string>() } : new CloudNetworkPolicy { Type = network.SelectedIndex == 2 ? "unrestricted" : "disabled" };
-                var request = new CloudConfigurationCreate
-                {
-                    Name = label, ShareSettings = "private", StartOnboarding = false,
-                    NetworkPolicy = policy,
-                    Repositories = new List<CloudRepository> { new CloudRepository { RepositoryId = choice.Repository.RepositoryId, Ref = choice.Repository.Ref, Depth = choice.Repository.Depth } }
-                };
-                name.IsReadOnly = true;
-                repository.IsEnabled = false;
-                network.IsEnabled = false;
-                Begin("Création du brouillon Cloud…", true);
-                try
-                {
-                    if (context.Fixture && CreateFixture != null) created = await CreateFixture(request, operationId, operation.Token);
-                    else await context.Mutate(async accounts => { created = await CloudCommands.Create(accounts, Current(accounts), request, operationId, operation.Token); });
-                }
-                catch (CloudBackendUncertainException)
-                {
-                    ReconcileRequired(form, operationId);
-                    throw;
-                }
-                catch
-                {
-                    RequestStopped(form, operationId);
-                    throw;
-                }
-                finally { End(); }
-            };
-            form.ShowDialog();
-            if (!form.Saved || created == null || disposed) return;
-            await Reload(created.Id);
-            status.Text = "Brouillon « " + created.Name + " » créé et relu sur le compte " + email + ". Aucun agent n’a été lancé.";
+                await Reload(created.Id);
+                status.Text="Brouillon « "+created.Name+" » créé et relu sur le compte "+email+". Aucun agent n’a été lancé.";
+            }
+            else status.Text="Brouillon « "+created.Name+" » créé sur « "+target.Label+" ». Sélectionnez cette instance pour le préparer. Le compte affiché ici reste inchangé.";
+        }
+
+        private static CloudBackendException MutationFailure(Exception error)
+        {
+            if(error is CloudBackendUncertainException uncertain)return uncertain;
+            var native=error as CloudBackendException;
+            // Known refusals remain failures. After entering a mutation, a local error or
+            // incompatible success response cannot prove that the server made no change.
+            bool successStatus=native?.HttpStatus>=200&&native.HttpStatus<300;
+            bool transientStatus=native?.HttpStatus==408||native?.HttpStatus>=500;
+            if(native!=null&&native.Code!="invalid-response"&&!successStatus&&!transientStatus)return native;
+            return new CloudBackendUncertainException(native?.Code??"erreur locale après le début de l’opération",native?.HttpStatus,native?.RequestId);
         }
 
         private async Task Rename(CloudConfiguration environment)
         {
-            if (busy || disposed) return;
+            if (busy || composingBusy || disposed) return;
             var form = new EditWindow(shell, "Renommer l’environnement Cloud") { Height = 340, MinHeight = 340 };
             form.Fields.Children.Add(Ui.Text("Compte : " + email, 13, true));
             var name = Ui.Input("Nom de l’environnement", environment.Name, form.Fields);
@@ -659,13 +684,13 @@ namespace Creezio.Switcher.Desktop
 
         private void UpdateButtons()
         {
-            refresh.IsEnabled = !busy;
-            create.IsEnabled = !busy && RepositoryChoices().Length > 0;
-            create.ToolTip = create.IsEnabled ? null : "Actualisez le catalogue GitHub. Un dépôt accessible à ce compte est nécessaire.";
-            EnvironmentChoice.IsEnabled = !busy && configurations.Count > 0;
+            refresh.IsEnabled = !busy&&!composingBusy;
+            create.IsEnabled = !busy&&!composingBusy;
+            create.ToolTip = "Choisissez un compte ; ses dépôts GitHub seront chargés automatiquement dans l’assistant.";
+            EnvironmentChoice.IsEnabled = !busy&&!composingBusy && configurations.Count > 0;
             EnvironmentList.IsEnabled=EnvironmentChoice.IsEnabled;
-            EnvironmentSearch.IsEnabled=!busy;
-            if(ActionsMenu!=null)ActionsMenu.IsEnabled=!busy;
+            EnvironmentSearch.IsEnabled=!busy&&!composingBusy;
+            if(ActionsMenu!=null)ActionsMenu.IsEnabled=!busy&&!composingBusy;
         }
 
         private void ShowError(Exception error)
@@ -687,6 +712,7 @@ namespace Creezio.Switcher.Desktop
 
         internal bool CanLeave()
         {
+            if(composingBusy){status.Text="Terminez ou fermez l’assistant Cloud avant de changer d’instance ou d’onglet.";return false;}
             if (!busy) return true;
             if (!mutating) { operation?.Cancel(); return true; }
             status.Text = "Une opération Cloud est en cours. Attendez son résultat avant de changer d’instance ou d’onglet.";
@@ -695,7 +721,10 @@ namespace Creezio.Switcher.Desktop
 
         public void Dispose()
         {
+            if(disposed)return;
             disposed = true;
+            lifetime.Cancel();
+            lifetime.Dispose();
             operation?.Cancel();
         }
     }

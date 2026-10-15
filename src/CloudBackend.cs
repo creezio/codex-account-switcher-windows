@@ -254,7 +254,7 @@ namespace Creezio.Switcher
                 request.Headers.Add("ChatGPT-Account-Id", binding.AccountId);
                 request.Headers.Add("X-OpenAI-Product-Sku", "codex");
                 request.Headers.Add("originator", "creezio_account_switcher");
-                request.Headers.UserAgent.ParseAdd("creezio-switcher-cloud-prototype/0.17.1-beta.1");
+                request.Headers.UserAgent.ParseAdd("creezio-switcher-cloud-prototype/0.17.2-beta.1");
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
                 if (body != null) request.Content = new StringContent(Json.Write(body), Encoding.UTF8, "application/json");
                 try
