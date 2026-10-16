@@ -22,9 +22,14 @@ namespace Creezio.Switcher
             try {
                 long ms=Convert.ToInt64(threadId.Replace("-","").Substring(0,12),16);
                 var day=new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc).AddMilliseconds(ms);
-                string directory=Path.Combine(home,"sessions",day.ToString("yyyy"),day.ToString("MM"),day.ToString("dd"));
-                SafeFiles.RejectLinks(directory);if(!Directory.Exists(directory))return "unknown";
-                string[] files=Directory.GetFiles(directory,"rollout-*"+threadId+".jsonl");
+                // UUID time is UTC; Codex groups rollout files by local calendar date.
+                // Check adjacent dates too (including a changed timezone), not the whole history.
+                var candidates=new System.Collections.Generic.List<string>();
+                foreach(int shift in new[]{0,-1,1}){
+                    var date=day.AddDays(shift);string directory=Path.Combine(home,"sessions",date.ToString("yyyy"),date.ToString("MM"),date.ToString("dd"));
+                    SafeFiles.RejectLinks(directory);if(Directory.Exists(directory))candidates.AddRange(Directory.GetFiles(directory,"rollout-*"+threadId+".jsonl"));
+                }
+                string[] files=candidates.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
                 if(files.Length!=1)return "unknown";SafeFiles.RejectLinks(files[0]);
                 using(var stream=new FileStream(files[0],FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete)) {
                     // Avoid loading large conversation histories or exposing any tool output.
@@ -52,6 +57,10 @@ namespace Creezio.Switcher
         {
             if(channel.RequireFullAccess && Read(channel.Home,threadId)!="full-access")
                 throw new InvalidOperationException("Le canal « "+channel.Id+" » exige Accès complet, mais cette conversation ne l'a pas confirmé. Dans cette conversation Codex, sélectionnez Accès complet, envoyez un message puis reconnectez le canal. Le relais ne change jamais les permissions automatiquement.");
+        }
+        internal static void RequireFull(RelayChannel channel,string threadId)
+        {
+            if(Read(channel.Home,threadId)!="full-access")throw new InvalidOperationException("Ce profil exige un accès complet confirmé dans la conversation destinataire.");
         }
     }
 }

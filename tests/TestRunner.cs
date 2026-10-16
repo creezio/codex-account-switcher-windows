@@ -12,7 +12,7 @@ internal static class TestRunner
     private static int passed;
     private static string sandbox;
     private static void Assert(bool condition,string message) {if(!condition) throw new Exception(message);}
-    private static void Check(string name,Action test) {test();passed++;Console.WriteLine("PASS " + name);}
+    private static void Check(string name,Action test) {try{test();}catch(Exception e){throw new Exception(name+": "+e.Message,e);}passed++;Console.WriteLine("PASS " + name);}
     private static void Throws(Action action) {try {action();} catch {return;} throw new Exception("Expected failure");}
     private static string Encode(object value) {return Convert.ToBase64String(Encoding.UTF8.GetBytes(Json.Write(value))).TrimEnd('=').Replace('+','-').Replace('/','_');}
     private static string FakeAuth(string user,string account)
@@ -23,12 +23,23 @@ internal static class TestRunner
     private static string Folder(string name) {string path=Path.Combine(sandbox,name);Directory.CreateDirectory(path);return path;}
     public static int Main(string[] args)
     {
+        if(args.Length==2&&args[0]=="--atomic-crash")return StartupRecoveryTests.Crash(Path.GetFullPath(args[1]));
         sandbox=Path.GetFullPath(args.Length>0?args[0]:"work\\tests");
         if(Directory.Exists(sandbox) && Directory.GetFileSystemEntries(sandbox).Length>0) {Console.Error.WriteLine("Test directory must be empty.");return 2;}
         Directory.CreateDirectory(sandbox);
         try
         {
             string a=FakeAuth("alice","workspace-a"),b=FakeAuth("bob","workspace-b");
+            StorageTests.RunAll(Check,sandbox);
+            StorageBudgetTests.RunAll(Check,sandbox);
+            OwnedTemporaryTests.RunAll(Check,sandbox);
+            if(args.Length==2&&args[1]=="--storage"){Console.WriteLine(passed+" tests passed.");return 0;}
+            if(args.Length==2&&args[1]=="--headless"){
+                HeadlessToolTests.RunAll(Check,sandbox);HeadlessRuntimeTests.RunAll(Check,sandbox,a);
+                HeadlessTransportTests.RunAll(Check,sandbox,a);HeadlessApprovalTests.RunAll(Check,sandbox,a);HeadlessSourceTests.RunAll(Check,sandbox,a);
+                CloudBackendTests.RunAll(Check);CloudTasksBackendTests.RunAll(Check);CloudGitHubTests.RunAll(Check);CloudJobTests.RunAll(Check,sandbox,a);ProcessResourceTests.RunAll(Check);
+                Console.WriteLine(passed+" tests passed.");return 0;
+            }
             Check("identity distinguishes workspace and user",delegate {Assert(AuthIdentity.Parse(a).Key!=AuthIdentity.Parse(FakeAuth("alice","workspace-b")).Key,"workspace collision");Assert(AuthIdentity.Parse(a).Key!=AuthIdentity.Parse(FakeAuth("bob","workspace-a")).Key,"user collision");});
             Check("invalid / API-key / mismatched auth rejected",delegate {Throws(()=>AuthIdentity.Parse("{}"));Throws(()=>AuthIdentity.Parse("{\"auth_mode\":\"apikey\",\"OPENAI_API_KEY\":\"fake\"}"));Throws(()=>AuthIdentity.Parse(a.Replace("\"account_id\":\"workspace-a\"","\"account_id\":\"wrong\"")));});
             Check("unknown quota is not 100 percent",delegate {var q=Quotas.Parse(Json.Read<object>("{\"rateLimits\":{\"primary\":{\"usedPercent\":null}}}"));Assert(!q[0].Primary.Remaining.HasValue,"null treated as zero");Assert(q[0].Secondary==null,"missing secondary fabricated");});
@@ -50,8 +61,33 @@ internal static class TestRunner
             Check("previous API-key mode can be restored without accepting it as a profile",delegate {string home=Folder("api-restore");string api="{\"auth_mode\":\"apikey\",\"OPENAI_API_KEY\":\"fictional-api-key\"}";Throws(()=>new SwitchTransaction(home,()=>false).Execute(api,s=>{},delegate{}));new SwitchTransaction(home,()=>false,true).Execute(api,s=>{},delegate{});Assert(File.ReadAllText(Path.Combine(home,"auth.json"))==api,"API backup not restored");});
             Check("switch does not touch conversations",delegate {string home=Folder("history");Directory.CreateDirectory(Path.Combine(home,"sessions"));string history=Path.Combine(home,"sessions","conversation.jsonl");File.WriteAllText(history,"keep me");new SwitchTransaction(home,()=>false).Execute(a,s=>{},delegate{});Assert(File.ReadAllText(history)=="keep me","history changed");});
             ResetTests.RunAll(Check);
+            AtomicReplaceTests.RunAll(Check,sandbox);
+            CloudBackendTests.RunAll(Check);
+            CloudMutationJournalTests.RunAll(Check,sandbox);
+            CloudEnvironmentUpdateTests.RunAll(Check,sandbox);
+            CloudJobTests.RunAll(Check,sandbox,a);
+            CloudTasksBackendTests.RunAll(Check);
+            CloudEnvironmentSetupTests.RunAll(Check,sandbox);
+            CloudGitHubTests.RunAll(Check);
+            LoginBrowserTests.RunAll(Check,sandbox);
             InstanceTests.RunAll(Check,sandbox,a,b);
+            ProcessResourceTests.RunAll(Check);
+            SimpleWorkflowTests.RunAll(Check,sandbox,a,b);
+            ThreadCopyTests.RunAll(Check,sandbox,a,b);
+            TransferTests.RunAll(Check,sandbox);
+            ToolTunnelTests.RunAll(Check,sandbox);SharedPagesTests.RunAll(Check,sandbox);ResourceLinksTests.RunAll(Check,sandbox);
+            HeadlessToolTests.RunAll(Check,sandbox);
+            HeadlessRuntimeTests.RunAll(Check,sandbox,a);
+            HeadlessTransportTests.RunAll(Check,sandbox,a);
+            HeadlessApprovalTests.RunAll(Check,sandbox,a);
+            HeadlessSourceTests.RunAll(Check,sandbox,a);
+            ResourceCatalogTests.RunAll(Check,sandbox);
             RelayTests.RunAll(Check,sandbox);
+            GeneralRelayTests.RunAll(Check,sandbox);
+            ProductTests.RunAll(Check,sandbox);
+            ConsoleTests.RunAll(Check,sandbox);
+            RemoteTests.RunAll(Check,sandbox);
+            AssistanceTests.RunAll(Check,sandbox);
             Console.WriteLine(passed+" tests passed.");
             return 0;
         }

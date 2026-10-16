@@ -20,6 +20,7 @@ namespace Creezio.Switcher
         private bool disposed;
         public readonly string Home;
         private readonly string scratchRoot;
+        private readonly OwnedTemporary temporary;
         public RpcClient(string executable, string root)
         {
             scratchRoot = Path.Combine(root, "runtime");
@@ -29,23 +30,26 @@ namespace Creezio.Switcher
             SafeFiles.AtomicWrite(Path.Combine(Home, "config.toml"), Encoding.UTF8.GetBytes("cli_auth_credentials_store = \"file\"\n[analytics]\nenabled = false\n"));
             var start = new ProcessStartInfo(executable, "app-server --listen stdio://") { UseShellExecute=false, CreateNoWindow=true, RedirectStandardInput=true, RedirectStandardOutput=true, RedirectStandardError=true, WorkingDirectory=Home, StandardOutputEncoding=Encoding.UTF8, StandardErrorEncoding=Encoding.UTF8 };
             start.EnvironmentVariables["CODEX_HOME"] = Home;
+            start.EnvironmentVariables["CODEX_SQLITE_HOME"] = Home;
             // Never inherit an alternative authentication identity from the host process.
             foreach (string key in new[] {"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_IDENTITY_TOKEN", "OPENAI_IDENTITY_TOKEN_FILE", "OPENAI_IDENTITY_PROVIDER_ID", "OPENAI_ORGANIZATION", "CHATGPT_BASE_URL", "CODEX_CHATGPT_BASE_URL"}) start.EnvironmentVariables.Remove(key);
             try
             {
+                temporary=new OwnedTemporary(root);temporary.Apply(start);
                 process = new Process { StartInfo=start, EnableRaisingEvents=true };
                 process.OutputDataReceived += OnOutput;
                 process.ErrorDataReceived += delegate { /* Do not log server output: it can contain credentials. */ };
                 process.Exited += delegate { FailPending(new IOException("Le serveur Codex s'est arrêté.")); };
                 process.Start();
                 job = new ProcessJob(process);
+                CacheMaintenance.Mark(Home,process.Id,process.StartTime.ToUniversalTime().Ticks);
                 process.BeginOutputReadLine(); process.BeginErrorReadLine();
             }
             catch { Dispose(); throw new InvalidOperationException("Le serveur Codex n'a pas pu démarrer. Vérifiez le chemin de codex.exe dans les paramètres."); }
         }
         public async Task Initialize(CancellationToken token)
         {
-            await Call("initialize", new { clientInfo = new { name="creezio_account_switcher", title="Creezio Account Switcher", version="0.4.0" }, capabilities=new { experimentalApi=true } }, token);
+            await Call("initialize", new { clientInfo = new { name="creezio_account_switcher", title="Creezio Account Switcher", version=RelayWorker.Version }, capabilities=new { experimentalApi=true } }, token);
             Send(new { method="initialized" });
         }
         private void Send(object value)
@@ -115,6 +119,7 @@ namespace Creezio.Switcher
                 process.Dispose();
             }
             FailPending(new ObjectDisposedException("RpcClient"));
+            if(temporary!=null)temporary.Dispose();
             try { SafeFiles.DeleteOwnedTree(scratchRoot, Home); } catch { /* Restricted runtime directory retained if Windows still holds a handle. */ }
         }
     }

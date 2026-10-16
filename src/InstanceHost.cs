@@ -46,32 +46,69 @@ namespace Creezio.Switcher
             start.EnvironmentVariables["CODEX_ELECTRON_USER_DATA_PATH"]=ui;
             return start;
         }
+        // A second Electron activation reopens the existing profile through its single-instance lock.
+        // It does not replace auth, restart the live desktop, or acquire the host's lifetime lease.
+        internal static void RequireActivation(InstanceLaunch request,InstanceState state,string launchId)
+        {
+            if(request==null||state==null||!InstanceRules.ValidId(launchId)||request.LaunchId!=launchId||state.LaunchId!=launchId||!state.Running||state.Phase=="stopping")
+                throw new InvalidOperationException("Le lancement de l’instance a changé. Actualisez puis réessayez.");
+            if(!DesktopRuntime.SameProcess(state.HostPid,state.HostStartTicks)||!DesktopRuntime.SameProcess(state.DesktopPid,state.DesktopStartTicks))
+                throw new InvalidOperationException("Le processus de cette instance n’est plus disponible.");
+        }
+        internal static int Activate(string requestPath,string launchId)
+        {
+            try {
+                var request=Json.Read<InstanceLaunch>(SafeFiles.ReadText(requestPath));
+                string folder=InstancePaths.Folder(request.Root,request.InstanceId);
+                if(!String.Equals(Path.GetFullPath(requestPath),Path.Combine(folder,"launch.json"),StringComparison.OrdinalIgnoreCase))return 2;
+                var state=Json.Read<InstanceState>(SafeFiles.ReadText(Path.Combine(folder,"state.json")));
+                RequireActivation(request,state,launchId);
+                using(var running=Process.GetProcessById(state.DesktopPid)) {
+                    // Use the live executable, even if the Store has since installed another version.
+                    request.DesktopExecutable=running.MainModule.FileName;
+                    if(!new[]{"ChatGPT.exe","Codex.exe"}.Contains(Path.GetFileName(request.DesktopExecutable),StringComparer.OrdinalIgnoreCase))return 2;
+                }
+                var start=BuildStart(request);
+                start.RedirectStandardOutput=false;start.RedirectStandardError=false;
+                start.StandardOutputEncoding=null;start.StandardErrorEncoding=null;
+                using(var process=Process.Start(start)) {
+                    if(process.WaitForExit(15000))return process.ExitCode;
+                    // No automatic restart or termination: preserve any work already running.
+                    return 1;
+                }
+            }catch{return 1;}
+        }
         public static int Run(string requestPath)
         {
             InstanceState state=null;string folder=null;Process child=null;ProcessJob job=null;InstanceLease lease=null;
+            InstanceLaunch request=null;string stage="read-request";
             try {
-                var request=Json.Read<InstanceLaunch>(SafeFiles.ReadText(requestPath));
-                if(request==null || !InstanceRules.ValidId(request.InstanceId) || !InstanceRules.ValidId(request.LaunchId)) return 2;
+                request=Json.Read<InstanceLaunch>(SafeFiles.ReadText(requestPath));
+                if(request==null || !InstanceRules.ValidId(request.InstanceId) || !InstanceRules.ValidId(request.LaunchId)) throw new InvalidDataException("Demande invalide.");
                 folder=InstancePaths.Folder(request.Root,request.InstanceId);
-                if(!String.Equals(Path.GetFullPath(requestPath),Path.Combine(folder,"launch.json"),StringComparison.OrdinalIgnoreCase)) return 2;
-                if(!File.Exists(request.DesktopExecutable) || !new[]{"ChatGPT.exe","Codex.exe"}.Contains(Path.GetFileName(request.DesktopExecutable),StringComparer.OrdinalIgnoreCase)) return 2;
+                if(!String.Equals(Path.GetFullPath(requestPath),Path.Combine(folder,"launch.json"),StringComparison.OrdinalIgnoreCase)){folder=null;throw new InvalidDataException("Chemin invalide.");}
+                stage="prepare-profile";
+                if(!File.Exists(request.DesktopExecutable))throw new FileNotFoundException("Exécutable Codex absent.");
+                if(!new[]{"ChatGPT.exe","Codex.exe"}.Contains(Path.GetFileName(request.DesktopExecutable),StringComparer.OrdinalIgnoreCase))throw new InvalidDataException("Exécutable non reconnu.");
                 // Directory ACLs are prepared by the unpackaged switcher, never modified in MSIX context.
                 SafeFiles.RejectLinks(InstancePaths.Home(request.Root,request.InstanceId));
                 SafeFiles.RejectLinks(InstancePaths.UserData(request.Root,request.InstanceId));
-                lease=new InstanceLease(folder);
+                stage="acquire-instance";lease=new InstanceLease(folder);
+                stage="recover-temporaries";AtomicFiles.RecoverLegacyInstance(folder);
                 using(var self=Process.GetCurrentProcess()) state=new InstanceState {LaunchId=request.LaunchId,HostPid=self.Id,HostStartTicks=self.StartTime.ToUniversalTime().Ticks,Phase="starting",Running=true};
-                Save(folder,state);
+                stage="write-state";Save(folder,state);
                 var health=new Health();
                 child=new Process {StartInfo=BuildStart(request)};
                 child.OutputDataReceived+=health.Observe;child.ErrorDataReceived+=health.Observe;
-                child.Start();job=new ProcessJob(child);
+                stage="start-desktop";child.Start();job=new ProcessJob(child);
                 state.DesktopPid=child.Id;state.DesktopStartTicks=child.StartTime.ToUniversalTime().Ticks;
                 child.BeginOutputReadLine();child.BeginErrorReadLine();
-                bool closeRequested=false;DateTime closeDeadline=DateTime.MaxValue;
+                bool closeRequested=false,wasReady=false;DateTime closeDeadline=DateTime.MaxValue;
                 string stop=Path.Combine(folder,"stop.json");
+                stage="bootstrap";
                 while(!child.HasExited) {
                     child.Refresh();
-                    if(health.BootstrapFailed) {state.Phase="error";state.Message="Codex n'a pas pu démarrer avec ce profil. Vérifiez sa version et réessayez.";break;}
+                    if(health.BootstrapFailed) {var failed=InstanceStartup.Bootstrap(request.LaunchId);state.Phase="error";state.Message=failed.Message;Report(folder,failed);break;}
                     if(!closeRequested && File.Exists(stop)) {
                         InstanceState command=null;
                         try {command=Json.Read<InstanceState>(SafeFiles.ReadText(stop));} catch { }
@@ -82,9 +119,10 @@ namespace Creezio.Switcher
                     }
                     if(closeRequested && DateTime.UtcNow>=closeDeadline) break;
                     state.WindowReady=health.Mounted && child.MainWindowHandle!=IntPtr.Zero;
+                    wasReady|=state.WindowReady;
                     state.NetworkWarning=health.NetworkWarning;
                     state.AppToolsPipe=health.AppToolsPipe;
-                    if(!closeRequested) state.Phase=state.WindowReady?"running":"starting";
+                    if(!closeRequested) state.Phase=state.WindowReady?"running":wasReady?"background":"starting";
                     if(child.MainWindowHandle!=IntPtr.Zero && !String.IsNullOrWhiteSpace(request.Name)) {
                         string suffix=" · "+request.Name;
                         if(!child.MainWindowTitle.EndsWith(suffix,StringComparison.Ordinal)) SetWindowText(child.MainWindowHandle,child.MainWindowTitle+suffix);
@@ -92,10 +130,13 @@ namespace Creezio.Switcher
                     try {Save(folder,state);} catch(IOException) { /* A transient status-file error must not interrupt work. */ }
                     Thread.Sleep(500);
                 }
+                if(!wasReady&&!closeRequested&&state.Phase!="error") {var failed=InstanceStartup.DesktopExit(request.LaunchId,child.ExitCode);state.Phase="error";state.Message=failed.Message;Report(folder,failed);}
                 if(state.Phase!="error") {state.Phase="stopped";state.Message=null;}
-                return 0;
-            } catch {
-                if(state!=null) {state.Phase="error";state.Message="Le lancement de cette instance a échoué. Les autres instances sont restées ouvertes.";}
+                return state.Phase=="error"?1:0;
+            } catch(Exception error) {
+                var failed=InstanceStartup.Failure(request==null?null:request.LaunchId,stage,error);
+                if(state!=null) {state.Phase="error";state.Message=failed.Message;}
+                Report(folder,failed);
                 return 1;
             } finally {
                 // Only our owned child tree is closed, including on a helper crash. No process-name kill.
@@ -108,5 +149,11 @@ namespace Creezio.Switcher
         }
         private static void Save(string folder,InstanceState state)
         {SafeFiles.AtomicWrite(Path.Combine(folder,"state.json"),Encoding.UTF8.GetBytes(Json.Write(state)));}
+        private static void Report(string folder,InstanceStartupResult error)
+        {
+            try{if(folder!=null)InstanceStartup.Save(folder,error);}catch{}
+            // Diagnostic codes and trusted labels only, never raw Codex output, arguments or credentials.
+            try{Console.Error.WriteLine(error.Message);}catch{}
+        }
     }
 }

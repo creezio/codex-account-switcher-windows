@@ -124,12 +124,12 @@ namespace Creezio.Switcher
         public Settings Settings;
         public readonly InstanceManager Instances;
         private readonly ResetController resets=new ResetController();
-        public AccountService(string root)
+        public AccountService(string root,IInstanceRuntime runtime=null)
         {
             Vault=new Vault(root); Data=Vault.Load(); Settings=Vault.LoadSettings();
             if(String.IsNullOrWhiteSpace(Settings.CodexHome)) Settings.CodexHome=CodexEnvironment.DefaultHome();
             if(String.IsNullOrWhiteSpace(Settings.CodexExecutable) || !File.Exists(Settings.CodexExecutable)) Settings.CodexExecutable=CodexEnvironment.FindExecutable();
-            Instances=new InstanceManager(this);
+            Instances=new InstanceManager(this,runtime);
         }
         public void Save() { Vault.Save(Data); }
         public Profile Import(string auth, string label)
@@ -160,6 +160,8 @@ namespace Creezio.Switcher
                 throw new InvalidOperationException("Codex CLI est introuvable. Sélectionnez codex.exe dans les paramètres. L'application de bureau Codex fournit généralement cet exécutable.");
         }
         public async Task<Profile> Login(Action<string> openUrl, CancellationToken token)
+        { return Import(await LoginAuth(openUrl,token),null); }
+        public async Task<string> LoginAuth(Action<string> openUrl, CancellationToken token)
         {
             RequireExecutable();
             using(var rpc=new RpcClient(Settings.CodexExecutable,Vault.Root))
@@ -172,7 +174,7 @@ namespace Creezio.Switcher
                 openUrl(url);
                 await rpc.WaitLogin(token);
                 string auth=SafeFiles.ReadText(Path.Combine(rpc.Home,"auth.json"));
-                return Import(auth,null);
+                return auth;
             }
         }
         private async Task<RpcClient> OpenUsageSession(string auth,CancellationToken token)
@@ -216,6 +218,10 @@ namespace Creezio.Switcher
 
         public async Task Refresh(Profile profile, CancellationToken token,bool allowAutoReset=false)
         {
+            await RefreshUsage(profile,()=>allowAutoReset&&Settings.AutoResetCredits&&Instances.IsResetActive(profile),Save,token);
+        }
+        internal async Task RefreshUsage(Profile profile,Func<bool> authorizeReset,Action persist,CancellationToken token,bool manual=false)
+        {
             try
             {
                 // Reuse newly refreshed local tokens without touching the active auth file.
@@ -224,13 +230,13 @@ namespace Creezio.Switcher
                 {
                     var gateway=new ResetGateway(rpc);
                     (await gateway.Read(token)).Apply(profile,DateTime.UtcNow);
-                    Save();
-                    if(allowAutoReset) await resets.Run(profile,()=>Settings.AutoResetCredits && Instances.IsResetActive(profile),gateway,Save,token);
+                    persist();
+                    await resets.Run(profile,authorizeReset,gateway,persist,token,manual);
                 }
             }
             catch(OperationCanceledException) { throw; }
             catch { profile.Error="Connexion expirée, réseau indisponible ou version Codex incompatible. Reconnectez ce compte ou réessayez."; }
-            Save();
+            persist();
         }
         public async Task Switch(Profile profile, CancellationToken token)
         {
@@ -240,6 +246,8 @@ namespace Creezio.Switcher
         {
             if(String.IsNullOrEmpty(Data.PreviousAuthJson)) throw new InvalidOperationException("Aucun compte précédent dans le coffre.");
             string previous=Data.PreviousAuthJson;
+            var local=Data.Instances.First(i=>i.IsLocal);
+            if(local.AccountLocked&&AuthIdentity.Parse(previous).Key!=local.AccountKey)throw new InvalidOperationException("La session habituelle est liée à son compte permanent. Utilisez une autre instance pour l'autre compte.");
             var matching=Data.Profiles.FirstOrDefault(p=>p.AuthJson==previous);
             if(matching!=null) InstanceRules.RequireAvailable(matching,Data.Instances.First(i=>i.IsLocal));
             new SwitchTransaction(Settings.CodexHome,CodexEnvironment.ClientsRunning,true).Execute(previous, current=> {Data.PreviousAuthJson=current; Save();},delegate {});

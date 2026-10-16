@@ -1,4 +1,69 @@
-# Validation de la version 0.4.0
+# Validation de la version 0.18.0-beta.1
+
+Recette du 15 octobre 2026 sous Windows, avec le CLI natif
+`0.162.0-alpha.17.2` du Codex installé. Aucune instance Codex ouverte n’a été
+fermée. Les PID et dates de démarrage des fenêtres protégées ont été comparés
+avant et après chaque recette.
+
+Vérifications automatisées : **670 tests** dans la suite générale .NET10,
+**183 tests ciblés finaux .NET10**, **124 tests ciblés finaux Framework** et
+**409 tests d’interface** sur la livraison portable. Les tests ciblés recouvrent
+la suite générale ; ces nombres ne doivent pas être additionnés comme des cas
+indépendants. Les courses d’approbation ont aussi été répétées 200 fois.
+La suite ciblée se relance avec `scripts/test.ps1 -HeadlessOnly`, ou avec
+`dotnet run --project tests/Core.Net10.csproj -- <dossier-vide> --headless`.
+
+- Cloud : mission fictive terminée dans le seul environnement laboratoire
+  autorisé, compte propriétaire vérifié, réponse finale exacte, fenêtre fermée.
+- Ressources : inventaire des plugins et lecture réelle d’une liste de pages
+  sur deux profils fermés, sans démarrer un tour de modèle. Une recette finale
+  passe aussi par `ToolTunnel.Owner` et `Connection` de production : 274 outils,
+  une page listée, compte vérifié et registre de performances retiré au Dispose.
+- Connexion : renouvellement natif réellement exécuté sur le profil fermé,
+  avec identité permanente inchangée. Les cas expiré, révoqué, profil occupé,
+  mauvais compte, GET401 et CONNECT401 sont aussi couverts par des tests.
+- Agent local : tour natif terminé, liaison MCP au chat et lecture des instances
+  réussies, session comparée en mémoire, compte et thread vérifiés, réponse
+  finale UTF8 exacte. Aucun shell ni fichier utilisé dans cette recette réussie.
+- Écriture locale : une autre recette a demandé une confirmation native après
+  échec du bac à sable Windows. Elle a expiré sans réponse reçue par le moteur ;
+  le fichier n’a donc pas été déclaré validé. Aucune approbation automatique.
+- Interventions : fichiers et diff natifs doivent être connus avant d’activer
+  l’acceptation d’une modification. Questions, réponses, refus, expiration,
+  isolation par compte/tour et conservation des brouillons sont testés.
+- Interopérabilité : coffre, règles, tâches et contrats d’outils relus dans les
+  deux sens entre .NET Framework et .NET10.
+
+La mémoire mesurée inclut l’arbre du helper, son moteur natif et ses processus
+MCP. Pics résidents : **368,2 et 357,4 Mio** pour les premières recettes d’outils,
+**395,5 Mio** pour le parcours de tunnel de production,
+**390,2 Mio** pour la recette locale MCP réussie (222,5 Mio privés, 17 processus,
+127 échantillons). Chaque recette a ensuite confirmé **zéro enfant restant**.
+Ces pics constituent le coût observé des helpers, pas une moyenne permanente.
+Les familles GUI ouvertes observées consommaient environ 1,35 à 3,34 Gio selon
+le moment et le travail. La comparaison concerne des comptes et charges
+différents : aucun pourcentage de gain A/B n’est revendiqué. Aucune fenêtre
+supplémentaire n’a été ouverte pour un benchmark alors que le PC manquait de RAM.
+
+Les premiers essais ont révélé et corrigé un encodage stdin OEM sous Framework,
+un PID de canal périmé, une dépendance du binding MCP aux variables filtrées par
+le natif et un risque de fermeture du moteur pendant le traitement d’un retour.
+Les reçus ambigus restent conservés sans renvoi automatique de mandat.
+Le suivi Cloud est lancé par le relais propriétaire hors de l’arbre jetable du
+moteur local ; la fin d’un tour ne tue donc pas son worker Cloud enfant. Le
+retour dans une source sans fenêtre reste suivi jusqu’à la fin de son tour.
+Les sources de recette sont `tests/HeadlessAcceptance.cs` et
+`scripts/test-headless-live.ps1` ; les preuves locales restent dans `work/`, hors Git.
+
+## Historique : version 0.5.0-beta.1
+
+Vérifications du 3 octobre 2026 : **144 tests hors ligne réussis**, processus de
+moteur réellement démarré/arrêté/repris, installation idempotente du plugin,
+chargement réel des deux skills et des outils MCP par Codex, compilation et rendu
+des nouvelles fenêtres. Le détail, les preuves de recette entre comptes et les
+limites de qualification figurent dans [IMPLEMENTATION.md](IMPLEMENTATION.md).
+
+## Historique : version 0.4.0
 
 Vérifications du 2 octobre 2026, Windows et OpenAI.Codex 26.924.2738.0.
 

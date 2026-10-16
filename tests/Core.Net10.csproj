@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net10.0-windows</TargetFramework><UseWindowsForms>true</UseWindowsForms>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems><GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <StartupObject>TestRunner</StartupObject><AssemblyName>CoreNet10.Tests</AssemblyName><TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);SYSLIB0057</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="StorageTests.cs;StorageBudgetTests.cs;OwnedTemporaryTests.cs"/>
+    <Compile Include="CloudBackendTests.cs;CloudMutationJournalTests.cs"/>
+    <Compile Include="CloudEnvironmentUpdateTests.cs"/>
+    <Compile Include="CloudJobTests.cs"/>
+    <Compile Include="CloudTasksBackendTests.cs"/>
+    <Compile Include="CloudEnvironmentSetupTests.cs"/>
+    <Compile Include="CloudGitHubTests.cs"/>
+    <Compile Include="AtomicReplaceTests.cs"/>
+    <Compile Include="HeadlessRuntimeTests.cs;HeadlessToolTests.cs;HeadlessTransportTests.cs;HeadlessApprovalTests.cs;HeadlessSourceTests.cs"/>
+    <Compile Include="../src/*.cs"/><Compile Include="../desktop/JsonCompatibility.cs"/><Compile Include="../desktop/AssemblyInfo.cs"/>
+    <Compile Include="TestRunner.cs;ProcessResourceTests.cs;TransferTests.cs;ThreadCopyTests.cs;LoginBrowserTests.cs;ResetTests.cs;InstanceTests.cs;SimpleWorkflowTests.cs;ToolTunnelTests.cs;SharedPagesTests.cs;ResourceLinksTests.cs;ResourceCatalogTests.cs;RelayTests.cs;GeneralRelayTests.cs;ProductTests.cs;ConsoleTests.cs;RemoteTests.cs;AssistanceTests.cs"/>
+  </ItemGroup>
+</Project>

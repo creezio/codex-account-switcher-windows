@@ -1,4 +1,4 @@
-# Sécurité
+﻿# Sécurité
 
 Merci de ne pas publier de jetons, de fichier `auth.json`, de coffre DPAPI ou de
 captures avec des identités réelles dans les issues. Fournissez la version de
@@ -18,8 +18,10 @@ Le format de stockage est versionné. Une erreur de déchiffrement ne déclenche
 jamais la création d'un coffre vide par-dessus le fichier existant.
 
 Les resets automatiques utilisent uniquement les crédits de réinitialisation
-annoncés par Codex pour les comptes autorisés utilisés, à 1 % restant ou moins.
-L'intention et sa clé d'idempotence sont conservées dans le coffre avant l'envoi.
+annoncés par Codex pour les comptes autorisés utilisés, au seuil choisi pour ce compte.
+L'intention et sa clé d'idempotence sont conservées dans le cache partagé DPAPI avant l'envoi. Un verrou interprocessus
+sérialise les opérations par compte ; une ancienne interface encore ouverte suspend
+les consommations de la nouvelle version.
 Un résultat réseau incertain ne crée pas une nouvelle demande ; les répétitions
 réutilisent la même clé et sont bornées à trois envois. Après acceptation, les
 quotas doivent être relus et rétablis avant de permettre un nouvel incident.

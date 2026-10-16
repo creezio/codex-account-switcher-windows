@@ -1,16 +1,36 @@
 [CmdletBinding()]
-param([switch]$ProtocolSmoke, [switch]$LiveReadOnly, [switch]$DesktopSmoke, [string]$DesktopAuthFile)
+param([switch]$ProtocolSmoke, [switch]$LiveReadOnly, [switch]$DesktopSmoke, [string]$DesktopAuthFile, [string]$TestDirectory,[switch]$HeadlessOnly,[switch]$StorageOnly)
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $testOutput = Join-Path $projectRoot 'work\test-bin'
 New-Item -ItemType Directory -Path $testOutput -Force | Out-Null
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $sources = Get-ChildItem -LiteralPath (Join-Path $projectRoot 'src') -Filter '*.cs' | ForEach-Object FullName
-$references = @('/nologo','/target:exe','/platform:anycpu','/warn:4','/warnaserror+','/reference:System.dll','/reference:System.Core.dll','/reference:System.Drawing.dll','/reference:System.Windows.Forms.dll','/reference:System.Web.Extensions.dll','/reference:System.Security.dll')
+$references = @('/nologo','/target:exe','/platform:anycpu','/warn:4','/warnaserror+','/reference:System.dll','/reference:System.Core.dll','/reference:System.Drawing.dll','/reference:System.Windows.Forms.dll','/reference:System.Web.Extensions.dll','/reference:System.Security.dll','/reference:System.Net.Http.dll')
 $testExe = Join-Path $testOutput 'Tests.exe'
-& $compiler ($references + @('/main:TestRunner',('/out:' + $testExe),(Join-Path $projectRoot 'tests\TestRunner.cs'),(Join-Path $projectRoot 'tests\ResetTests.cs'),(Join-Path $projectRoot 'tests\InstanceTests.cs'),(Join-Path $projectRoot 'tests\RelayTests.cs')) + $sources)
+$sources += Join-Path $projectRoot 'tests\ProcessResourceTests.cs'
+$sources += Join-Path $projectRoot 'tests\StorageTests.cs'
+$sources += Join-Path $projectRoot 'tests\StorageBudgetTests.cs'
+$sources += Join-Path $projectRoot 'tests\OwnedTemporaryTests.cs'
+$sources += Join-Path $projectRoot 'tests\CloudBackendTests.cs'
+$sources += Join-Path $projectRoot 'tests\CloudMutationJournalTests.cs'
+$sources += Join-Path $projectRoot 'tests\CloudEnvironmentUpdateTests.cs'
+$sources += Join-Path $projectRoot 'tests\CloudJobTests.cs'
+$sources += Join-Path $projectRoot 'tests\CloudTasksBackendTests.cs'
+$sources += Join-Path $projectRoot 'tests\CloudEnvironmentSetupTests.cs'
+$sources += Join-Path $projectRoot 'tests\CloudGitHubTests.cs'
+$sources += Join-Path $projectRoot 'tests\AtomicReplaceTests.cs'
+$sources += Join-Path $projectRoot 'tests\HeadlessToolTests.cs'
+$sources += Join-Path $projectRoot 'tests\HeadlessRuntimeTests.cs'
+$sources += Join-Path $projectRoot 'tests\HeadlessTransportTests.cs'
+$sources += Join-Path $projectRoot 'tests\HeadlessApprovalTests.cs'
+$sources += Join-Path $projectRoot 'tests\HeadlessSourceTests.cs'
+& $compiler ($references + @('/main:TestRunner',('/out:' + $testExe),(Join-Path $projectRoot 'tests\TestRunner.cs'),(Join-Path $projectRoot 'tests\ThreadCopyTests.cs'),(Join-Path $projectRoot 'tests\TransferTests.cs'),(Join-Path $projectRoot 'tests\ResetTests.cs'),(Join-Path $projectRoot 'tests\LoginBrowserTests.cs'),(Join-Path $projectRoot 'tests\InstanceTests.cs'),(Join-Path $projectRoot 'tests\SimpleWorkflowTests.cs'),(Join-Path $projectRoot 'tests\ToolTunnelTests.cs'),(Join-Path $projectRoot 'tests\SharedPagesTests.cs'),(Join-Path $projectRoot 'tests\ResourceLinksTests.cs'),(Join-Path $projectRoot 'tests\ResourceCatalogTests.cs'),(Join-Path $projectRoot 'tests\RelayTests.cs'),(Join-Path $projectRoot 'tests\GeneralRelayTests.cs'),(Join-Path $projectRoot 'tests\ProductTests.cs'),(Join-Path $projectRoot 'tests\ConsoleTests.cs'),(Join-Path $projectRoot 'tests\RemoteTests.cs'),(Join-Path $projectRoot 'tests\AssistanceTests.cs')) + $sources)
 if ($LASTEXITCODE -ne 0) { throw 'Test compilation failed.' }
-& $testExe (Join-Path $projectRoot 'work\test-sandbox')
+if (-not $TestDirectory) { $TestDirectory = Join-Path $projectRoot 'work\test-sandbox' }
+$testArgs=@($TestDirectory);if($HeadlessOnly){$testArgs+='--headless'}
+if($StorageOnly){$testArgs+='--storage'}
+& $testExe @testArgs
 if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
 if ($ProtocolSmoke -or $LiveReadOnly) {
     $smokeExe = Join-Path $testOutput 'ProtocolSmoke.exe'

@@ -29,12 +29,12 @@ namespace Creezio.Switcher
         public static bool Low(Profile profile,DateTime now)
         {
             double seconds=(now-new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc)).TotalSeconds;
-            return Windows(profile).Any(w=>w.Remaining.HasValue && w.Remaining.Value<=Threshold && (!w.ResetsAt.HasValue || w.ResetsAt.Value>seconds));
+            return Windows(profile).Where(w=>profile.ResetWindow=="all"||profile.ResetWindow=="session"&&w.Minutes==300||profile.ResetWindow=="weekly"&&w.Minutes==10080).Any(w=>w.Remaining.HasValue && w.Remaining.Value<=profile.ResetThreshold && (!w.ResetsAt.HasValue || w.ResetsAt.Value>seconds));
         }
         public static bool Recovered(Profile profile)
         {
             var windows=Windows(profile);
-            return windows.Length>0 && windows.All(w=>w.Remaining.HasValue && w.Remaining.Value>Threshold);
+            return windows.Length>0 && windows.All(w=>w.Remaining.HasValue && w.Remaining.Value>profile.ResetThreshold);
         }
         public static string Fingerprint(Profile profile)
         {
@@ -48,13 +48,13 @@ namespace Creezio.Switcher
         private readonly Func<DateTime> clock;
         public ResetController(Func<DateTime> now=null) {clock=now ?? (()=>DateTime.UtcNow);}
 
-        public async Task Run(Profile profile,Func<bool> authorizedAndActive,IResetGateway gateway,Action save,CancellationToken token)
+        public async Task Run(Profile profile,Func<bool> authorizedAndActive,IResetGateway gateway,Action save,CancellationToken token,bool manual=false)
         {
             await gate.WaitAsync(token);
-            try {await RunLocked(profile,authorizedAndActive,gateway,save,token);}
+            try {await RunLocked(profile,authorizedAndActive,gateway,save,token,manual);}
             finally {gate.Release();}
         }
-        private async Task RunLocked(Profile profile,Func<bool> authorizedAndActive,IResetGateway gateway,Action save,CancellationToken token)
+        private async Task RunLocked(Profile profile,Func<bool> authorizedAndActive,IResetGateway gateway,Action save,CancellationToken token,bool manual)
         {
             DateTime now=clock();
             if(!authorizedAndActive() || !ResetPolicy.Fresh(profile,now)) return;
@@ -76,7 +76,7 @@ namespace Creezio.Switcher
                     save(); return;
                 }
             }
-            if(!ResetPolicy.Low(profile,now) || profile.ResetCredits==null || !profile.ResetCredits.CanConsume(now)) return;
+            if((!manual&&!ResetPolicy.Low(profile,now)) || profile.ResetCredits==null || !profile.ResetCredits.CanConsume(now)) return;
             string fingerprint=ResetPolicy.Fingerprint(profile);
             if(attempt!=null)
             {
@@ -102,7 +102,7 @@ namespace Creezio.Switcher
             token.ThrowIfCancellationRequested();
             if(!authorizedAndActive()) return;
             attempt.SendCount++;attempt.LastSentUtc=now.ToString("o");
-            profile.ResetMessage="Reset automatique à 1 % · demande en cours.";
+            profile.ResetMessage="Réinitialisation au seuil de "+profile.ResetThreshold.ToString("0.0",CultureInfo.CurrentCulture)+" % · demande en cours.";
             // Durable intent BEFORE sending. On a crash or timeout the same key is reused.
             save();
             token.ThrowIfCancellationRequested();

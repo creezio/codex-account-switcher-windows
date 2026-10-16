@@ -8,18 +8,55 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    env:
+      DELIVERY_DIRECTORY: outputs/portable
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: viewer/package-lock.json
+      - name: Build and verify shared Page MCP App
+        shell: powershell
+        run: |
+          npm ci --prefix viewer
+          node viewer/build.mjs
+          git diff --exit-code -- plugins/creezio-relay/ui
+          node viewer/test.mjs
       - name: Build portable app
         shell: powershell
-        run: ./scripts/build.ps1
+        run: ./scripts/build-desktop.ps1 -Portable -OutputDirectory $env:DELIVERY_DIRECTORY
       - name: Run offline safety and storage tests
         shell: powershell
         run: ./scripts/test.ps1
+      - name: Verify detached worker lifecycle
+        shell: powershell
+        run: ./scripts/worker-smoke.ps1 -BinaryDirectory $env:DELIVERY_DIRECTORY
+      - name: Verify modern runtime core
+        shell: powershell
+        run: dotnet run --project tests/Core.Net10.csproj -c Release -- work/net10-validation
+      - name: Test WPF interactions, renders and cross-runtime data
+        shell: powershell
+        run: ./scripts/test-desktop.ps1 -BinaryDirectory $env:DELIVERY_DIRECTORY
       - name: Package
         shell: powershell
-        run: ./scripts/package.ps1 -SkipBuild
+        run: ./scripts/package-desktop.ps1 -SkipBuild -BinaryDirectory $env:DELIVERY_DIRECTORY
       - uses: actions/upload-artifact@v4
         with:
           name: codex-account-switcher-windows
-          path: outputs/*
+          path: |
+            outputs/*.zip
+            outputs/SHA256SUMS-*.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-validation
+          path: |
+            work/desktop-validation/*.png
+            work/desktop-validation/results.txt
+            work/desktop-validation/data/compatibility-ok.txt
+            work/viewer-validation/*.png

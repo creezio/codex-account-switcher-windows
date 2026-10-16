@@ -1,0 +1,67 @@
+import { createRequire } from 'node:module';
+import { readFile, mkdir } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { fileURLToPath } from 'node:url';
+import assert from 'node:assert/strict';
+const runtime = process.env.PLAYWRIGHT_MODULE || 'playwright';
+const { chromium } = createRequire(import.meta.url)(runtime);
+const root = fileURLToPath(new URL('../', import.meta.url));
+const html = await readFile(root + 'plugins/creezio-relay/ui/viewer.html', 'utf8');
+const parent = `<!doctype html><style>body{margin:0}iframe{border:0;width:100vw;height:100vh}</style><iframe src="/viewer"></iframe><script>
+window.calls=[];window.mode='success';window.doc={Share:'share',Page:'page-1',Title:'DGD · Page partagée',Owner:'Instance propriétaire',ReadId:'read-1',ReadAt:'2026-10-07T12:00:00Z',CanEdit:true,Blocks:[{Id:'b1',Hash:'h1',Kind:'markdown',Markdown:'# Le travail partagé\\n\\nContenu **original**, consulté depuis un autre compte.\\n\\n- Lecture par le tunnel\\n- Édition du même document\\n\\n<script>window.pwned=true\\x3c/script><img src="https://bad.invalid/leak" onerror="window.pwned=true">[dangereux](javascript:alert(1))'},{Id:'b2',Hash:'h2',Kind:'agent_instructions',Markdown:'Instructions à consulter. Ne pas les modifier ici.'}]};
+const frame=document.querySelector('iframe');const send=x=>frame.contentWindow.postMessage({jsonrpc:'2.0',...x},'*');
+window.launch=()=>send({method:'ui/notifications/tool-result',params:{content:[],structuredContent:window.doc,_meta:{viewerSession:'fixture-session'}}});
+addEventListener('message',e=>{let m=e.data;if(!m?.method)return;
+if(m.method==='ui/initialize')send({id:m.id,result:{protocolVersion:m.params.protocolVersion,hostInfo:{name:'viewer-test',version:'1'},hostCapabilities:{serverTools:{}},hostContext:{displayMode:'fullscreen',availableDisplayModes:['fullscreen'],theme:'light'}}});
+else if(m.method==='ui/notifications/initialized')window.launch();
+else if(m.method==='ui/request-display-mode')send({id:m.id,result:{mode:'fullscreen'}});
+else if(m.method==='tools/call'){window.calls.push(m.params);let data;
+if(m.params.name==='save_shared_page_block'){if(window.mode==='disconnect'){send({id:m.id,error:{code:-32603,message:'Transport interrompu'}});return;}if(window.mode==='conflict')data={State:'tool_error',Message:'Conflit de version. Brouillon conservé.'};else{window.doc={...window.doc,ReadId:'read-2',Blocks:window.doc.Blocks.map((b,i)=>i?b:{...b,Markdown:m.params.arguments.markdown})};data={State:'saved',Message:'Enregistrement confirmé. Vue actualisée.',Document:window.doc};}}
+else if(m.params.name==='read_shared_page')data=window.doc;
+else data={opened:true,instance:'Instance propriétaire'};
+send({id:m.id,result:{content:[],structuredContent:data}});
+}
+});</script>`;
+const server = createServer((req, res) => { res.setHeader('Content-Type','text/html; charset=utf-8'); res.end(req.url === '/viewer' ? html : parent); });
+await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
+const browser = await chromium.launch({ channel: 'msedge', headless: true });
+try {
+  const page=await browser.newPage({viewport:{width:1100,height:860}});
+  page.setDefaultTimeout(15000);page.on('pageerror',e=>console.error('Page error:',e.message));
+  const requests=[];page.on('request',r=>requests.push(r.url()));
+  page.on('dialog',d=>d.accept());
+  await page.goto(`http://127.0.0.1:${server.address().port}/`);
+  const frame=page.frameLocator('iframe');
+  await frame.getByText('Page originale chargée via le tunnel.').waitFor();
+  assert.equal(await frame.locator('article').count(),2);
+  assert.equal(await frame.locator('article button').count(),1);
+  assert.equal(await frame.locator('img, article script,article iframe').count(),0);
+  assert.equal(await frame.locator('a[href]').count(),0);
+  assert(!requests.some(u=>u.includes('bad.invalid')));
+  console.log('PASS SDK handshake, original document, read-only instructions, sanitized Markdown and no remote requests');
+  await mkdir(root+'work/viewer-validation',{recursive:true});
+  await page.screenshot({path:root+'work/viewer-validation/reader.png',fullPage:true});
+  await frame.getByRole('button',{name:'Modifier le bloc 1'}).click();
+  await frame.locator('#draft').fill('Texte **modifié** avec éà😀');
+  assert(await frame.getByRole('button',{name:'Actualiser',exact:true}).isDisabled());
+  await frame.getByRole('button',{name:'Enregistrer sur la Page'}).click();
+  await frame.getByText('Enregistrement confirmé. Vue actualisée.').waitFor();
+  assert(await frame.locator('#editor').isHidden());
+  let calls=await page.evaluate(()=>window.calls);
+  const save=calls.find(c=>c.name==='save_shared_page_block');assert.match(save.arguments.id,/^[a-f0-9]{32}$/);assert.equal(save.arguments.readId,'read-1');assert.equal(save.arguments.markdown,'Texte **modifié** avec éà😀');
+  console.log('PASS guarded save, stable ID, Unicode, readback and dirty refresh protection');
+  await page.evaluate(()=>window.mode='conflict');
+  await frame.getByRole('button',{name:'Modifier le bloc 1'}).click();await frame.locator('#draft').fill('Conserver ce brouillon');await frame.locator('#save').click();
+  await frame.getByText('Conflit de version. Brouillon conservé.').waitFor();assert.equal(await frame.locator('#draft').inputValue(),'Conserver ce brouillon');assert(await frame.locator('#save').isDisabled());
+  console.log('PASS conflict retains draft and prevents automatic resubmission');
+  await frame.locator('#cancel').click();await page.evaluate(()=>window.mode='disconnect');await frame.locator('#append').click();await frame.locator('#draft').fill('Ajout incertain');await frame.locator('#save').click();
+  await frame.locator('#draft-note').filter({hasText:'Résultat incertain'}).waitFor();assert(await frame.locator('#save').isDisabled());
+  console.log('PASS lost reply preserves draft and blocks duplicate writes');
+  await frame.locator('#cancel').click();await frame.locator('#native').click();await frame.getByText('Ouverture demandée dans Instance propriétaire.').waitFor();
+  await page.evaluate(()=>{window.doc.CanEdit=false;window.launch();});await frame.getByText('Via Instance propriétaire · Lecture seule').waitFor();assert(await frame.locator('#append').isDisabled());assert.equal(await frame.locator('article button').count(),0);
+  console.log('PASS owner navigation and read-only controls');
+  await page.setViewportSize({width:380,height:780});await page.screenshot({path:root+'work/viewer-validation/compact.png',fullPage:true});
+  assert(await frame.locator('body').evaluate(e=>e.scrollWidth<=innerWidth));
+  await page.emulateMedia({colorScheme:'dark'});await page.screenshot({path:root+'work/viewer-validation/dark.png',fullPage:true});
+  console.log('PASS compact and dark rendering');
+}finally{await browser.close();await new Promise(resolve=>server.close(resolve));}
