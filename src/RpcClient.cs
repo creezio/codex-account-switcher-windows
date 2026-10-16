@@ -20,6 +20,7 @@ namespace Creezio.Switcher
         private bool disposed;
         public readonly string Home;
         private readonly string scratchRoot;
+        private readonly OwnedTemporary temporary;
         public RpcClient(string executable, string root)
         {
             scratchRoot = Path.Combine(root, "runtime");
@@ -29,10 +30,12 @@ namespace Creezio.Switcher
             SafeFiles.AtomicWrite(Path.Combine(Home, "config.toml"), Encoding.UTF8.GetBytes("cli_auth_credentials_store = \"file\"\n[analytics]\nenabled = false\n"));
             var start = new ProcessStartInfo(executable, "app-server --listen stdio://") { UseShellExecute=false, CreateNoWindow=true, RedirectStandardInput=true, RedirectStandardOutput=true, RedirectStandardError=true, WorkingDirectory=Home, StandardOutputEncoding=Encoding.UTF8, StandardErrorEncoding=Encoding.UTF8 };
             start.EnvironmentVariables["CODEX_HOME"] = Home;
+            start.EnvironmentVariables["CODEX_SQLITE_HOME"] = Home;
             // Never inherit an alternative authentication identity from the host process.
             foreach (string key in new[] {"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_IDENTITY_TOKEN", "OPENAI_IDENTITY_TOKEN_FILE", "OPENAI_IDENTITY_PROVIDER_ID", "OPENAI_ORGANIZATION", "CHATGPT_BASE_URL", "CODEX_CHATGPT_BASE_URL"}) start.EnvironmentVariables.Remove(key);
             try
             {
+                temporary=new OwnedTemporary(root);temporary.Apply(start);
                 process = new Process { StartInfo=start, EnableRaisingEvents=true };
                 process.OutputDataReceived += OnOutput;
                 process.ErrorDataReceived += delegate { /* Do not log server output: it can contain credentials. */ };
@@ -116,6 +119,7 @@ namespace Creezio.Switcher
                 process.Dispose();
             }
             FailPending(new ObjectDisposedException("RpcClient"));
+            if(temporary!=null)temporary.Dispose();
             try { SafeFiles.DeleteOwnedTree(scratchRoot, Home); } catch { /* Restricted runtime directory retained if Windows still holds a handle. */ }
         }
     }

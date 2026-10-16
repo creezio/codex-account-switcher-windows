@@ -70,6 +70,7 @@ namespace Creezio.Switcher.Desktop
             Pages.Add("Comptes", new AccountsPage(context, this));
             Pages.Add("Instances", new InstancesPage(context, this));
             Pages.Add("Performances", new PerformancePage(context, this));
+            Pages.Add("Stockage", new StoragePage(context, this));
             Pages.Add("Outils partagés", new ToolSharingPage(context, this));
             Pages.Add("Agents", new ConfigurationPage(context, this, true));
             Pages.Add("Projets", new ConfigurationPage(context, this, false));
@@ -165,7 +166,7 @@ namespace Creezio.Switcher.Desktop
             Navigation.SelectedItem = page;
         }
         private void UpdateNavigation()
-        { Navigation.ItemsSource = new[]{"Accueil","Instances","Performances","Tâches","Assistance","PC distants","Comptes","Outils partagés","Agents","Projets","Paramètres"}.Where(p=>advancedNavigation.IsChecked==true||!AdvancedPages.Contains(p)).ToArray(); }
+        { Navigation.ItemsSource = new[]{"Accueil","Instances","Performances","Stockage","Tâches","Assistance","PC distants","Comptes","Outils partagés","Agents","Projets","Paramètres"}.Where(p=>advancedNavigation.IsChecked==true||!AdvancedPages.Contains(p)).ToArray(); }
         internal void ExitForTest()
         {
             exit = true;

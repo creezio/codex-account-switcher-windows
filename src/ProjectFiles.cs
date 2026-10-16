@@ -39,19 +39,23 @@ namespace Creezio.Switcher
             return new ProjectFileManifest{Source=source,Files=files.OrderBy(f=>f.Relative,StringComparer.OrdinalIgnoreCase).ToArray(),Directories=dirs.OrderBy(d=>d,StringComparer.OrdinalIgnoreCase).ToArray(),Bytes=bytes};
         }
         internal static ProjectFileManifest Plan(string source,string destination,CancellationToken token)
+        {return Plan(source,destination,token,null);}
+        internal static ProjectFileManifest Plan(string source,string destination,CancellationToken token,Func<string,StorageBudgetVolume> probe)
         {
             source=Root(source);destination=Root(destination);if(!Directory.Exists(source))throw new InvalidOperationException("Le dossier source n’existe pas.");
             if(RelayStore.SamePath(source,destination)||RolloutSnapshot.Under(destination,source)||RolloutSnapshot.Under(source,destination))throw new InvalidOperationException("La copie doit être dans un dossier indépendant de la source.");
             if(Directory.Exists(destination)||File.Exists(destination))throw new InvalidOperationException("Le dossier de destination doit être nouveau pour protéger les fichiers existants.");
-            var result=Scan(source,token);result.Destination=destination;result.Marker=Guid.NewGuid().ToString("N");Space(result);return result;
+            var result=Scan(source,token);result.Destination=destination;result.Marker=Guid.NewGuid().ToString("N");Space(result,probe);return result;
         }
-        private static void Space(ProjectFileManifest m)
-        {var drive=new DriveInfo(Path.GetPathRoot(m.Destination));if(drive.AvailableFreeSpace<m.Bytes+1024L*1024*1024)throw new InvalidOperationException("Espace insuffisant pour la copie et 1 Gio de marge. Libérez de l’espace ou choisissez le dossier commun.");}
+        private static void Space(ProjectFileManifest m,Func<string,StorageBudgetVolume> probe)
+        {StorageBudget.Require(m.Destination,m.Bytes,"Copie indépendante du projet",StorageBudget.GiB,probe);}
         private static void VerifySource(ProjectFileManifest m,CancellationToken token)
         {var current=Scan(m.Source,token);if(Json.Write(current.Files)!=Json.Write(m.Files)||!current.Directories.SequenceEqual(m.Directories))throw new InvalidOperationException("Les fichiers sources ont changé depuis l’aperçu. La copie indépendante reste suspendue ; préparez une nouvelle opération.");}
         internal static void Copy(ProjectFileManifest m,Action checkpoint,CancellationToken token)
+        {Copy(m,checkpoint,token,null);}
+        internal static void Copy(ProjectFileManifest m,Action checkpoint,CancellationToken token,Func<string,StorageBudgetVolume> probe)
         {
-            Root(m.Source);Root(m.Destination);VerifySource(m,token);Space(m);string marker=Path.Combine(m.Destination,".account-switcher-copy");SafeFiles.RejectLinks(marker);
+            Root(m.Source);Root(m.Destination);VerifySource(m,token);Space(m,probe);string marker=Path.Combine(m.Destination,".account-switcher-copy");SafeFiles.RejectLinks(marker);
             if(!Directory.Exists(m.Destination)){Directory.CreateDirectory(m.Destination);using(var writer=new StreamWriter(new FileStream(marker,FileMode.CreateNew,FileAccess.Write,FileShare.None)))writer.Write(m.Marker);}
             if(!File.Exists(marker)||File.ReadAllText(marker)!=m.Marker)throw new InvalidOperationException("Ce dossier de destination n’appartient pas à cette opération. Aucun fichier ne sera écrasé.");
             foreach(string directory in m.Directories){token.ThrowIfCancellationRequested();Directory.CreateDirectory(Inside(m.Destination,directory));}

@@ -2,17 +2,22 @@
 param([switch]$SkipBuild,[string]$BinaryDirectory)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.18.0-beta.1'}
+$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.19.0-beta.1'}
+$archiveDrive=Get-PSDrive -Name ([IO.Path]::GetPathRoot($bin).Substring(0,1))
+if($archiveDrive.Free -lt 20GB){throw 'Création du ZIP refusée : au moins 20 Gio libres requis avant cette opération volumineuse. Ouvrez Stockage ; les fichiers de livraison sont conservés.'}
 if(-not $SkipBuild){& (Join-Path $PSScriptRoot 'build-desktop.ps1') -OutputDirectory $bin -Portable}
 foreach($required in @('CodexAccountSwitcher.exe','CodexAccountSwitcher.dll','CodexAccountSwitcher.runtimeconfig.json','coreclr.dll','PresentationFramework.dll','CreezioRelay.exe','plugins')){if(-not(Test-Path -LiteralPath (Join-Path $bin $required))){throw "Livraison autonome incomplète : $required"}}
 $instructions=@'
-CODEX ACCOUNT SWITCHER — 0.18.0-beta.1 — WINDOWS X64
+CODEX ACCOUNT SWITCHER — 0.19.0-beta.1 — WINDOWS X64
 
 Extraire TOUT le ZIP et lancer CodexAccountSwitcher.exe.
 Garder les DLL, fichiers JSON, exécutables et dossier plugins ensemble.
 Le runtime .NET 10 de cette interface WPF est inclus. Aucun SDK à installer.
 Le moteur de relais utilise .NET Framework 4.8, présent sur Windows 10/11.
 
+0.19 : Stockage, temporaires vérifiés et prévention des copies volumineuses.
+Stockage : analyse à la demande et nettoyage avec prévisualisation.
+Nettoyage automatique limité aux temporaires identifiés du Switcher.
 0.18 : Cloud, ressources et missions locales sans fenêtre Codex.
 Instances > Compte > Fonctionnement sans fenêtre : activation et permissions.
 Tâches > Interventions : répondre aux questions et confirmations explicites.
@@ -147,7 +152,8 @@ Copy-Item -LiteralPath (Join-Path $repo 'LICENSE') -Destination (Join-Path $bin 
 Copy-Item -LiteralPath (Join-Path $repo 'README.md') -Destination $bin -Force
 Copy-Item -LiteralPath (Join-Path $repo 'docs\PERFORMANCE-DASHBOARD.md') -Destination $bin -Force
 foreach($name in @('CLOUD-NATIVE-PILOT.md','RELEASE-0.17.2.md','RELEASE-0.17.1.md','RELEASE-0.17.md','STARTUP-RECOVERY.md','TRANSFERS.md','THREAD-COPY.md','LOGIN-BROWSER.md','INSTANCE-WIZARD-FIX.md','RESOURCE-LINKS.md','RESOURCE-LINKS-VALIDATION.md','INSTANCE-LIFECYCLE.md','SHARED-PAGES.md','SHARED-PAGES-VALIDATION.md','INSTANCE-RESOURCES.md','TOOL-TUNNEL.md','SIMPLE-INSTANCES.md','UI-VALIDATION.md','UI-REBUILD-PLAN.md','RELAY.md','WINDOWS-CONSOLE.md','WINDOWS-CONSOLE-VALIDATION.md')){Copy-Item -LiteralPath (Join-Path $repo ('docs\'+$name)) -Destination $bin -Force}
-$zip=Join-Path $repo 'outputs\CodexAccountSwitcher-0.18.0-beta.1-windows-x64.zip'
+Copy-Item -LiteralPath (Join-Path $repo 'docs\STORAGE.md') -Destination $bin -Force
+$zip=Join-Path $repo 'outputs\CodexAccountSwitcher-0.19.0-beta.1-windows-x64.zip'
 # All published runtime assemblies are required. Test helpers and debug symbols are not shipped.
 $items=Get-ChildItem -LiteralPath $bin | Where-Object {$_.Name -notmatch '(Smoke|Tests|\.pdb$)' -and $_.Name -ne 'RUNTIME-SHARED.json' } | ForEach-Object FullName
 Add-Type -AssemblyName System.IO.Compression
@@ -175,5 +181,5 @@ try{
 }finally{$archive.Dispose()}
 Move-Item -LiteralPath $temporary -Destination $zip -Force
 $hash=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-[IO.File]::WriteAllText((Join-Path $repo 'outputs\SHA256SUMS-0.18.0-beta.1.txt'),$hash+'  '+[IO.Path]::GetFileName($zip)+"`n")
+[IO.File]::WriteAllText((Join-Path $repo 'outputs\SHA256SUMS-0.19.0-beta.1.txt'),$hash+'  '+[IO.Path]::GetFileName($zip)+"`n")
 Get-Item -LiteralPath $zip | Select-Object Name,Length

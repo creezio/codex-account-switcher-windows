@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([switch]$ProtocolSmoke, [switch]$LiveReadOnly, [switch]$DesktopSmoke, [string]$DesktopAuthFile, [string]$TestDirectory,[switch]$HeadlessOnly)
+param([switch]$ProtocolSmoke, [switch]$LiveReadOnly, [switch]$DesktopSmoke, [string]$DesktopAuthFile, [string]$TestDirectory,[switch]$HeadlessOnly,[switch]$StorageOnly)
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $testOutput = Join-Path $projectRoot 'work\test-bin'
@@ -9,6 +9,9 @@ $sources = Get-ChildItem -LiteralPath (Join-Path $projectRoot 'src') -Filter '*.
 $references = @('/nologo','/target:exe','/platform:anycpu','/warn:4','/warnaserror+','/reference:System.dll','/reference:System.Core.dll','/reference:System.Drawing.dll','/reference:System.Windows.Forms.dll','/reference:System.Web.Extensions.dll','/reference:System.Security.dll','/reference:System.Net.Http.dll')
 $testExe = Join-Path $testOutput 'Tests.exe'
 $sources += Join-Path $projectRoot 'tests\ProcessResourceTests.cs'
+$sources += Join-Path $projectRoot 'tests\StorageTests.cs'
+$sources += Join-Path $projectRoot 'tests\StorageBudgetTests.cs'
+$sources += Join-Path $projectRoot 'tests\OwnedTemporaryTests.cs'
 $sources += Join-Path $projectRoot 'tests\CloudBackendTests.cs'
 $sources += Join-Path $projectRoot 'tests\CloudMutationJournalTests.cs'
 $sources += Join-Path $projectRoot 'tests\CloudEnvironmentUpdateTests.cs'
@@ -26,6 +29,7 @@ $sources += Join-Path $projectRoot 'tests\HeadlessSourceTests.cs'
 if ($LASTEXITCODE -ne 0) { throw 'Test compilation failed.' }
 if (-not $TestDirectory) { $TestDirectory = Join-Path $projectRoot 'work\test-sandbox' }
 $testArgs=@($TestDirectory);if($HeadlessOnly){$testArgs+='--headless'}
+if($StorageOnly){$testArgs+='--storage'}
 & $testExe @testArgs
 if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
 if ($ProtocolSmoke -or $LiveReadOnly) {

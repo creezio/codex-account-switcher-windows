@@ -19,6 +19,7 @@ namespace Creezio.Switcher
     {
         private readonly Process process;
         private readonly ProcessJob job;
+        private readonly OwnedTemporary temporary;
         private readonly StreamWriter input;
         private readonly ConcurrentDictionary<int,TaskCompletionSource<object>> pending=new ConcurrentDictionary<int,TaskCompletionSource<object>>();
         private readonly object writeLock=new object();
@@ -31,7 +32,7 @@ namespace Creezio.Switcher
             ConfigureHome(start,home);
             process=new Process{StartInfo=start,EnableRaisingEvents=true};process.OutputDataReceived+=Output;process.ErrorDataReceived+=delegate{};
             process.Exited+=delegate{Fail(new IOException("Le service de conversations Codex s’est arrêté."));};
-            try{process.Start();job=new ProcessJob(process);input=new StreamWriter(process.StandardInput.BaseStream,new UTF8Encoding(false)){AutoFlush=true};process.BeginOutputReadLine();process.BeginErrorReadLine();}catch{Dispose();throw;}
+            try{temporary=new OwnedTemporary(OwnedTemporary.DefaultRoot);temporary.Apply(start);process.Start();job=new ProcessJob(process);input=new StreamWriter(process.StandardInput.BaseStream,new UTF8Encoding(false)){AutoFlush=true};process.BeginOutputReadLine();process.BeginErrorReadLine();}catch{Dispose();throw;}
         }
         internal static void ConfigureHome(ProcessStartInfo start,string home)
         {
@@ -68,6 +69,6 @@ namespace Creezio.Switcher
             }catch(Exception error){Fail(new IOException("Réponse de conversation invalide ("+error.GetType().Name+")."));}
         }
         private void Fail(Exception error){foreach(var pair in pending)pair.Value.TrySetException(error);}
-        public void Dispose(){if(disposed)return;disposed=true;try{if(input!=null)input.Close();if(!process.WaitForExit(1500))process.Kill();}catch{}if(job!=null)job.Dispose();process.Dispose();Fail(new ObjectDisposedException("ThreadProfileRpc"));}
+        public void Dispose(){if(disposed)return;disposed=true;try{if(input!=null)input.Close();if(!process.WaitForExit(1500))process.Kill();}catch{}if(job!=null)job.Dispose();try{process.WaitForExit(1000);}catch{}process.Dispose();if(temporary!=null)temporary.Dispose();Fail(new ObjectDisposedException("ThreadProfileRpc"));}
     }
 }

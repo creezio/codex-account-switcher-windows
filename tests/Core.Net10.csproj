@@ -6,6 +6,7 @@
     <NoWarn>$(NoWarn);SYSLIB0057</NoWarn>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="StorageTests.cs;StorageBudgetTests.cs;OwnedTemporaryTests.cs"/>
     <Compile Include="CloudBackendTests.cs;CloudMutationJournalTests.cs"/>
     <Compile Include="CloudEnvironmentUpdateTests.cs"/>
     <Compile Include="CloudJobTests.cs"/>

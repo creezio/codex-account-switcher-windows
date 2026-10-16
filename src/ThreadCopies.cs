@@ -130,6 +130,8 @@ namespace Creezio.Switcher
             }
         }
         internal static RolloutSnapshot Scan(string path,string expectedId,string copy=null,CancellationToken token=default(CancellationToken),bool ignoreNativeResumeNotice=false)
+        {return ScanWithBudget(path,expectedId,copy,token,ignoreNativeResumeNotice,null);}
+        internal static RolloutSnapshot ScanWithBudget(string path,string expectedId,string copy,CancellationToken token,bool ignoreNativeResumeNotice,Func<string,StorageBudgetVolume> budgetProbe)
         {
             if(ignoreNativeResumeNotice&&copy!=null)throw new InvalidOperationException("Native notice normalization is verification-only.");
             path=NativePath(path);
@@ -138,7 +140,7 @@ namespace Creezio.Switcher
             var compatibility=copy==null?null:new LegacyHistoryCompatibility(path,token);
             using(var stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))
             using(var reader=new StreamReader(stream,Encoding.UTF8,true))
-            using(var writer=copy==null?null:new StreamWriter(new FileStream(copy,FileMode.CreateNew,FileAccess.Write,FileShare.None),new UTF8Encoding(false)))
+            using(var writer=copy==null?null:new StreamWriter(StorageBudget.GuardWrites(new FileStream(copy,FileMode.CreateNew,FileAccess.Write,FileShare.None),copy,"Préparation de l’historique",2,budgetProbe),new UTF8Encoding(false)))
             using(var sha=SHA256.Create())using(var modelSha=SHA256.Create()) {
                 string line;bool first=true;byte[] pendingNotice=null;bool noticeAborted=false,noticeSuffixValid=true;var pngEncoding=writer==null?null:new PngHistoryEncoding();
                 Action<byte[],bool> append=(bytes,isModel)=>{sha.TransformBlock(bytes,0,bytes.Length,null,0);result.Items++;if(isModel){modelSha.TransformBlock(bytes,0,bytes.Length,null,0);result.ModelItems++;}};
@@ -238,10 +240,11 @@ namespace Creezio.Switcher
         private readonly Func<AccountService,DesktopInstance,string,string,CancellationToken,Task> idle;
         private readonly bool nativeDesktop;
         private readonly Func<string,string,string,CancellationToken,Task> migrate;
-        internal ThreadCopies(RelayStore store,Func<string,IThreadProfileRpc> factory=null,Func<AccountService,DesktopInstance,string,string,CancellationToken,Task> idleCheck=null,Func<string,string,string,CancellationToken,Task> migration=null)
+        private readonly Func<string,StorageBudgetVolume> budgetProbe;
+        internal ThreadCopies(RelayStore store,Func<string,IThreadProfileRpc> factory=null,Func<AccountService,DesktopInstance,string,string,CancellationToken,Task> idleCheck=null,Func<string,string,string,CancellationToken,Task> migration=null,Func<string,StorageBudgetVolume> capacity=null)
         {
             this.store=store;connect=factory??(home=>new ThreadProfileRpc(new AccountService(Path.GetDirectoryName(store.Root)).Settings.CodexExecutable,home));
-            idle=idleCheck??CheckIdle;nativeDesktop=idleCheck==null;migrate=migration??ThreadCopyMigration.Run;
+            idle=idleCheck??CheckIdle;nativeDesktop=idleCheck==null;migrate=migration??ThreadCopyMigration.Run;budgetProbe=capacity;
         }
         private AccountService Accounts(){return new AccountService(Path.GetDirectoryName(store.Root));}
         private static DesktopInstance Instance(AccountService a,string id){var i=a.Data.Instances.SingleOrDefault(x=>x.Id==id&&!x.Archived);if(i==null)throw new InvalidOperationException("Instance introuvable ou archivée.");NamedInstances.VerifyAccount(a,i);return i;}
@@ -318,13 +321,20 @@ namespace Creezio.Switcher
                         await idle(a,from,record.SourceFolder,thread,token).ConfigureAwait(false);
                         // A fresh destination does not need an unrelated starter chat.
                         if(nativeDesktop){var state=a.Instances.Runtime.Probe(to);if(!state.Running||state.Phase=="unknown"||!DesktopRuntime.SameProcess(state.DesktopPid,state.DesktopStartTicks))throw new InvalidOperationException("Ouvrez « "+to.Name+" » dans le Switcher avant de copier la conversation.");}
-                        string scratch=Path.Combine(store.Root,"thread-copies");SafeFiles.PrivateDirectory(scratch);string snapshot=Path.Combine(scratch,id+".jsonl");
+                        string scratch=Path.Combine(store.Root,"thread-copies");var originalFile=new FileInfo(choice.Path);long originalLength=originalFile.Length;DateTime originalTime=originalFile.LastWriteTimeUtc;
+                        if(originalLength>RolloutSnapshot.MaxJournalBytes)throw new InvalidOperationException("Ce journal dépasse la limite d’import de 512 Mio.");
+                        // Check both destinations, which need not share a volume.
+                        // Rendering is guarded again if the snapshot grows beyond
+                        // this initial estimate; no new backend is used for sizing.
+                        StorageBudget.Require(scratch,StorageBudget.Cost(originalLength,2),"Préparation de l’historique",StorageBudget.DefaultMarginBytes,budgetProbe);
+                        StorageBudget.Require(targetHome,StorageBudget.Cost(originalLength,3),"Import de la conversation",StorageBudget.DefaultMarginBytes,budgetProbe);
+                        SafeFiles.PrivateDirectory(scratch);string snapshot=Path.Combine(scratch,id+".jsonl");
                         SafeFiles.RejectLinks(snapshot);if(File.Exists(snapshot))File.Delete(snapshot);
                         try{
-                            var originalFile=new FileInfo(choice.Path);long originalLength=originalFile.Length;DateTime originalTime=originalFile.LastWriteTimeUtc;
-                            var content=RolloutSnapshot.Scan(choice.Path,thread,snapshot,token);
-                            if(content.SourceMode=="paginated")await CompleteSnapshotDisplay(origin,thread,snapshot,token).ConfigureAwait(false);
+                            var content=RolloutSnapshot.ScanWithBudget(choice.Path,thread,snapshot,token,false,budgetProbe);
+                            if(content.SourceMode=="paginated")await CompleteSnapshotDisplayWithBudget(origin,thread,snapshot,token,budgetProbe).ConfigureAwait(false);
                             var prepared=RolloutSnapshot.Scan(snapshot,thread,null,token);record.Digest=prepared.Digest;record.HistoryItems=prepared.Items;record.SourceMode=content.SourceMode;record.LosslessPngEncoding=content.LosslessPngEncoding;record.DuplicateToolAnnotations=content.DuplicateToolAnnotations;record.EmptyContextDefaults=content.EmptyContextDefaults;
+                            StorageBudget.Require(targetHome,StorageBudget.Cost(new FileInfo(snapshot).Length,3),"Import de la conversation",StorageBudget.DefaultMarginBytes,budgetProbe);
                             var defaults=await DestinationDefaults(target,record.Folder,token).ConfigureAwait(false);record.PermissionProfile=Json.Str(Json.Get(Json.Get(defaults,"activePermissionProfile"),"id"));record.ApprovalPolicy=Json.Get(defaults,"approvalPolicy");record.ApprovalsReviewer=Json.Str(Json.Get(defaults,"approvalsReviewer"));
                             await idle(a,from,record.SourceFolder,thread,token).ConfigureAwait(false);
                             var current=RolloutSnapshot.Scan(choice.Path,thread,null,token);originalFile.Refresh();if(current.Digest!=content.Digest||originalFile.Length!=originalLength||originalFile.LastWriteTimeUtc!=originalTime)throw new InvalidOperationException("L’historique a changé. Recommencez après la fin du travail.");
@@ -357,6 +367,13 @@ namespace Creezio.Switcher
             r.State="migrating";r.Message="Historique copié ; préparation de son affichage dans Codex.";Save(r);
             await target.Call("thread/unsubscribe",new{threadId=r.TargetThread},token).ConfigureAwait(false);
             }
+            // A retry can enter directly in migrating after space was consumed by
+            // another operation. Use this already-open connection, not a new
+            // backend, and refuse before starting the native conversion process.
+            var migrationRead=await target.Call("thread/read",new{threadId=r.TargetThread,includeTurns=false},token).ConfigureAwait(false);var migrationFile=Choice(Json.Get(migrationRead,"thread"));
+            if(migrationFile.Id!=r.TargetThread)throw new InvalidOperationException("La conversation à convertir n’est pas confirmée par Codex.");
+            string migrationHome=a.Instances.Home(to);RolloutSnapshot.RequireRollout(migrationHome,migrationFile.Path);
+            StorageBudget.Require(migrationHome,StorageBudget.Cost(new FileInfo(migrationFile.Path).Length,3),"Conversion de l’historique de conversation",StorageBudget.DefaultMarginBytes,budgetProbe);
             target.Dispose();
             await migrate(a.Settings.CodexExecutable,a.Instances.Home(to),r.TargetThread,token).ConfigureAwait(false);
             // Validate the endpoint actually consumed by Desktop, not only the
@@ -411,6 +428,8 @@ namespace Creezio.Switcher
             return actual.ToArray();
         }
         internal static async Task CompleteSnapshotDisplay(IThreadProfileRpc rpc,string thread,string snapshot,CancellationToken token)
+        {await CompleteSnapshotDisplayWithBudget(rpc,thread,snapshot,token,null).ConfigureAwait(false);}
+        private static async Task CompleteSnapshotDisplayWithBudget(IThreadProfileRpc rpc,string thread,string snapshot,CancellationToken token,Func<string,StorageBudgetVolume> budgetProbe)
         {
             var prepared=RolloutSnapshot.Scan(snapshot,thread,null,token);var rows=await ReadVisibleRows(rpc,thread,token).ConfigureAwait(false);var native=rows.Select(r=>RolloutSnapshot.VisibleDigest(r.Role,r.Text,r.LocalImages,r.EmbeddedImages)).ToArray();
             if(rows.Any(r=>r.Unsupported))throw new InvalidOperationException("Une pièce jointe de cet historique ne peut pas encore être reproduite fidèlement dans Codex.");
@@ -420,12 +439,12 @@ namespace Creezio.Switcher
                 // the complete paginated transcript. Replace only display events
                 // in this private snapshot; the native source UI is authoritative.
                 string temp=snapshot+".display-tmp";SafeFiles.RejectLinks(temp);bool owned=false;
-                try{using(var reader=new StreamReader(snapshot))using(var output=new FileStream(temp,FileMode.CreateNew,FileAccess.Write,FileShare.None)){owned=true;using(var writer=new StreamWriter(output,new UTF8Encoding(false))){string line;while((line=reader.ReadLine())!=null){token.ThrowIfCancellationRequested();var entry=RolloutSnapshot.ReadRollout(line);string kind=Json.Str(Json.Get(Json.Get(entry,"payload"),"type"));if(Json.Str(Json.Get(entry,"type"))=="event_msg"&&(kind=="user_message"||kind=="agent_message"))continue;writer.WriteLine(line);}}}File.Replace(temp,snapshot,null);}
+                try{using(var reader=new StreamReader(snapshot))using(var output=new FileStream(temp,FileMode.CreateNew,FileAccess.Write,FileShare.None)){owned=true;using(var writer=new StreamWriter(StorageBudget.GuardWrites(output,temp,"Préparation de l’affichage de la conversation",2,budgetProbe),new UTF8Encoding(false))){string line;while((line=reader.ReadLine())!=null){token.ThrowIfCancellationRequested();var entry=RolloutSnapshot.ReadRollout(line);string kind=Json.Str(Json.Get(Json.Get(entry,"payload"),"type"));if(Json.Str(Json.Get(entry,"type"))=="event_msg"&&(kind=="user_message"||kind=="agent_message"))continue;writer.WriteLine(line);}}}File.Replace(temp,snapshot,null);}
                 finally{if(owned&&File.Exists(temp))File.Delete(temp);}
             }
             // Recent Desktop releases store display messages only in SQLite. Rebuild
             // them in the private snapshot, retaining their order and turn grouping.
-            using(var writer=new StreamWriter(snapshot,true,new UTF8Encoding(false))){
+            using(var writer=new StreamWriter(StorageBudget.GuardWrites(new FileStream(snapshot,FileMode.Append,FileAccess.Write,FileShare.None),snapshot,"Préparation de l’affichage de la conversation",2,budgetProbe),new UTF8Encoding(false))){
                 string turn=null;foreach(var row in rows){token.ThrowIfCancellationRequested();string next=String.IsNullOrEmpty(row.Turn)?"switcher-import":row.Turn;
                     if(next!=turn){if(turn!=null)writer.WriteLine(Json.Write(new{type="event_msg",timestamp=DateTime.UtcNow.ToString("o"),payload=new{type="task_complete",turn_id=turn}}));turn=next;writer.WriteLine(Json.Write(new{type="event_msg",timestamp=DateTime.UtcNow.ToString("o"),payload=new{type="task_started",turn_id=turn,model_context_window=258400}}));}
                     object display=row.Role=="user"?(object)new{type="user_message",message=row.Text,images=row.EmbeddedImages??new string[0],local_images=row.LocalImages??new string[0],text_elements=new object[0]}:new{type="agent_message",message=row.Text,phase="final_answer"};writer.WriteLine(RolloutSnapshot.DisplayLine(new{type="event_msg",timestamp=DateTime.UtcNow.ToString("o"),payload=display}));

@@ -12,6 +12,49 @@ namespace Creezio.Switcher.Desktop
         internal readonly RelayStore Store;
         internal readonly bool Fixture;
         internal string InitialPage="Accueil";
+        internal Func<StorageScope[]> StorageScopesFixture;
+        // Read the existing project index only. Inventory must never start a
+        // Codex instance, fetch a repository or inspect conversation contents.
+        internal Task<StorageScope[]> StorageScopes()
+        {
+            if(Fixture)return Task.FromResult(StorageScopesFixture==null?new StorageScope[0]:StorageScopesFixture());
+            return Read(a=>{
+                var scopes=new System.Collections.Generic.List<StorageScope>();
+                var projects=new System.Collections.Generic.Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+                Action<string,string,string,string,bool> add=(id,name,path,kind,protect)=>{
+                    if(String.IsNullOrWhiteSpace(path))return;
+                    path=Path.GetFullPath(path);
+                    if(scopes.Any(s=>RelayStore.SamePath(s.Path,path)))return;
+                    scopes.Add(new StorageScope{Id=id,Name=name,Path=path,Kind=kind,Protected=protect});
+                };
+                foreach(var instance in a.Data.Instances){
+                    string home=a.Instances.Home(instance);
+                    add("instance:"+instance.Id,instance.Name+(instance.Archived?" · archivée":""),instance.IsLocal?home:InstancePaths.Folder(Root,instance.Id),"instance",true);
+                    try{
+                        string index=Path.Combine(home,".codex-global-state.json");
+                        if(File.Exists(index)){
+                            var state=Json.Read<object>(SafeFiles.ReadText(index));
+                            foreach(var pair in Json.Obj(Json.Get(state,"local-projects")))
+                                foreach(var root in RelayEngine.Rows(Json.Get(pair.Value,"rootPaths"))){
+                                    string path=Json.Str(root);if(Path.IsPathRooted(path))projects[Path.GetFullPath(path)]=Json.Str(Json.Get(pair.Value,"name"));
+                                }
+                        }
+                    }catch(System.IO.IOException){}catch(UnauthorizedAccessException){}catch(ArgumentException){}
+                }
+                foreach(var channel in Store.Channels())if(!String.IsNullOrWhiteSpace(channel.Workspace)&&Path.IsPathRooted(channel.Workspace))projects[Path.GetFullPath(channel.Workspace)]=Path.GetFileName(channel.Workspace.TrimEnd('\\'));
+                foreach(string folder in new[]{"runtime","temporary","relay","integrations"})add("switcher:"+folder,"Switcher · "+folder,Path.Combine(Root,folder),"switcher",folder!="runtime"&&folder!="temporary");
+                // Nested project roots share their physical files. Keep one
+                // inventory, and keep the instance data outside project cleanup.
+                foreach(var project in projects.OrderBy(p=>p.Key.Length)){
+                    string path=project.Key.TrimEnd('\\');
+                    if(scopes.Any(s=>RelayStore.SamePath(s.Path,path)||path.StartsWith(s.Path.TrimEnd('\\')+"\\",StringComparison.OrdinalIgnoreCase)||s.Path.StartsWith(path+"\\",StringComparison.OrdinalIgnoreCase)))continue;
+                    add("project:"+path,String.IsNullOrWhiteSpace(project.Value)?Path.GetFileName(path):project.Value,path,"project",true);
+                }
+                add("system:temp","Windows · temporaires",Path.GetTempPath(),"system",true);
+                add("system:pagefile","Windows · fichier d’échange",Path.Combine(Path.GetPathRoot(Root),"pagefile.sys"),"system",true);
+                return scopes.ToArray();
+            });
+        }
         internal LoginBrowser[] LoginBrowsersFixture;
         internal Func<Action<string>,CancellationToken,Task<string>> LoginAuthFixture;
         internal Action<LoginBrowserTarget,string> LoginOpenFixture;
@@ -77,6 +120,14 @@ namespace Creezio.Switcher.Desktop
         }
         private readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
         private DateTime lastFullRefresh = DateTime.MinValue;
+        private DateTime lastStorageMaintenance = DateTime.MinValue;
+        private readonly SemaphoreSlim storageGate=new SemaphoreSlim(1,1);
+        internal async Task MaintainStorage()
+        {
+            if(Fixture||DateTime.UtcNow-lastStorageMaintenance<TimeSpan.FromMinutes(10)||!await storageGate.WaitAsync(0))return;
+            try{await Task.Run(()=>StorageSupervision.Run(Store,Root,CancellationToken.None));lastStorageMaintenance=DateTime.UtcNow;}
+            finally{storageGate.Release();}
+        }
         private readonly SemaphoreSlim integrationGate = new SemaphoreSlim(1, 1);
         internal Func<string, Settings, Task> VerifyIntegrationFixture;
         internal async Task<RelayIntegrationState> VerifyIntegration(string instanceId)
@@ -140,6 +191,7 @@ namespace Creezio.Switcher.Desktop
         {
             if (Fixture)
                 return;
+            await MaintainStorage();
             await MaintainIntegrations();
             await gate.WaitAsync();
             try

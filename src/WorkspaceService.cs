@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -19,6 +20,8 @@ namespace Creezio.Switcher
             using(var p=Process.Start(start)){var output=p.StandardOutput.ReadToEndAsync();var errors=p.StandardError.ReadToEndAsync();if(!p.WaitForExit(30000)){try{p.Kill();}catch{}throw new InvalidOperationException("Git a dépassé le délai de 30 secondes.");}string result=output.GetAwaiter().GetResult();errors.GetAwaiter().GetResult();if(p.ExitCode!=0)throw new InvalidOperationException("Git n'a pas pu effectuer cette opération. Vérifiez le dépôt, la référence et le dossier choisi.");return result.Trim();}
         }
         public static string Create(string repository,string destination,string reference)
+        {return Create(repository,destination,reference,null);}
+        internal static string Create(string repository,string destination,string reference,Func<string,StorageBudgetVolume> probe)
         {
             repository=RelayStore.WorkspacePath(repository);destination=Path.GetFullPath(destination);SafeFiles.RejectLinks(destination);
             if(String.IsNullOrWhiteSpace(reference)||reference.StartsWith("-")||reference.IndexOfAny(new[]{'\r','\n','"'})>=0)throw new InvalidOperationException("Référence Git invalide.");
@@ -29,11 +32,20 @@ namespace Creezio.Switcher
                 if(!RelayStore.SamePath(common,other))throw new InvalidOperationException("Le dossier existant appartient à un autre dépôt.");
                 return "Espace existant réutilisé, contenu conservé · "+Git(destination,"rev-parse HEAD");
             }
-            long size=0;foreach(string name in Git(repository,"ls-files -z").Split('\0').Where(n=>n.Length>0)){string file=Path.GetFullPath(Path.Combine(repository,name));if(!file.StartsWith(repository.TrimEnd('\\')+"\\",StringComparison.OrdinalIgnoreCase))continue;SafeFiles.RejectLinks(file);if(File.Exists(file))size+=new FileInfo(file).Length;}
-            var drive=new DriveInfo(Path.GetPathRoot(destination));if(size>50L*1024*1024&&drive.AvailableFreeSpace<20L*1024*1024*1024)throw new InvalidOperationException("Moins de 20 Gio libres : libérez les temporaires connus avant de créer cet espace volumineux.");
-            if(drive.AvailableFreeSpace<size*2+100L*1024*1024)throw new InvalidOperationException("Espace disque insuffisant pour ce worktree.");
+            // The requested commit can be much larger than a dirty or sparse working
+            // folder. Read immutable blob sizes rather than the current file index.
+            long? size=CommittedBytes(Git(repository,"ls-tree -r -l -z "+RelayWorker.Quote(commit)));
+            StorageBudget.Require(destination,size.HasValue?StorageBudget.Cost(size.Value,2):null,"Création d’un espace Git",StorageBudget.DefaultMarginBytes,probe);
             Git(repository,"worktree add --detach -- "+RelayWorker.Quote(destination)+" "+RelayWorker.Quote(commit));
             return "Espace Git créé sans installation de dépendances · "+commit;
+        }
+        internal static long? CommittedBytes(string tree)
+        {
+            long bytes=0;foreach(string row in (tree??"").Split('\0').Where(value=>value.Length>0)){
+                int tab=row.IndexOf('\t');if(tab<0)return null;var fields=row.Substring(0,tab).Split(new[]{' '},StringSplitOptions.RemoveEmptyEntries);if(fields.Length!=4)return null;
+                if(fields[1]=="commit"&&fields[3]=="-")continue;long size;if(fields[1]!="blob"||!Int64.TryParse(fields[3],NumberStyles.None,CultureInfo.InvariantCulture,out size)||size<0)return null;
+                try{bytes=checked(bytes+size);}catch(OverflowException){return null;}
+            }return bytes;
         }
         public static Dictionary<string,string> Manifest(string root,IEnumerable<string> paths)
         {

@@ -3,10 +3,16 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.18.0-beta.1 — Cloud, outils et agents locaux sans fenêtre.** Windows 10/11 x64, interface en
+**Version 0.19.0-beta.1 — Stockage, temporaires et prévention des copies volumineuses.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
+
+La page **Stockage** mesure les instances et projets, distingue les données à
+préserver des temporaires vérifiés et présente les refus Windows exacts. Le
+nettoyage automatique concerne uniquement les temporaires identifiés du Switcher.
+Les opérations volumineuses vérifient leur budget avant écriture.
+[Fonctionnement et limites du stockage](docs/STORAGE.md).
 
 Le Cloud fonctionne avec le compte permanent de l’instance même lorsque sa
 fenêtre Codex est fermée. Les outils partagés démarrent un moteur temporaire
@@ -519,15 +525,19 @@ pas déplacés ni supprimés.
 Depuis PowerShell à la racine du dépôt :
 
 ```powershell
-.\scripts\build-desktop.ps1 -Portable -OutputDirectory outputs\v0.16.1-beta.1
+.\scripts\build-portable-reuse.ps1 -OutputDirectory outputs\v0.19.0-beta.1 -RuntimeDirectory outputs\v0.18.0-beta.1
 .\scripts\test.ps1 -TestDirectory work\framework-validation
 dotnet run --project tests\Core.Net10.csproj -c Release -- work\net10-validation
-.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.16.1-beta.1
+.\scripts\test-desktop.ps1 -BinaryDirectory outputs\v0.19.0-beta.1
 ```
 
 La compilation de l'interface exige le SDK .NET 10 ; le moteur utilise le
 compilateur C# de .NET Framework. Les packs de runtime sont téléchargés lors
 de la première publication. Les sorties et tests réutilisent leurs dossiers.
+Si la livraison est inactive et possède déjà son runtime partagé, ajoutez
+`-RefreshApplication` pour reconstruire les seuls fichiers applicatifs dans ce
+même dossier. Le ZIP exige 20 Gio libres ; les petites compilations incrémentales
+ne téléchargent aucun pack supplémentaire.
 
 Avec Codex CLI installé, vérifiez aussi le protocole isolé :
 

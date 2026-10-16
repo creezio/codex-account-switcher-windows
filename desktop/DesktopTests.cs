@@ -117,6 +117,7 @@ namespace Creezio.Switcher.Desktop
             var report = new List<string>();
             Action<bool, string> assert = (ok, name) => { File.AppendAllText(Path.Combine(root,"progress.txt"),(ok?"PASS ":"FAIL ")+name+"\n"); if (!ok) throw new Exception(name); passed++; report.Add("PASS " + name); };
             Directory.CreateDirectory(root);
+            File.WriteAllText(Path.Combine(root,"progress.txt"),"");
             var dataRoot = Path.Combine(root, "data");
             string marker = Path.Combine(root, ".switcher-ui-fixture");
             if (Directory.Exists(dataRoot) && !File.Exists(marker))
@@ -196,6 +197,7 @@ namespace Creezio.Switcher.Desktop
                     }
                     var shared=(ToolSharingPage)shell.Pages["Outils partagés"];
                     await PerformanceAcceptance(context,shell,toolOwner.Id,root,assert);
+                    await StorageAcceptance(context,shell,root,assert);
                     shell.Navigate("Outils partagés");await shared.Refresh();shell.UpdateLayout();
                     assert(shared.List.Items.Count==1&&Descendants(shared).OfType<TextBlock>().Any(t=>t.Text.Contains("page_demo")),"outils partagés affichent le propriétaire et la ressource autorisée");
                     var inspectShare=shell.Dispatcher.BeginInvoke(new Action(()=>{

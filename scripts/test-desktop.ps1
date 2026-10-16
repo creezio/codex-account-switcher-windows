@@ -5,10 +5,12 @@ $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $bundledSdk=Join-Path $env:LOCALAPPDATA 'Creezio\tools\dotnet'
 # Development builds may use the SDK's private runtime; portable delivery includes its own.
 if(Test-Path -LiteralPath (Join-Path $bundledSdk 'dotnet.exe')){$env:DOTNET_ROOT=$bundledSdk}
-$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.18.0-beta.1'}
+$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.19.0-beta.1'}
 $exe=Join-Path $bin 'CodexAccountSwitcher.exe'
 $fixture=Join-Path $repo 'work\desktop-validation'
+$uiStartedUtc=[datetime]::UtcNow
 $p=Start-Process -FilePath $exe -ArgumentList @('--ui-test',('"'+$fixture+'"')) -WindowStyle Hidden -PassThru -Wait
+if(-not(Test-Path -LiteralPath (Join-Path $fixture 'results.txt')) -or (Get-Item -LiteralPath (Join-Path $fixture 'results.txt')).LastWriteTimeUtc -lt $uiStartedUtc){throw "Le test UI n'a pas produit de résultat neuf (code $($p.ExitCode)). Aucun ancien rapport n'est accepté."}
 $report=Get-Content -LiteralPath (Join-Path $fixture 'results.txt') -Encoding UTF8
 $report
 if($p.ExitCode -ne 0 -or ($report -match '^FAIL') -or $report[-1] -notmatch '^\d+ tests UI r\u00e9ussis$'){throw 'UI tests failed.'}

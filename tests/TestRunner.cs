@@ -30,6 +30,10 @@ internal static class TestRunner
         try
         {
             string a=FakeAuth("alice","workspace-a"),b=FakeAuth("bob","workspace-b");
+            StorageTests.RunAll(Check,sandbox);
+            StorageBudgetTests.RunAll(Check,sandbox);
+            OwnedTemporaryTests.RunAll(Check,sandbox);
+            if(args.Length==2&&args[1]=="--storage"){Console.WriteLine(passed+" tests passed.");return 0;}
             if(args.Length==2&&args[1]=="--headless"){
                 HeadlessToolTests.RunAll(Check,sandbox);HeadlessRuntimeTests.RunAll(Check,sandbox,a);
                 HeadlessTransportTests.RunAll(Check,sandbox,a);HeadlessApprovalTests.RunAll(Check,sandbox,a);HeadlessSourceTests.RunAll(Check,sandbox,a);
