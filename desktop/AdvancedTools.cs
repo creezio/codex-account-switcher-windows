@@ -78,7 +78,7 @@ namespace Creezio.Switcher.Desktop
             var selected = candidates.Select(path => new { Path = path, Box = Ui.Check(path, false, fields) }).ToArray();
             var status = Ui.Text(candidates.Length == 0 ? "Aucun temporaire admissible." : "Sélectionnez les dossiers à supprimer.", 14, true);
             fields.Children.Add(status);
-            fields.Children.Add(Ui.AsyncButton("Nettoyer la sélection", async delegate { var paths = selected.Where(x => x.Box.IsChecked == true).Select(x => x.Path).ToArray(); if (paths.Length == 0) return; if (!Ui.Confirm(d, "Supprimer définitivement les " + paths.Length + " dossiers sélectionnés ?", "Nettoyer")) return; int count = await context.Read(a => CacheMaintenance.Clean(a.Vault.Root, paths)); status.Text = count + " dossier(s) supprimé(s)."; foreach (var x in selected) { x.Box.IsChecked = false; x.Box.IsEnabled = false; } }, e => status.Text = Program.SafeError(e)));
+            fields.Children.Add(Ui.AsyncButton("Nettoyer la sélection", async delegate { var paths = selected.Where(x => x.Box.IsChecked == true).Select(x => x.Path).ToArray(); if (paths.Length == 0) return; if (!Ui.Confirm(d, "Supprimer définitivement les " + paths.Length + " dossiers sélectionnés ?", "Nettoyer")) return; var results = await context.Read(a => CacheMaintenance.CleanResults(a.Vault.Root, paths)); status.Text = CacheMaintenance.DescribeResults(results); foreach (var x in selected) { x.Box.IsChecked = false; if (results.Any(r => r.Removed && String.Equals(r.Path, x.Path, StringComparison.OrdinalIgnoreCase))) x.Box.IsEnabled = false; } }, e => status.Text = Program.SafeError(e)));
             fields.Children.Add(Ui.Button("Fermer", d.Close));
             d.ShowDialog();
         }

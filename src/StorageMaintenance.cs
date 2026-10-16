@@ -96,9 +96,9 @@ namespace Creezio.Switcher
         {if(String.IsNullOrEmpty(entry.Reason))entry.Reason=reason;else if(entry.Reason.IndexOf(reason,StringComparison.Ordinal)<0&&entry.Reason.Length<1200)entry.Reason+=" · "+reason;}
         private static void RejectReparse(string path)
         {SafeFiles.RejectLinks(path);if((File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0)throw new Refusal("reparse-point","Un lien ou une jonction est conservé sans être parcouru.");}
-        private static SafeFileHandle Open(string path,bool directory,bool exclusive)
+        private static SafeFileHandle Open(string path,bool directory,bool exclusive,bool guard=false)
         {
-            var handle=CreateFile(path,ReadAttributes|(exclusive?DeleteAccess|GenericRead:0),exclusive?(directory?3u:0u):7u,IntPtr.Zero,OpenExisting,OpenReparsePoint|BackupSemantics,IntPtr.Zero);
+            var handle=CreateFile(path,ReadAttributes|(exclusive?DeleteAccess|GenericRead:0),exclusive?(directory?1u:0u):guard?1u:7u,IntPtr.Zero,OpenExisting,OpenReparsePoint|BackupSemantics,IntPtr.Zero);
             if(handle.IsInvalid){int code=Marshal.GetLastWin32Error();handle.Dispose();throw new Win32Exception(code);}
             NativeInfo info;if(!GetFileInformationByHandle(handle,out info)){int code=Marshal.GetLastWin32Error();handle.Dispose();throw new Win32Exception(code);}
             if((info.Attributes&(uint)FileAttributes.ReparsePoint)!=0){handle.Dispose();throw new Refusal("reparse-point","Un lien ou une jonction est conservé sans être parcouru.");}
@@ -236,8 +236,12 @@ namespace Creezio.Switcher
                 plan.AppRoot=Full(appRoot);plan.Path=Full(candidate);string parent=System.IO.Path.GetDirectoryName(plan.Path),name=System.IO.Path.GetFileName(plan.Path);
                 if(!System.Text.RegularExpressions.Regex.IsMatch(name??"","^[a-f0-9]{32}$")||(!Same(parent,System.IO.Path.Combine(plan.AppRoot,"runtime"))&&!Same(parent,System.IO.Path.Combine(plan.AppRoot,"temporary"))))throw new Refusal("outside-root","Seul un sous-dossier GUID directement détenu par le Switcher peut être nettoyé.");
                 plan.Kind=Same(parent,System.IO.Path.Combine(plan.AppRoot,"runtime"))?"codex-rpc-scratch-v1":"switcher-owned-temp-v1";plan.Marker=plan.Kind=="codex-rpc-scratch-v1"?RuntimeMarker:TemporaryMarker;
-                RejectReparse(plan.AppRoot);RejectReparse(parent);RejectReparse(plan.Path);
-                plan.Guards.Add(Open(plan.AppRoot,true,false));plan.Guards.Add(Open(parent,true,false));
+                // Pin the ancestor chain before opening by path. Guards deny WRITE and DELETE
+                // without requesting DELETE themselves, so several plans can share them.
+                var ancestors=new Stack<string>();string ancestor=parent;
+                while(ancestor!=null){ancestors.Push(ancestor);ancestor=System.IO.Path.GetDirectoryName(ancestor);}
+                foreach(string path in ancestors){RejectReparse(path);plan.Guards.Add(Open(path,true,false,true));}
+                RejectReparse(plan.Path);
                 int inspected=1;maximumItems=Math.Max(1,Math.Min(maximumItems,MaximumCleanupItems));var dirs=new Stack<string>();dirs.Push(plan.Path);
                 while(dirs.Count>0){token.ThrowIfCancellationRequested();string path=dirs.Pop();
                     RejectReparse(path);var dir=new HeldItem{Path=path,Directory=true,Handle=Open(path,true,true)};plan.Items.Add(dir);

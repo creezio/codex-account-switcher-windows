@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace Creezio.Switcher
@@ -28,7 +29,15 @@ namespace Creezio.Switcher
             var export=new Button{Text="Exporter le diagnostic expurgé",AutoSize=true};top.Controls.Add(export);export.Click+=delegate{using(var picker=new SaveFileDialog{Filter="Diagnostic (*.json)|*.json",FileName="diagnostic-switcher.json"})if(picker.ShowDialog(this)==DialogResult.OK)SafeFiles.AtomicWrite(picker.FileName,System.Text.Encoding.UTF8.GetBytes(ProductDiagnostics.Report(accounts,store)));};
             var inventory=new Button{Text="Vérifier les plugins",AutoSize=true};top.Controls.Add(inventory);inventory.Click+=delegate{using(var f=new RelayIntegrationForm(store,accounts))f.ShowDialog(this);};
             var spaces=new Button{Text="Espaces Git et artefacts",AutoSize=true};top.Controls.Add(spaces);spaces.Click+=delegate{using(var f=new WorkspaceForm(store))f.ShowDialog(this);};
-            var cleanup=new Button{Text="Examiner les temporaires",AutoSize=true};top.Controls.Add(cleanup);cleanup.Click+=delegate{try{var candidates=CacheMaintenance.Candidates(accounts.Vault.Root);if(candidates.Length==0){text.Text="Aucun temporaire abandonné appartenant à cette application n'a été identifié. Profils, caches non identifiés et historiques conservés.";return;}text.Text=String.Join("\r\n",candidates);if(MessageBox.Show(this,"Retirer ces "+candidates.Length+" dossiers temporaires identifiés ? Leurs processus propriétaires ne sont plus actifs. Les profils et historiques restent conservés.","Temporaires vérifiés",MessageBoxButtons.YesNo)==DialogResult.Yes)text.Text=CacheMaintenance.Clean(accounts.Vault.Root,candidates)+" dossier(s) temporaire(s) retiré(s).";}catch(Exception e){text.Text=Program.SafeError(e);}};
+            var cleanup=new Button{Text="Examiner les temporaires",AutoSize=true};top.Controls.Add(cleanup);cleanup.Click+=async delegate{
+                cleanup.Enabled=false;string root=accounts.Vault.Root;
+                try{
+                    text.Text="Analyse des temporaires identifiés…";var candidates=await Task.Run(()=>CacheMaintenance.Candidates(root));if(IsDisposed)return;
+                    if(candidates.Length==0){text.Text="Aucun temporaire abandonné appartenant à cette application n'a été identifié. Profils, caches non identifiés et historiques conservés.";return;}
+                    text.Text=String.Join("\r\n",candidates);if(MessageBox.Show(this,"Retirer ces "+candidates.Length+" dossiers temporaires identifiés ? Leurs processus propriétaires ne sont plus actifs. Les profils et historiques restent conservés.","Temporaires vérifiés",MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
+                    var results=await Task.Run(()=>CacheMaintenance.CleanResults(root,candidates));if(!IsDisposed)text.Text=CacheMaintenance.DescribeResults(results).Replace("\n","\r\n");
+                }catch(Exception e){if(!IsDisposed)text.Text=Program.SafeError(e);}finally{if(!IsDisposed)cleanup.Enabled=true;}
+            };
             var updates=new Button{Text="Vérifier les mises à jour",AutoSize=true};top.Controls.Add(updates);updates.Click+=async delegate{updates.Enabled=false;try{text.Text=await ReleaseCheck.Read();}catch(Exception e){text.Text="Vérification indisponible : "+Program.SafeError(e);}finally{if(!IsDisposed)updates.Enabled=true;}};
             var releases=new Button{Text="Ouvrir les versions publiées",AutoSize=true};top.Controls.Add(releases);releases.Click+=delegate{Process.Start(new ProcessStartInfo(ReleaseCheck.Page){UseShellExecute=true});};
             refresh();ProductUx.Accessible(this);

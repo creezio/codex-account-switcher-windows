@@ -35,6 +35,12 @@ lot ; un échec après le début indique explicitement un résultat partiel. Les
 codes Windows 5, 32 et 33 sont distincts d’un refus de politique. Aucun changement
 d’ACL, arrêt d’application, élévation ou autre interpréteur n’est essayé.
 
+Les répertoires sélectionnés et leur chaîne d’ancêtres sont tenus ouverts sans
+partage d’écriture ni de suppression pendant la préparation et le nettoyage.
+Une ouverture incompatible fait refuser l’opération. Les anciens dialogues de
+maintenance utilisent aussi ce moteur et affichent ses refus détaillés ; aucun
+ancien nettoyage récursif ne subsiste dans ces points d’entrée.
+
 Les petits services de connexion et d’import du Switcher reçoivent leurs propres
 `TEMP`/`TMP`, avec marqueur, PID, date de lancement et lease exclusive. À leur
 fin, leur arbre de processus est arrêté avant de libérer ce temporaire. Les
