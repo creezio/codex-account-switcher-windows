@@ -121,7 +121,7 @@ namespace Creezio.Switcher
         }
         private static string Inside(string directory,string relative)
         {relative=Relative(relative);string root=Path.GetFullPath(directory).TrimEnd('\\')+"\\",path=Path.GetFullPath(Path.Combine(root,relative.Replace('/',Path.DirectorySeparatorChar)));if(!path.StartsWith(root,StringComparison.OrdinalIgnoreCase)||path.Length>245)throw Invalid();SafeFiles.RejectLinks(path);return path;}
-        private static Manifest ReadManifest(byte[] bytes,string expectedVersion)
+        internal static Manifest ReadManifest(byte[] bytes,string expectedVersion)
         {
             RequireVersion(expectedVersion);if(bytes.Length==0||bytes.Length>MaximumManifest)throw Invalid();string json=Utf8(bytes);UniqueJson(json);Manifest manifest;
             try{manifest=Json.Read<Manifest>(json);}catch(Exception error){if(error is OutOfMemoryException)throw;throw Invalid();}
@@ -129,6 +129,7 @@ namespace Creezio.Switcher
             var paths=new HashSet<string>(StringComparer.OrdinalIgnoreCase);long total=0;
             foreach(var file in manifest.files){if(file==null||Relative(file.path)=="switcher-update.json"||!paths.Add(file.path)||file.length<0||file.length>MaximumFile||file.sha256==null||!HashPattern.IsMatch(file.sha256))throw Invalid();total+=file.length;if(total>MaximumExpanded)throw Invalid();}
             foreach(string required in Required)if(!manifest.files.Any(file=>file.path==required))throw Invalid();
+            if(CompareVersions(expectedVersion,"0.29.0-beta.3")>=0)foreach(string required in new[]{"SwitcherCodexBridge.exe","SwitcherCodexBridge.exe.config"})if(!manifest.files.Any(file=>file.path==required))throw Invalid();
             foreach(string path in paths){string parent=path;while(parent.IndexOf('/')>=0){parent=parent.Substring(0,parent.LastIndexOf('/'));if(paths.Contains(parent))throw Invalid();}}
             return manifest;
         }
@@ -144,6 +145,7 @@ namespace Creezio.Switcher
             var manifest=ReadManifest(bytes,expectedVersion);var files=Files(directory).ToArray();if(files.Length!=manifest.files.Count+1)throw Invalid();var found=new HashSet<string>(files.Select(p=>p.Substring(Path.GetFullPath(directory).TrimEnd('\\').Length+1).Replace('\\','/')),StringComparer.OrdinalIgnoreCase);
             foreach(var file in manifest.files)if(!found.Contains(file.path)||DigestFile(Inside(directory,file.path),MaximumFile,file.length)!=file.sha256)throw Invalid();
             foreach(string name in new[]{"CodexAccountSwitcher.dll","CreezioRelay.exe"}){string version=FileVersionInfo.GetVersionInfo(Inside(directory,name)).ProductVersion;if(version!=expectedVersion)throw Invalid();}
+            if(CompareVersions(expectedVersion,"0.29.0-beta.3")>=0&&FileVersionInfo.GetVersionInfo(Inside(directory,"SwitcherCodexBridge.exe")).ProductVersion!=expectedVersion)throw Invalid();
             return Digest(bytes);
         }
         private static string Root(string directory)

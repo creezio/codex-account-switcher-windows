@@ -1,12 +1,16 @@
 [CmdletBinding()]
 param([Parameter(Mandatory=$true)][string]$BinaryDirectory,[string]$ArchiveDirectory)
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'update-package-contract.ps1')
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $bin=[IO.Path]::GetFullPath($BinaryDirectory)
 $archives=if($ArchiveDirectory){[IO.Path]::GetFullPath($ArchiveDirectory)}else{Join-Path $repo 'outputs'}
 $manifest=Get-Content -LiteralPath (Join-Path $bin 'switcher-update.json') -Raw | ConvertFrom-Json
 if($manifest.schemaVersion -ne 1 -or $manifest.platform -cne 'windows-x64' -or $manifest.healthProtocol -ne 1 -or $manifest.entrypoint -cne 'CodexAccountSwitcher.exe'){throw 'Contrat du manifeste incompatible.'}
-foreach($binary in @('CodexAccountSwitcher.dll','CreezioRelay.exe','SwitcherLauncher.exe')){if([Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $bin $binary)).ProductVersion -cne $manifest.version){throw "Version de binaire incorrecte : $binary"}}
+$bridgeRequired=Test-SwitcherCodexBridgeRequired $manifest.version
+$versionedBinaries=@('CodexAccountSwitcher.dll','CreezioRelay.exe','SwitcherLauncher.exe')
+if($bridgeRequired){$versionedBinaries+='SwitcherCodexBridge.exe';if(-not(Test-Path -LiteralPath (Join-Path $bin 'SwitcherCodexBridge.exe.config') -PathType Leaf)){throw 'Configuration du pont Codex absente.'}}
+foreach($binary in $versionedBinaries){if([Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $bin $binary)).ProductVersion -cne $manifest.version){throw "Version de binaire incorrecte : $binary"}}
 $archiveName='CodexAccountSwitcher-'+$manifest.version+'-windows-x64.zip'
 $zip=Join-Path $archives $archiveName
 $hash=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -41,5 +45,6 @@ try{
     }finally{$inputStream.Dispose()}
   }
   foreach($required in @('CodexAccountSwitcher.exe','CodexAccountSwitcher.dll','CodexAccountSwitcher.deps.json','CodexAccountSwitcher.runtimeconfig.json','CreezioRelay.exe','CreezioRelay.exe.config','SwitcherLauncher.exe','SwitcherLauncher.exe.config','coreclr.dll','PresentationFramework.dll','hostfxr.dll','hostpolicy.dll','plugins/creezio-relay/.codex-plugin/plugin.json','plugins/creezio-relay/.mcp.json','plugins/creezio-relay/ui/viewer.html')){if(-not $seen.Contains($required)){throw "Fichier requis absent : $required"}}
+  if($bridgeRequired){foreach($required in @('SwitcherCodexBridge.exe','SwitcherCodexBridge.exe.config')){if(-not $seen.Contains($required)){throw "Fichier requis absent : $required"}}}
 }finally{$archive.Dispose()}
 [pscustomobject]@{Version=$manifest.version;FilesVerified=$expected.Count;Archive=$zip;GitHubDigest='sha256:'+$hash;ReadOnly=$true}

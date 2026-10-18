@@ -35,14 +35,14 @@ internal static class PortalNativeHeadlessTests
     {
         internal readonly string Root,Folder,OtherWorkspace,Thread="01900000-0000-7000-8000-"+Guid.NewGuid().ToString("N").Substring(0,12);
         internal readonly RelayStore Store;internal readonly PortalInstanceGrant Grant;internal readonly PortalNative Native;internal readonly Rpc Rpc;
-        internal InstanceState State=new InstanceState{Phase="stopped"};internal int Factories,Preparations;internal RelayChannel Channel;
+        internal InstanceState State=new InstanceState{Phase="stopped"};internal int Factories,Preparations,DesktopReads;internal RelayChannel Channel;
         internal Fixture(string sandbox)
         {
             Root=Path.Combine(sandbox,"pnh-"+Guid.NewGuid().ToString("N").Substring(0,8));Directory.CreateDirectory(Root);string local=Path.Combine(Root,"local"),exe=Path.Combine(Root,"codex.exe");Directory.CreateDirectory(local);File.WriteAllText(exe,"fictional executable never started");new Vault(Root).SaveSettings(new Settings{CodexHome=local,CodexExecutable=exe});
             string id=Guid.NewGuid().ToString("N"),auth=Auth("fixture-"+id),home=InstancePaths.Home(Root,id);Folder=InstancePaths.Folder(Root,id);Directory.CreateDirectory(home);string workspace=Path.Combine(Folder,"workspace");Directory.CreateDirectory(workspace);OtherWorkspace=Path.Combine(Root,"other-workspace");Directory.CreateDirectory(OtherWorkspace);File.WriteAllText(Path.Combine(home,"auth.json"),auth);
             var accounts=new AccountService(Root);var identity=AuthIdentity.Parse(auth);accounts.Data.Profiles.Add(new Profile{Key=identity.Key,Email=identity.Email,AuthJson=auth,Label="Fictional account",AllInstances=false,InstanceIds=new List<string>{id}});accounts.Data.Instances.Add(new DesktopInstance{Id=id,Name="Fictional headless",AccountKey=identity.Key,AccountLocked=true});accounts.Save();Store=new RelayStore(Path.Combine(Root,"relay"));
             Grant=new PortalInstanceGrant{InstanceId=id,AccountKey=identity.Key,Home=home,Workspace=workspace,Access="headless",PermissionProfile="inherit"};Rpc=new Rpc(this);
-            Native=new PortalNative(Store,new PortalNativeDependencies{Runtime=(a,i)=>State,Headless=store=>{Factories++;return new HeadlessRelayTransport(store,c=>Rpc,(c,token)=>{
+            Native=new PortalNative(Store,new PortalNativeDependencies{Runtime=(a,i)=>State,DesktopRead=(store,a,i,pin,thread,token)=>{DesktopReads++;Assert(pin.DesktopPid==State.DesktopPid&&pin.DesktopStartTicks==State.DesktopStartTicks,"Desktop metadata lost its native PID pin");return Rpc.Call("thread/read",new{threadId=thread,includeTurns=false},token).GetAwaiter().GetResult();},Headless=store=>{Factories++;return new HeadlessRelayTransport(store,c=>Rpc,(c,token)=>{
                 Preparations++;using(new InstanceLease(Folder)){bool blocked=false;Task.Run(()=>{try{using(new InstanceLease(Folder)){} }catch(InvalidOperationException){blocked=true;}}).GetAwaiter().GetResult();Assert(blocked,"Metadata lease did not exclude a GUI launcher on another thread");}
             });}});
         }
@@ -54,6 +54,7 @@ internal static class PortalNativeHeadlessTests
         internal HeadlessThreadReceipt Receipt(string thread=null)
         {var receipt=new HeadlessThreadReceipt{ThreadId=thread??Thread,ChannelId=Channel.Id,AccountKey=Grant.AccountKey,Home=Grant.Home,Workspace=Grant.Workspace,Sandbox=Channel.HeadlessSandbox,ApprovalPolicy=Channel.HeadlessApprovalPolicy,Title="Owned fictional chat",State="completed",UpdatedUtc=DateTime.UtcNow.ToString("o")};Save(receipt);return receipt;}
         internal void Save(HeadlessThreadReceipt receipt){Store.WriteRecord(HeadlessRelayTransport.ReceiptName(receipt.ThreadId),receipt);}
+        internal void OpenDesktop(){State=new InstanceState{Running=true,Phase="running",LaunchId=Guid.NewGuid().ToString("N"),HostPid=101,HostStartTicks=1001,DesktopPid=102,DesktopStartTicks=1002};}
     }
     internal static void RunAll(Action<string,Action> check,string sandbox)
     {
@@ -75,6 +76,35 @@ internal static class PortalNativeHeadlessTests
         });
         check("portal native headless GUI open unknown or disabled never starts second engine",()=>{
             foreach(string state in new[]{"open","unknown","starting","disabled"}){var f=new Fixture(sandbox);f.Register();f.Receipt();if(state=="disabled"){var a=new AccountService(f.Root);a.Data.Instances.Single(i=>i.Id==f.Grant.InstanceId).HeadlessEnabled=false;a.Save();}else f.State=new InstanceState{Running=state=="open",Phase=state=="open"?"running":state};var view=Shape(f.Native.Describe(f.Grant));Assert(!Object.Equals(Json.Get(view,"online"),true)&&Value(view,"executionMode")=="unavailable","Unsafe headless instance reported ready");Invalid(()=>f.Native.List(f.Grant));Invalid(()=>f.Native.Read(f.Grant,f.Thread));Assert(f.Factories==0,"Unsafe desktop state opened a second engine");}
+        });
+        check("portal native GUI metadata lists owned receipts while headless send remains unavailable",()=>{
+            var f=new Fixture(sandbox);f.Register();f.Receipt();var foreign=f.Receipt(Guid.NewGuid().ToString("D"));foreign.Home=f.OtherWorkspace;foreign.Title="FOREIGN GUI CHAT";f.Save(foreign);f.OpenDesktop();
+            f.Native.Verify(f.Grant);var list=f.Native.List(f.Grant);var rows=RelayEngine.Rows(Json.Get(list,"threads")).ToArray();var view=Shape(f.Native.Describe(f.Grant));
+            Assert(rows.Length==1&&Value(rows[0],"threadId")==f.Thread&&!Json.Write(list).Contains("FOREIGN"),"GUI metadata exposed a thread outside the owned headless receipts");
+            Assert(!Object.Equals(Json.Get(view,"online"),true)&&!Object.Equals(Json.Get(view,"headlessAvailable"),true)&&Object.Equals(Json.Get(view,"desktopOpen"),true),"Metadata access silently enabled desktop sends");
+            Invalid(()=>f.Native.VerifySend(f.Grant));Assert(f.Factories==0&&f.DesktopReads==0,"Listing opened another engine or called native list_threads");
+        });
+        check("portal native GUI owned read avoids profile lease and uses only native read",()=>{
+            var f=new Fixture(sandbox);f.Register();f.Receipt();f.OpenDesktop();
+            using(var entered=new ManualResetEventSlim(false))using(var release=new ManualResetEventSlim(false)){
+                var held=Task.Run(()=>{using(new InstanceLease(f.Folder)){entered.Set();release.Wait();}});Assert(entered.Wait(TimeSpan.FromSeconds(20)),"Fictional GUI lease was not acquired");
+                try{DirectMessages.RequireThread(f.Native.Read(f.Grant,f.Thread),f.Thread);Assert(RelayEngine.Rows(Json.Get(f.Native.List(f.Grant),"threads")).Count()==1,"Owned GUI metadata was blocked by its launcher lease");}
+                finally{release.Set();held.GetAwaiter().GetResult();}
+            }
+            Assert(f.DesktopReads==1&&f.Factories==0&&f.Preparations==0&&f.Rpc.Methods.SequenceEqual(new[]{"thread/read"}),"GUI metadata resumed a thread or opened a headless app-server");
+        });
+        check("portal native GUI metadata rejects foreign receipts before touching desktop",()=>{
+            foreach(string scope in new[]{"account","home","workspace","channel","permissions"}){var f=new Fixture(sandbox);f.Register();var receipt=f.Receipt();f.OpenDesktop();if(scope=="account")receipt.AccountKey="foreign";if(scope=="home")receipt.Home=f.OtherWorkspace;if(scope=="workspace")receipt.Workspace=f.OtherWorkspace;if(scope=="channel")receipt.ChannelId="foreign";if(scope=="permissions")receipt.ApprovalPolicy="never";f.Save(receipt);Invalid(()=>f.Native.Read(f.Grant,f.Thread));Assert(f.Factories==0&&f.DesktopReads==0,"Foreign receipt reached a native desktop");}
+        });
+        check("portal native GUI metadata revalidates PID launch account channel and workspace after read",()=>{
+            foreach(string mismatch in new[]{"pid","start","host","launch","closed","account","channel","workspace","thread"}){
+                var f=new Fixture(sandbox);f.Register();f.Receipt();f.OpenDesktop();f.Rpc.WrongWorkspace=mismatch=="workspace";f.Rpc.WrongThread=mismatch=="thread";
+                f.Rpc.DuringRead=()=>{if(mismatch=="pid")f.State.DesktopPid++;if(mismatch=="start")f.State.DesktopStartTicks++;if(mismatch=="host")f.State.HostStartTicks++;if(mismatch=="launch")f.State.LaunchId=Guid.NewGuid().ToString("N");if(mismatch=="closed")f.State=new InstanceState{Phase="stopped"};if(mismatch=="account")File.WriteAllText(Path.Combine(f.Grant.Home,"auth.json"),Auth("foreign"));if(mismatch=="channel")f.Store.SetEnabled(f.Channel.Id,false);};
+                Invalid(()=>f.Native.Read(f.Grant,f.Thread));Assert(f.DesktopReads==1&&f.Factories==0&&f.Rpc.Methods.SequenceEqual(new[]{"thread/read"}),"Changed owner caused a fallback or replay");
+            }
+        });
+        check("portal native metadata receipt scan bounds before opening encrypted records",()=>{
+            int observed=0;IEnumerable<string> paths=Enumerable.Range(0,100000).Select(i=>{observed++;return "never-opened-"+i;});Invalid(()=>PortalNative.BoundedReceiptPaths(paths));Assert(observed==4097,"Receipt discovery enumerated an unbounded directory");Assert(PortalNative.BoundedReceiptPaths(Enumerable.Repeat("fictional",4096)).Length==4096,"Valid metadata boundary was rejected");
         });
         check("portal native headless account and channel changes fail before native RPC",()=>{
             foreach(string scope in new[]{"auth","grant-home","grant-workspace","channel-disabled","channel-home","channel-workspace","channel-policy"}){var f=new Fixture(sandbox);f.Register();f.Receipt();if(scope=="auth")File.WriteAllText(Path.Combine(f.Grant.Home,"auth.json"),Auth("foreign"));if(scope=="grant-home")f.Grant.Home=f.OtherWorkspace;if(scope=="grant-workspace")f.Grant.Workspace=Path.Combine(f.Root,"absent");if(scope=="channel-disabled")f.Store.SetEnabled(f.Channel.Id,false);if(scope=="channel-home"||scope=="channel-workspace"||scope=="channel-policy"){var channel=f.Store.Channel(f.Channel.Id);if(scope=="channel-home")channel.Home=f.OtherWorkspace;if(scope=="channel-workspace")channel.Workspace=f.OtherWorkspace;if(scope=="channel-policy")channel.HeadlessSandbox="read-only";f.Store.WriteRecord("channels.dpapi",new[]{channel});}Invalid(()=>f.Native.Read(f.Grant,f.Thread));Assert(f.Factories==0,"Changed binding reached native RPC");}

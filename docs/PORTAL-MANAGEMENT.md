@@ -108,6 +108,12 @@ révision attendue du nom sur l’instance cible. Un remplacement concurrent ren
 
 ## Objectifs natifs
 
+À partir de la beta.3, le pont livré avec Switcher peut joindre le moteur d’une
+interface Codex ouverte pour gérer ses objectifs. Il est activé au prochain
+lancement de cette interface. Une ancienne interface déjà ouverte demande une
+seule relance manuelle ; Switcher ne la ferme pas automatiquement. Les panneaux
+Windows, Switcher Live et l’API conservent les mêmes capacités et motifs de refus.
+
 ```json
 {"action":"set","expectedVersion":"","objective":"Terminer la recette en conservant les comptes existants.","status":"paused","tokenBudget":40000}
 ```
@@ -120,10 +126,14 @@ L’effacement demande seulement `action:"clear"` et `expectedVersion`.
 
 Le service utilise les RPC natifs `thread/goal/get`, `set` et `clear`, avec l’origine
 utilisateur explicite. Il ne reprend pas une discussion et ne démarre pas de tour
-pour lire son objectif. La première version exige un profil arrêté et disponible
-pour cette opération de métadonnées : si une fenêtre ou un autre moteur possède
-le profil, les capacités et le motif le signalent. Aucun moteur concurrent n’est
-démarré pour contourner ce refus. Les autres fonctions du panneau restent disponibles.
+pour lire son objectif. Une fenêtre Codex peut rester ouverte lorsque son moteur
+propriétaire est reconnu et accessible : les appels passent alors par ce moteur.
+Un profil arrêté conserve son accès natif dédié. Aucun moteur concurrent n’est
+démarré pour contourner un propriétaire inconnu ou indisponible.
+`canReadGoal`, `canWriteGoal` et `goalIssue` dans la réponse restent l’autorité
+pour activer les actions et expliquer un refus. Les panneaux réévaluent ces
+capacités lors d’une actualisation, conservent les brouillons et affichent le motif
+renvoyé. Les autres fonctions du panneau restent disponibles.
 
 ## Planifications Switcher
 

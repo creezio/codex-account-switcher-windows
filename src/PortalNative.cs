@@ -10,11 +10,12 @@ namespace Creezio.Switcher
     {
         internal Func<AccountService,DesktopInstance,InstanceState> Runtime=(accounts,instance)=>accounts.Instances.Runtime.Probe(instance);
         internal Func<RelayStore,IRelayTransport> Headless=value=>new HeadlessRelayTransport(value);
+        internal Func<RelayStore,AccountService,DesktopInstance,InstanceState,string,CancellationToken,object> DesktopRead=null;
     }
     // Desktop metadata uses its verified native endpoint. Headless metadata is
     // restricted to conversations owned by our existing headless transport.
     // Neither path starts a model turn, resumes or creates a chat.
-    internal sealed class PortalNative : IPortalNative
+    internal sealed class PortalNative : IPortalNative,IPortalNativeAdmission
     {
         internal const int ThreadLimit=AppToolsClient.ThreadListLimit;
         private readonly RelayStore store;
@@ -29,6 +30,8 @@ namespace Creezio.Switcher
         }
         public void Verify(PortalInstanceGrant grant)
         {var accounts=new AccountService(Path.GetDirectoryName(store.Root));Resolve(accounts,grant);}
+        public void VerifySend(PortalInstanceGrant grant)
+        {if(grant.Access=="headless")RequireHeadless(new AccountService(Path.GetDirectoryName(store.Root)),grant);else Verify(grant);}
         public object Describe(PortalInstanceGrant grant)
         {
             var accounts=new AccountService(Path.GetDirectoryName(store.Root));var instance=Resolve(accounts,grant);var state=dependencies.Runtime(accounts,instance);var profile=accounts.Data.Profiles.FirstOrDefault(p=>p.Key==grant.AccountKey);
@@ -57,24 +60,67 @@ namespace Creezio.Switcher
             if(!channel.Enabled||AgentProviders.Kind(channel)!="codex-headless"||channel.InstanceId!=instance.Id||channel.AccountKey!=grant.AccountKey||!RelayStore.SamePath(channel.Home??"",grant.Home)||!RelayStore.SamePath(channel.Workspace??"",grant.Workspace)||!RelayStore.SamePath(channel.Executable??"",accounts.Settings.CodexExecutable)||channel.HeadlessSandbox!=instance.HeadlessSandbox||channel.HeadlessApprovalPolicy!=instance.HeadlessApprovalPolicy)throw new InvalidOperationException("La connexion sans fenetre ne correspond plus au compte, au dossier ou aux reglages de cette instance.");
             return channel;
         }
+        private static bool DesktopMetadataOwner(InstanceState state)
+        {return state!=null&&state.Running&&state.DesktopPid>0&&state.DesktopStartTicks>0&&state.HostPid>0&&state.HostStartTicks>0&&!String.IsNullOrEmpty(state.LaunchId)&&state.Phase!="unknown"&&state.Phase!="starting"&&state.Phase!="stopping"&&state.Phase!="error";}
+        private InstanceState RequireDesktopMetadata(AccountService accounts,DesktopInstance instance,PortalInstanceGrant grant,InstanceState expected=null)
+        {
+            if(instance.IsLocal||!instance.HeadlessEnabled)throw new InvalidOperationException("La lecture des discussions sans fenetre exige la meme instance isolee et autorisee.");
+            var current=dependencies.Runtime(accounts,instance);
+            if(!DesktopMetadataOwner(current)||expected!=null&&(current.LaunchId!=expected.LaunchId||current.HostPid!=expected.HostPid||current.HostStartTicks!=expected.HostStartTicks||current.DesktopPid!=expected.DesktopPid||current.DesktopStartTicks!=expected.DesktopStartTicks))throw new InvalidOperationException("Le proprietaire natif de cette instance a change pendant la lecture. Aucun autre moteur n'a ete demarre.");
+            CodexEnvironment.CheckFileStorage(grant.Home);return Json.Read<InstanceState>(Json.Write(current));
+        }
+        private List<HeadlessThreadReceipt> OwnedReceipts(RelayChannel channel)
+        {
+            var rows=new List<HeadlessThreadReceipt>();if(channel==null)return rows;
+            foreach(string path in BoundedReceiptPaths(Directory.EnumerateFiles(store.Root,"headless-thread-*.dpapi",SearchOption.TopDirectoryOnly))){
+                var candidate=store.ReadRecord<HeadlessThreadReceipt>(Path.GetFileName(path));Guid parsed;
+                if(candidate.ChannelId!=channel.Id||candidate.AccountKey!=channel.AccountKey||!Guid.TryParse(candidate.ThreadId,out parsed)||Path.GetFileName(path)!=HeadlessRelayTransport.ReceiptName(candidate.ThreadId))continue;
+                try{rows.Add(HeadlessRelayTransport.RequireOwned(store,channel,candidate.ThreadId));}catch(InvalidOperationException){}
+            }
+            return rows;
+        }
+        internal static string[] BoundedReceiptPaths(IEnumerable<string> source)
+        {var paths=source.Take(4097).ToArray();if(paths.Length>4096)throw new InvalidOperationException("L'historique sans fenetre depasse la limite de lecture de ce portail.");return paths;}
+        private static object ReceiptList(IEnumerable<HeadlessThreadReceipt> rows)
+        {return Json.Read<object>(Json.Write(new{pinnedThreads=new object[0],threads=rows.OrderByDescending(row=>row.UpdatedUtc,StringComparer.Ordinal).Take(ThreadLimit).Select(row=>new{threadId=row.ThreadId,title=WebhookChats.Safe(row.Title,120),status=row.State,updatedAt=row.UpdatedUtc}).ToArray()}));}
+        private object HeadlessDesktopList(AccountService accounts,DesktopInstance instance,PortalInstanceGrant grant)
+        {
+            var pin=RequireDesktopMetadata(accounts,instance,grant);var channel=HeadlessChannel(accounts,instance,grant,false);var rows=OwnedReceipts(channel);
+            accounts=new AccountService(Path.GetDirectoryName(store.Root));instance=Resolve(accounts,grant);RequireDesktopMetadata(accounts,instance,grant,pin);HeadlessChannel(accounts,instance,grant,channel!=null);
+            return ReceiptList(rows);
+        }
+        private object HeadlessDesktopRead(AccountService accounts,DesktopInstance instance,PortalInstanceGrant grant,string thread)
+        {
+            var pin=RequireDesktopMetadata(accounts,instance,grant);var channel=HeadlessChannel(accounts,instance,grant,true);HeadlessRelayTransport.RequireOwned(store,channel,thread);
+            using(var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(15))){
+                object result;
+                if(dependencies.DesktopRead!=null)result=dependencies.DesktopRead(store,accounts,instance,pin,thread,deadline.Token);
+                else{
+                    string pipe;using(var client=NamedInstances.OpenDesktop(store,accounts,instance,deadline.Token,out pipe)){
+                        if(client.ServerPid!=pin.DesktopPid||client.ServerStartTicks!=pin.DesktopStartTicks)throw new InvalidOperationException("Le canal natif ne correspond plus au proprietaire de cette instance.");
+                        result=client.Call(thread,"read_thread",new{threadId=thread,turnLimit=1,includeOutputs=false,maxOutputCharsPerItem=1000},deadline.Token).GetAwaiter().GetResult();
+                    }
+                }
+                DirectMessages.RequireThread(result,thread);string cwd=Json.Str(Json.Get(Json.Get(result,"thread"),"cwd"));if(cwd.Length==0||!RelayStore.SamePath(RelayStore.WorkspacePath(cwd),grant.Workspace))throw new InvalidOperationException("Le dossier de cette discussion ne correspond plus au dossier autorise.");
+                accounts=new AccountService(Path.GetDirectoryName(store.Root));instance=Resolve(accounts,grant);RequireDesktopMetadata(accounts,instance,grant,pin);HeadlessChannel(accounts,instance,grant,true);HeadlessRelayTransport.RequireOwned(store,channel,thread);return result;
+            }
+        }
         private object HeadlessList(PortalInstanceGrant grant)
         {
-            var accounts=new AccountService(Path.GetDirectoryName(store.Root));var instance=RequireHeadless(accounts,grant);
+            var accounts=new AccountService(Path.GetDirectoryName(store.Root));var instance=Resolve(accounts,grant);
+            if(DesktopMetadataOwner(dependencies.Runtime(accounts,instance)))return HeadlessDesktopList(accounts,instance,grant);
+            instance=RequireHeadless(accounts,grant);
             using(new InstanceLease(InstancePaths.Folder(accounts.Vault.Root,instance.Id))){
-                accounts=new AccountService(Path.GetDirectoryName(store.Root));instance=RequireHeadless(accounts,grant);var channel=HeadlessChannel(accounts,instance,grant,false);var rows=new List<HeadlessThreadReceipt>();
-                if(channel!=null){int count=0;foreach(string path in Directory.EnumerateFiles(store.Root,"headless-thread-*.dpapi",SearchOption.TopDirectoryOnly)){
-                    if(++count>4096)throw new InvalidOperationException("L'historique sans fenetre depasse la limite de lecture de ce portail.");
-                    var candidate=store.ReadRecord<HeadlessThreadReceipt>(Path.GetFileName(path));Guid parsed;
-                    if(candidate.ChannelId!=channel.Id||candidate.AccountKey!=channel.AccountKey||!Guid.TryParse(candidate.ThreadId,out parsed)||Path.GetFileName(path)!=HeadlessRelayTransport.ReceiptName(candidate.ThreadId))continue;
-                    try{rows.Add(HeadlessRelayTransport.RequireOwned(store,channel,candidate.ThreadId));}catch(InvalidOperationException){}
-                }}
+                accounts=new AccountService(Path.GetDirectoryName(store.Root));instance=RequireHeadless(accounts,grant);var channel=HeadlessChannel(accounts,instance,grant,false);var rows=OwnedReceipts(channel);
                 RequireHeadless(new AccountService(Path.GetDirectoryName(store.Root)),grant);
-                return Json.Read<object>(Json.Write(new{pinnedThreads=new object[0],threads=rows.OrderByDescending(row=>row.UpdatedUtc,StringComparer.Ordinal).Take(ThreadLimit).Select(row=>new{threadId=row.ThreadId,title=WebhookChats.Safe(row.Title,120),status=row.State,updatedAt=row.UpdatedUtc}).ToArray()}));
+                return ReceiptList(rows);
             }
         }
         private object HeadlessRead(PortalInstanceGrant grant,string thread)
         {
-            var accounts=new AccountService(Path.GetDirectoryName(store.Root));var instance=RequireHeadless(accounts,grant);
+            var accounts=new AccountService(Path.GetDirectoryName(store.Root));var instance=Resolve(accounts,grant);
+            if(DesktopMetadataOwner(dependencies.Runtime(accounts,instance)))return HeadlessDesktopRead(accounts,instance,grant,thread);
+            instance=RequireHeadless(accounts,grant);
             using(new InstanceLease(InstancePaths.Folder(accounts.Vault.Root,instance.Id)))using(var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(15))){
                 accounts=new AccountService(Path.GetDirectoryName(store.Root));instance=RequireHeadless(accounts,grant);var channel=HeadlessChannel(accounts,instance,grant,true);
                 HeadlessRelayTransport.RequireOwned(store,channel,thread);

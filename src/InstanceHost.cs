@@ -44,12 +44,17 @@ namespace Creezio.Switcher
                 StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8,WorkingDirectory=InstancePaths.Folder(request.Root,request.InstanceId)
             };
             foreach(string key in start.EnvironmentVariables.Keys.Cast<string>().ToArray()) {
-                if(new[]{"CODEX_","OPENAI_","CHATGPT_","ELECTRON_","OAI_"}.Any(prefix=>key.StartsWith(prefix,StringComparison.OrdinalIgnoreCase)) || key.Equals("NODE_OPTIONS",StringComparison.OrdinalIgnoreCase))
+                if(new[]{"CODEX_","OPENAI_","CHATGPT_","ELECTRON_","OAI_","CREEZIO_DESKTOP_BRIDGE_"}.Any(prefix=>key.StartsWith(prefix,StringComparison.OrdinalIgnoreCase)) || key.Equals("NODE_OPTIONS",StringComparison.OrdinalIgnoreCase))
                     start.EnvironmentVariables.Remove(key);
             }
             start.EnvironmentVariables["CODEX_HOME"]=home;
             start.EnvironmentVariables["CODEX_SQLITE_HOME"]=home;
             start.EnvironmentVariables["CODEX_ELECTRON_USER_DATA_PATH"]=ui;
+            if(!String.IsNullOrEmpty(request.MetadataBridgeExecutable)||!String.IsNullOrEmpty(request.NativeCodexExecutable)){
+                if(String.IsNullOrEmpty(request.AccountKey)||!InstanceRules.ValidId(request.LaunchId)||String.IsNullOrEmpty(request.MetadataBridgeExecutable)||String.IsNullOrEmpty(request.NativeCodexExecutable)||!Path.IsPathRooted(request.MetadataBridgeExecutable)||!Path.IsPathRooted(request.NativeCodexExecutable)||!String.Equals(Path.GetFileName(request.MetadataBridgeExecutable),"SwitcherCodexBridge.exe",StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException("La passerelle de cette instance n'est pas liee a son lancement.");
+                start.EnvironmentVariables["CODEX_CLI_PATH"]=request.MetadataBridgeExecutable;
+                start.EnvironmentVariables["CREEZIO_DESKTOP_BRIDGE_LAUNCH_PATH"]=Path.Combine(InstancePaths.Folder(request.Root,request.InstanceId),"launch.json");
+            }
             return start;
         }
         // A second Electron activation reopens the existing profile through its single-instance lock.

@@ -67,6 +67,27 @@ namespace Creezio.Switcher.Desktop
             current.Capabilities.CanWriteGoal=false;current.Capabilities.GoalIssue="Recette : objectif natif indisponible.";await window.Refresh();
             assert(!window.SaveGoalButton.IsEnabled&&!window.ClearGoalButton.IsEnabled&&window.NewScheduleButton.IsEnabled,"objectif : indisponibilité native désactive seulement ses mutations, planification reste indépendante");
             window.Close();
+
+            var ownerView=new ConversationUiSnapshot{InstanceId=instance,ChatId=thread,ThreadId=thread,Capabilities=new ConversationUiCapabilities{CanReadGoal=true,CanWriteGoal=false,CanManageSchedules=true,TimeZoneId="Romance Standard Time",GoalIssue="Recette : propriétaire natif temporairement indisponible."}};
+            ConversationUiSnapshot OwnerCopy()=>SkillCatalogUiService.Convert<ConversationUiSnapshot>(ownerView);
+            int ownerWrites=0;var ownerBodies=new List<Dictionary<string,object>>();
+            var ownerService=new ConversationManagementUiService{
+                Read=(id,chat)=>Task.FromResult(OwnerCopy()),
+                Goal=(id,chat,key,body)=>{ownerWrites++;ownerBodies.Add(Json.Read<Dictionary<string,object>>(Json.Write(body)));if(ownerView.Goal==null)ownerView.Goal=new GoalUiValue{Objective="Objectif depuis l’instance ouverte",Status="paused",TokenBudget=1000,Version=revision};else{ownerView.Goal.TokenBudget=2000;ownerView.Goal.Version=nextRevision;}return Task.FromResult(OwnerCopy());}
+            };
+            var ownerWindow=new ConversationManagementWindow(context,shell,instance,thread,ownerService){Confirm=message=>true};await ownerWindow.Refresh();
+            assert(!ownerWindow.Objective.IsEnabled&&!ownerWindow.SaveGoalButton.IsEnabled&&ownerWindow.GoalSummaryText==ownerView.Capabilities.GoalIssue,"objectif : refus du propriétaire natif affiché exactement sans imposer de fermer l’instance");
+            ownerView.Capabilities.CanWriteGoal=true;ownerView.Capabilities.GoalIssue="";await ownerWindow.Refresh();
+            assert(ownerWindow.Objective.IsEnabled&&Equals(ownerWindow.SaveGoalButton.Content,"Créer l’objectif")&&ownerWindow.GoalSummaryText=="Aucun objectif enregistré.","objectif : capacité native rétablie active la création et le motif vide ne masque pas le résumé");
+            ownerWindow.Objective.Text="Objectif depuis l’instance ouverte";ownerWindow.GoalStatus.SelectedValue="paused";ownerWindow.Budget.Text="1000";Click(ownerWindow.SaveGoalButton);await Until(()=>ownerWrites==1&&ownerWindow.ClearGoalButton.IsEnabled);
+            assert(Json.Str(ownerBodies[0]["expectedVersion"])==""&&Json.Str(ownerBodies[0]["objective"])==ownerView.Goal.Objective&&Equals(ownerWindow.SaveGoalButton.Content,"Enregistrer l’objectif")&&ownerWindow.GoalSummaryText.Contains("0 jetons utilisés"),"objectif : création conserve le reçu natif et affiche l’utilisation confirmée par le propriétaire");
+            ownerWindow.Budget.Text="2000";ownerView.Capabilities.CanWriteGoal=false;ownerView.Capabilities.GoalIssue="Recette : propriétaire changé, actualisez avant de reprendre.";await ownerWindow.Refresh();
+            assert(ownerWindow.Budget.Text=="2000"&&!ownerWindow.SaveGoalButton.IsEnabled&&ownerWindow.GoalSummaryText==ownerView.Capabilities.GoalIssue&&ownerWrites==1,"objectif : changement de propriétaire conserve le brouillon sans envoyer une seconde mutation");
+            ownerView.Capabilities.CanWriteGoal=true;ownerView.Capabilities.GoalIssue="";await ownerWindow.Refresh();
+            assert(ownerWindow.Budget.Text=="2000"&&ownerWindow.SaveGoalButton.IsEnabled,"objectif : actualisation d’une capacité retrouvée conserve le budget à enregistrer");
+            Click(ownerWindow.SaveGoalButton);await Until(()=>ownerWrites==2&&ownerWindow.RefreshButton.IsEnabled);
+            assert(!ownerBodies[1].ContainsKey("objective")&&Json.Str(ownerBodies[1]["expectedVersion"])==revision&&Convert.ToInt64(ownerBodies[1]["tokenBudget"])==2000,"objectif : modification via le propriétaire garde le texte et la version native lus");
+            ownerWindow.Close();
         }
     }
 }

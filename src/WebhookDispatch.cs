@@ -11,6 +11,10 @@ namespace Creezio.Switcher
     // configured, frozen route can select an account, workspace and chat.
     internal static class WebhookDispatch
     {
+        internal static void RequireExecutionMode(WebhookRoute route,InstanceState state)
+        {
+            if(route.Access=="headless"&&(state==null||state.Running||state.Phase=="unknown"||state.Phase=="starting"||state.Phase=="stopping"))throw new InvalidOperationException("Cette entree autorise les envois sans fenetre. La lecture et les objectifs restent disponibles pendant l'ouverture de Codex ; aucun envoi n'est bascule vers sa fenetre.");
+        }
         private static void VerifyBinding(RelayStore store,WebhookRoute route)
         {
             var accounts=new AccountService(Path.GetDirectoryName(store.Root));
@@ -18,13 +22,14 @@ namespace Creezio.Switcher
             if(instance==null||instance.AccountKey!=route.AccountKey||!RelayStore.SamePath(accounts.Instances.Home(instance),route.Home))throw new InvalidOperationException("L'association compte-instance de cette route a change. Creez une nouvelle demande apres verification de la route.");
             NamedInstances.VerifyAccount(accounts,instance);RelayStore.WorkspacePath(route.Workspace);
             if(route.Access=="headless"&&!instance.HeadlessEnabled)throw new InvalidOperationException("Le mode sans fenetre n'est pas autorise pour cette instance.");
+            RequireExecutionMode(route,accounts.Instances.Runtime.Probe(instance));
         }
         private static async Task<RelayChannel> Connect(RelayStore store,WebhookRoute route,CancellationToken token)
         {
             VerifyBinding(store,route);var accounts=new AccountService(Path.GetDirectoryName(store.Root));
             var instance=NamedInstances.Resolve(accounts,route.InstanceId);
-            // An open desktop always remains the native destination. Closed
-            // instances use the existing owned headless runtime only if allowed.
+            // Execution retains the granted mode. Metadata reads through an
+            // open desktop do not authorize sending a headless job to its GUI.
             return await NamedInstances.Connect(store,accounts,instance,route.Workspace,token,route.ThreadId,route.Access=="headless");
         }
         private static async Task EnsureEngine(RelayStore store,CancellationToken token)

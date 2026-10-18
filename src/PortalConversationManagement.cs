@@ -13,6 +13,9 @@ namespace Creezio.Switcher
     // account, executable, permission profile, route revision or native owner.
     internal sealed class PortalConversationTarget
     {
+        // Ephemeral transport choice only. It is not serialized into durable
+        // schedule ownership or used to authorize a later replay after restart.
+        internal bool GoalUsesDesktop;
         public bool Local {get;set;}
         public string RouteId {get;set;} public string Actor {get;set;} public string InstanceId {get;set;}
         public string ChatId {get;set;} public string ThreadId {get;set;} public string AccountKey {get;set;}
@@ -100,13 +103,8 @@ namespace Creezio.Switcher
                 var channel=store.Channels().SingleOrDefault(c=>c.Enabled&&c.InstanceId==instanceId&&AgentProviders.Kind(c)=="codex-headless"&&c.AccountKey==grant.AccountKey&&Same(c.Home,grant.Home)&&Same(c.Workspace,workspace));
                 if(channel==null)throw new WebhookException(409,"Cette discussion sans fenetre n'appartient pas a la connexion autorisee.");HeadlessRelayTransport.RequireOwned(store,channel,thread);
             }
-            string issue=null;var state=accounts.Instances.Runtime.Probe(instance);
-            if(instance.IsLocal)issue="La gestion native des objectifs de la session habituelle exige un canal proprietaire compatible.";
-            else if(state==null||state.Running||state.Phase=="unknown"||state.Phase=="starting"||state.Phase=="stopping")issue="Fermez cette instance Codex avant de gerer son objectif natif ; aucun second moteur n'est demarre.";
-            else if(String.IsNullOrWhiteSpace(accounts.Settings.CodexExecutable)||!File.Exists(accounts.Settings.CodexExecutable))issue="L'executable Codex natif n'est pas disponible.";
-            var runtime=store.ReadRecord<HeadlessRuntimeState>(HeadlessRelayTransport.RuntimeName(grant.AccountKey));
-            if(runtime.Running&&Same(runtime.Home,grant.Home)&&DesktopRuntime.SameProcess(runtime.WorkerPid,runtime.WorkerStarted))issue="Un moteur Codex utilise deja ce profil. Attendez son arret avant de gerer l'objectif.";
-            return new PortalConversationTarget{RouteId=route,Actor=actor,InstanceId=instanceId,ChatId=chatId,ThreadId=thread,AccountKey=grant.AccountKey,Home=grant.Home,Workspace=workspace,Access=grant.Access,Executable=accounts.Settings.CodexExecutable,InstanceFolder=instance.IsLocal?null:InstancePaths.Folder(root,instanceId),GoalIssue=issue,GrantRevision=grant.AuthorizationRevision>0?grant.AuthorizationRevision:config.Revision,RouteRevision=selected.Revision,PolicyRevision=policy.Revision,SiteOrigin=policy.SiteOrigin,Model=grant.Model,ReasoningEffort=grant.ReasoningEffort,PermissionProfile=grant.PermissionProfile};
+            var state=accounts.Instances.Runtime.Probe(instance);
+            return new PortalConversationTarget{GoalUsesDesktop=DesktopOwner(state),RouteId=route,Actor=actor,InstanceId=instanceId,ChatId=chatId,ThreadId=thread,AccountKey=grant.AccountKey,Home=grant.Home,Workspace=workspace,Access=grant.Access,Executable=accounts.Settings.CodexExecutable,InstanceFolder=instance.IsLocal?null:InstancePaths.Folder(root,instanceId),GoalIssue=GoalIssue(accounts,instance,state),GrantRevision=grant.AuthorizationRevision>0?grant.AuthorizationRevision:config.Revision,RouteRevision=selected.Revision,PolicyRevision=policy.Revision,SiteOrigin=policy.SiteOrigin,Model=grant.Model,ReasoningEffort=grant.ReasoningEffort,PermissionProfile=grant.PermissionProfile};
         }
         private PortalConversationTarget ResolveLocal(string instanceId,string chatId)
         {
@@ -114,9 +112,22 @@ namespace Creezio.Switcher
             if(dependencies.Resolve!=null){var supplied=dependencies.Resolve(null,null,instanceId,chatId);if(!supplied.Local)throw new InvalidOperationException("Le transport local de test ne porte pas son scope local.");return supplied;}
             var accounts=new AccountService(root);var instance=NamedInstances.Resolve(accounts,instanceId);NamedInstances.VerifyAccount(accounts,instance);
             string home=accounts.Instances.Home(instance),workspace=WebhookChats.NativeWorkspace(home,chatId);var state=accounts.Instances.Runtime.Probe(instance);
-            string issue=instance.IsLocal?"Le canal proprietaire de la session habituelle ne permet pas encore de gerer les objectifs.":state==null||state.Running||state.Phase=="unknown"||state.Phase=="starting"||state.Phase=="stopping"?"Fermez cette instance avant de gerer son objectif natif ; aucun second moteur n'est demarre.":!File.Exists(accounts.Settings.CodexExecutable)?"L'executable natif Codex est indisponible.":null;
-            var runtime=store.ReadRecord<HeadlessRuntimeState>(HeadlessRelayTransport.RuntimeName(instance.AccountKey));if(runtime.Running&&Same(runtime.Home,home)&&DesktopRuntime.SameProcess(runtime.WorkerPid,runtime.WorkerStarted))issue="Le moteur de cette instance est encore actif. Attendez son arret pour gerer l'objectif.";
-            return new PortalConversationTarget{Local=true,InstanceId=instanceId,ChatId=chatId,ThreadId=chatId,AccountKey=instance.AccountKey,Home=home,Workspace=workspace,Access="local",Executable=accounts.Settings.CodexExecutable,InstanceFolder=instance.IsLocal?null:InstancePaths.Folder(root,instanceId),GoalIssue=issue,PermissionProfile="inherit"};
+            return new PortalConversationTarget{GoalUsesDesktop=DesktopOwner(state),Local=true,InstanceId=instanceId,ChatId=chatId,ThreadId=chatId,AccountKey=instance.AccountKey,Home=home,Workspace=workspace,Access="local",Executable=accounts.Settings.CodexExecutable,InstanceFolder=instance.IsLocal?null:InstancePaths.Folder(root,instanceId),GoalIssue=GoalIssue(accounts,instance,state),PermissionProfile="inherit"};
+        }
+        private static bool DesktopOwner(InstanceState state)
+        {return state!=null&&state.Running&&state.DesktopPid>0&&state.DesktopStartTicks>0;}
+        private string GoalIssue(AccountService accounts,DesktopInstance instance,InstanceState state,bool ownsInstanceLease=false)
+        {
+            if(instance.IsLocal)return "La session habituelle ne possede pas le pont d'objectifs d'un lancement gere par Switcher. Aucun autre moteur n'est demarre.";
+            var runtime=store.ReadRecord<HeadlessRuntimeState>(HeadlessRelayTransport.RuntimeName(instance.AccountKey));
+            if(runtime.Running&&Same(runtime.Home,accounts.Instances.Home(instance))&&DesktopRuntime.SameProcess(runtime.WorkerPid,runtime.WorkerStarted))return "Un moteur Codex utilise deja ce profil. Attendez son arret avant de gerer l'objectif.";
+            if(DesktopOwner(state))return DesktopGoalBridge.Issue(store,accounts,instance,state);
+            // Our own stopped-profile lease appears as 'starting' to Probe.
+            // Only that PID-less condition is ours; real hosts and unknown states
+            // remain closed to a second app-server.
+            bool ownStarting=ownsInstanceLease&&state!=null&&state.Phase=="starting"&&state.HostPid<=0&&state.HostStartTicks<=0&&state.DesktopPid<=0&&state.DesktopStartTicks<=0;
+            if(state==null||state.Phase=="unknown"||state.Phase=="stopping"||(!ownStarting&&(state.Running||state.Phase=="starting")))return "L'etat du proprietaire Codex n'est pas verifiable. Attendez la fin du lancement ou actualisez l'instance ; aucun autre moteur n'est demarre.";
+            return String.IsNullOrWhiteSpace(accounts.Settings.CodexExecutable)||!File.Exists(accounts.Settings.CodexExecutable)?"L'executable Codex natif n'est pas disponible.":null;
         }
         private void Verify(PortalConversationTarget target)
         {
@@ -153,18 +164,33 @@ namespace Creezio.Switcher
             var data=new{objective=objective,status=status,tokenBudget=budget,tokensUsed=Number(Json.Get(goal,"tokensUsed"),"Utilisation native",0,9007199254740991L),timeUsedSeconds=Number(Json.Get(goal,"timeUsedSeconds"),"Duree native",0,9007199254740991L),createdAt=Number(Json.Get(goal,"createdAt"),"Date native",0,9007199254740991L),updatedAt=Number(Json.Get(goal,"updatedAt"),"Date native",0,9007199254740991L)};
             var result=Json.Obj(Json.Read<object>(Json.Write(data)));result["version"]=Webhooks.Hash(Json.Write(data));return result;
         }
+        internal static string NativeGoalVersion(object reply,string thread)
+        {return Json.Str(Json.Get(GoalProjection(reply,thread),"version"));}
+        private object ExecuteGoal(PortalConversationTarget target,IThreadProfileRpc rpc,CancellationToken token,Func<IThreadProfileRpc,CancellationToken,object> action)
+        {
+            var metadata=rpc.Call("thread/read",new{threadId=target.ThreadId,includeTurns=false},token).GetAwaiter().GetResult();
+            DirectMessages.RequireThread(metadata,target.ThreadId);
+            if(!Same(RolloutSnapshot.NativePath(Json.Str(Json.Get(Json.Get(metadata,"thread"),"cwd"))),target.Workspace))throw new WebhookException(409,"Le dossier natif de cette discussion a change.");
+            var result=action(rpc,token);Verify(target);return result;
+        }
         private object WithGoalRpc(PortalConversationTarget target,Func<IThreadProfileRpc,CancellationToken,object> action)
         {
             if(target.GoalIssue!=null)throw new WebhookException(409,target.GoalIssue);
-            using(var stop=new CancellationTokenSource(TimeSpan.FromSeconds(20)))using(new InstanceLease(target.InstanceFolder))
-            using(HeadlessProcessWire.AcquireProfileLease(target.Home,stop.Token)){
-                Verify(target);
-                if(dependencies.Resolve==null){var current=target.Local?ResolveLocal(target.InstanceId,target.ChatId):Resolve(target.RouteId,target.Actor,target.InstanceId,target.ChatId);if(current.GoalIssue!=null||!Same(current.Executable,target.Executable))throw new WebhookException(409,current.GoalIssue??"L'executable natif de cette instance a change.");}
-                using(var rpc=dependencies.GoalConnect==null?new ThreadProfileRpc(target.Executable,target.Home):dependencies.GoalConnect(target)){
-                    var metadata=rpc.Call("thread/read",new{threadId=target.ThreadId,includeTurns=false},stop.Token).GetAwaiter().GetResult();
-                    DirectMessages.RequireThread(metadata,target.ThreadId);
-                    if(!Same(RolloutSnapshot.NativePath(Json.Str(Json.Get(Json.Get(metadata,"thread"),"cwd"))),target.Workspace))throw new WebhookException(409,"Le dossier natif de cette discussion a change.");
-                    var result=action(rpc,stop.Token);Verify(target);return result;
+            using(var stop=new CancellationTokenSource(TimeSpan.FromSeconds(20))){
+                if(target.GoalUsesDesktop){
+                    Verify(target);
+                    using(var rpc=dependencies.GoalConnect==null?DesktopGoalBridge.Open(store,target,()=>Verify(target)):dependencies.GoalConnect(target))return ExecuteGoal(target,rpc,stop.Token,action);
+                }
+                using(new InstanceLease(target.InstanceFolder))
+                using(HeadlessProcessWire.AcquireProfileLease(target.Home,stop.Token)){
+                    Verify(target);
+                    if(dependencies.Resolve==null){
+                        var accounts=new AccountService(root);var instance=NamedInstances.Resolve(accounts,target.InstanceId);NamedInstances.VerifyAccount(accounts,instance);
+                        var state=accounts.Instances.Runtime.Probe(instance);string issue=GoalIssue(accounts,instance,state,true);
+                        if(DesktopOwner(state))issue="Cette instance vient d'etre ouverte. Actualisez son etat pour utiliser son proprietaire natif.";
+                        if(issue!=null||!Same(accounts.Settings.CodexExecutable,target.Executable))throw new WebhookException(409,issue??"L'executable natif de cette instance a change.");
+                    }
+                    using(var rpc=dependencies.GoalConnect==null?new ThreadProfileRpc(target.Executable,target.Home):dependencies.GoalConnect(target))return ExecuteGoal(target,rpc,stop.Token,action);
                 }
             }
         }

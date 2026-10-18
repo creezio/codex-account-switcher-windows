@@ -13,11 +13,12 @@ internal static class PortalTests
     private static void Assert(bool value,string message){if(!value)throw new Exception(message);}
     private static void Reject(int code,Action action){try{action();}catch(WebhookException e){Assert(e.StatusCode==code,"Expected "+code+", got "+e.StatusCode);return;}throw new Exception("Missing rejection "+code);}
     private static void Invalid(Action action){try{action();}catch(InvalidOperationException){return;}throw new Exception("Expected invalid operation");}
-    private sealed class Native : IPortalNative
+    private sealed class Native : IPortalNative,IPortalNativeAdmission
     {
-        internal int Reads,Lists,Verifications;internal bool WrongAccount,Busy,WrongThread;
+        internal int Reads,Lists,Verifications;internal bool WrongAccount,Busy,WrongThread,SendUnavailable;
         internal string Thread,Title="Existing fictional conversation";
         public void Verify(PortalInstanceGrant grant){Verifications++;if(WrongAccount)throw new InvalidOperationException("Account changed");}
+        public void VerifySend(PortalInstanceGrant grant){if(SendUnavailable)throw new WebhookException(409,"Headless sends unavailable while desktop is open");}
         public object Describe(PortalInstanceGrant grant){return new{id=grant.InstanceId,name="Fixture instance",account="fixture@example.test",online=true,desktopOpen=true,executionMode="desktop",issue=(string)null};}
         public object List(PortalInstanceGrant grant){Lists++;return Json.Read<object>(Json.Write(new{pinnedThreads=new object[0],threads=new[]{new{threadId=Thread,title=Title,source="codex",status="idle"}}}));}
         public object Read(PortalInstanceGrant grant,string thread){Reads++;return Json.Read<object>(Json.Write(new{thread=new{id=WrongThread?Guid.NewGuid().ToString("D"):thread,title=Title,status=new{type=Busy?"active":"idle"}},turns=new object[0]}));}
@@ -43,6 +44,15 @@ internal static class PortalTests
     }
     internal static void RunAll(Action<string,Action> check,string root)
     {
+        check("portal metadata reads do not admit a new message when execution mode is unavailable",()=>{
+            var f=new Fixture(root,"metadata-not-send");f.Config.Instances[0].Access="headless";f.Config=Portal.SaveConfig(f.Store,f.Config);f.Grant=f.Config.Instances[0];f.Native.SendUnavailable=true;
+            Portal.ListChats(f.Store,f.Route.Slug,f.Key,f.Grant.InstanceId,null,f.Native);f.View();
+            Assert(f.Native.Lists>0&&f.Native.Reads>0,"Read-only metadata fixture did not remain available");
+            Reject(409,()=>f.New());Reject(409,()=>f.Send());
+            Assert(Webhooks.Jobs(f.Store).Length==0&&f.Store.Messages().Count==0,"Metadata availability widened admission or started native work");
+            f.Native.SendUnavailable=false;var accepted=f.New("stable");f.Native.SendUnavailable=true;
+            Assert(f.New("stable").Id==accepted.Id&&Webhooks.Jobs(f.Store).Length==1,"Reading an existing idempotent receipt admitted a new job");
+        });
         check("portal composer options and uploads stay immutable across admission and retries",()=>{
             var f=new Fixture(root,"composer-admission");
             var uploaded=PortalAttachments.Upload(f.Store,f.Route,f.Grant,"file",Json.Write(new{name="brief.txt",mimeType="text/plain",contentBase64=Convert.ToBase64String(Encoding.UTF8.GetBytes("Fictional attachment only"))}));

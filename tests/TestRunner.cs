@@ -32,7 +32,7 @@ internal static class TestRunner
             string a=FakeAuth("alice","workspace-a"),b=FakeAuth("bob","workspace-b");
             if(args.Length==2&&args[1]=="--plugins"){PortalPluginTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
             if(args.Length==2&&args[1]=="--skills"){PortalSkillTests.RunAll(Check,sandbox);PortalManagementHttpTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
-            if(args.Length==2&&args[1]=="--management"){PortalSkillTests.RunAll(Check,sandbox);PortalConversationManagementTests.RunAll(Check,sandbox);PortalManagementHttpTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
+            if(args.Length==2&&args[1]=="--management"){PortalSkillTests.RunAll(Check,sandbox);PortalConversationManagementTests.RunAll(Check,sandbox);DesktopGoalProxyTests.RunAll(Check,sandbox);PortalNativeHeadlessTests.RunAll(Check,sandbox);PortalManagementHttpTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
             if(args.Length==2&&args[1]=="--updates"){SwitcherUpdateTests.RunAll(Check,sandbox);SwitcherLifecycleTests.RunAll(Check,sandbox);SwitcherInstallationTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
             if(args.Length==2&&args[1]=="--lifecycle"){SwitcherLifecycleTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
             if(args.Length==2&&args[1]=="--installation"){SwitcherInstallationTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
@@ -145,7 +145,7 @@ internal static class TestRunner
             SwitcherInstallationTests.RunAll(Check,sandbox);
             VaultConcurrencyTests.RunAll(Check,sandbox);PortalAdministrationTests.RunAll(Check,sandbox);PortalEnrollmentTests.RunAll(Check,sandbox);PortalNativeHeadlessTests.RunAll(Check,sandbox);
             PortalPluginTests.RunAll(Check,sandbox);
-            PortalSkillTests.RunAll(Check,sandbox);PortalConversationManagementTests.RunAll(Check,sandbox);PortalManagementHttpTests.RunAll(Check,sandbox);
+            PortalSkillTests.RunAll(Check,sandbox);PortalConversationManagementTests.RunAll(Check,sandbox);DesktopGoalProxyTests.RunAll(Check,sandbox);PortalManagementHttpTests.RunAll(Check,sandbox);
             ProductTests.RunAll(Check,sandbox);
             ConsoleTests.RunAll(Check,sandbox);
             RemoteTests.RunAll(Check,sandbox);

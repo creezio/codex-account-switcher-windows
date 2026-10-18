@@ -14,7 +14,7 @@ function Assert-PlainBuildPath([string]$Path) {
 
 function Assert-IncompleteApplicationDirectory([string]$Directory) {
   if(Test-Path -LiteralPath (Join-Path $Directory 'RUNTIME-SHARED.json')){throw 'Cette livraison possède déjà un runtime partagé ; aucune reprise autorisée.'}
-  $applicationNames=@('CodexAccountSwitcher.exe','CodexAccountSwitcher.exe.config','CodexAccountSwitcher.dll','CodexAccountSwitcher.deps.json','CodexAccountSwitcher.runtimeconfig.json','CodexAccountSwitcher.pdb','CreezioRelay.exe','CreezioRelay.exe.config','SwitcherLauncher.exe','SwitcherLauncher.exe.config')
+  $applicationNames=@('CodexAccountSwitcher.exe','CodexAccountSwitcher.exe.config','CodexAccountSwitcher.dll','CodexAccountSwitcher.deps.json','CodexAccountSwitcher.runtimeconfig.json','CodexAccountSwitcher.pdb','CreezioRelay.exe','CreezioRelay.exe.config','SwitcherLauncher.exe','SwitcherLauncher.exe.config','SwitcherCodexBridge.exe','SwitcherCodexBridge.exe.config')
   $pending=[Collections.Generic.Stack[string]]::new()
   $pending.Push($Directory)
   while($pending.Count){
@@ -124,7 +124,7 @@ if($LASTEXITCODE -ne 0){throw 'Restauration hors ligne impossible ; aucune insta
 # Publish app files first into a fresh directory. Runtime hardlinks do not exist yet.
 & $dotnet publish $project -c Release -r win-x64 --self-contained true --no-restore -o $target ("-p:RuntimeFrameworkVersion="+$RuntimeVersion) -p:CopyLocalLockFileAssemblies=false -p:SkipCopyUnchangedFiles=true ("-p:CustomAfterMicrosoftCommonTargets="+$temporaryTargets) ("-p:SwitcherRuntimeInventory="+$inventory)
 if($LASTEXITCODE -ne 0){throw 'Publication applicative échouée ; aucun lien partagé créé.'}
-foreach($required in @('CodexAccountSwitcher.exe','CodexAccountSwitcher.dll','CodexAccountSwitcher.deps.json','CodexAccountSwitcher.runtimeconfig.json','SwitcherLauncher.exe','SwitcherLauncher.exe.config')){
+foreach($required in @('CodexAccountSwitcher.exe','CodexAccountSwitcher.dll','CodexAccountSwitcher.deps.json','CodexAccountSwitcher.runtimeconfig.json','SwitcherLauncher.exe','SwitcherLauncher.exe.config','SwitcherCodexBridge.exe','SwitcherCodexBridge.exe.config')){
   if(-not(Test-Path -LiteralPath (Join-Path $target $required) -PathType Leaf)){throw "Publication applicative incomplète : $required"}
 }
 $newConfig=Get-Content -LiteralPath (Join-Path $target 'CodexAccountSwitcher.runtimeconfig.json') -Raw | ConvertFrom-Json
@@ -133,14 +133,14 @@ foreach($framework in @('Microsoft.NETCore.App','Microsoft.WindowsDesktop.App'))
 }
 # Match exactly the runtime variants selected by this SDK, not similarly named DLLs.
 $runtimeFiles=@{}
-$applicationFiles=@('CodexAccountSwitcher.exe','CodexAccountSwitcher.dll','CodexAccountSwitcher.deps.json','CodexAccountSwitcher.runtimeconfig.json','CodexAccountSwitcher.pdb')
+$applicationFiles=@('CodexAccountSwitcher.exe','CodexAccountSwitcher.dll','CodexAccountSwitcher.deps.json','CodexAccountSwitcher.runtimeconfig.json','CodexAccountSwitcher.pdb','SwitcherCodexBridge.exe','SwitcherCodexBridge.exe.config')
 foreach($line in Get-Content -LiteralPath $inventory){
   $fields=$line.Split('|')
   if($fields.Length -ne 2){throw 'Inventaire de publication invalide.'}
   $file=[IO.Path]::GetFullPath($fields[0]); $relative=$fields[1].Replace('/','\')
   Assert-PlainBuildPath $file
   if($relative -in $applicationFiles){continue}
-  if([IO.Path]::IsPathRooted($relative) -or $relative.Split([char]92) -contains '..' -or $relative -match '^(CodexAccountSwitcher|CreezioRelay)(\.|\\)'){throw 'Chemin de runtime non autorise.'}
+  if([IO.Path]::IsPathRooted($relative) -or $relative.Split([char]92) -contains '..' -or $relative -match '^(CodexAccountSwitcher|CreezioRelay|SwitcherLauncher|SwitcherCodexBridge)(\.|\\)'){throw 'Chemin de runtime non autorise.'}
   if(-not($packRoots | Where-Object {$file.StartsWith($_,[StringComparison]::OrdinalIgnoreCase)})){throw "Fichier hors packs runtime officiels en cache : $relative"}
   if([IO.Path]::GetExtension($file) -notin @('.dll','.exe')){throw "Type de runtime inattendu : $relative"}
   $oldFile=Join-Path $source $relative

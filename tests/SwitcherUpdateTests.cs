@@ -49,7 +49,7 @@ internal static class SwitcherUpdateTests
         {
             Root=Path.Combine(sandbox,"u"+Guid.NewGuid().ToString("N").Substring(0,5));Install=Path.Combine(Root,"install");Current=Path.Combine(Root,"current");Directory.CreateDirectory(Current);Version=FileVersionInfo.GetVersionInfo(typeof(SwitcherUpdateTests).Assembly.Location).ProductVersion;ArchiveName="CodexAccountSwitcher-"+Version+"-windows-x64.zip";ArchiveUrl="https://github.com/creezio/codex-account-switcher-windows/releases/download/v"+Version+"/"+ArchiveName;SumsUrl="https://github.com/creezio/codex-account-switcher-windows/releases/download/v"+Version+"/SHA256SUMS-"+Version+".txt";Client=new HttpClient(Handler,false);
             byte[] product=File.ReadAllBytes(typeof(SwitcherUpdateTests).Assembly.Location);Files=new Dictionary<string,byte[]>{{"CodexAccountSwitcher.exe",Encoding.UTF8.GetBytes("Fictional native apphost never executed")},{"CodexAccountSwitcher.dll",product},{"CodexAccountSwitcher.deps.json",Encoding.UTF8.GetBytes("{}")},{"CodexAccountSwitcher.runtimeconfig.json",Encoding.UTF8.GetBytes("{}")},{"CreezioRelay.exe",product},{"CreezioRelay.exe.config",Encoding.UTF8.GetBytes("<configuration/>")},{"coreclr.dll",new byte[]{1,2,3}},{"hostfxr.dll",new byte[]{4,5,6}},{"hostpolicy.dll",new byte[]{7,8,9}},{"PresentationFramework.dll",new byte[]{10,11,12}},{"plugins/creezio-relay/.codex-plugin/plugin.json",Encoding.UTF8.GetBytes("{}")},{"plugins/creezio-relay/.mcp.json",Encoding.UTF8.GetBytes("{}")},{"plugins/creezio-relay/ui/viewer.html",Encoding.UTF8.GetBytes("<html>Fictional</html>")}};
-            Files["SwitcherLauncher.exe"]=Encoding.UTF8.GetBytes("Fictional stable launcher never executed");Files["SwitcherLauncher.exe.config"]=Encoding.UTF8.GetBytes("<configuration/>");Build();
+            Files["SwitcherLauncher.exe"]=Encoding.UTF8.GetBytes("Fictional stable launcher never executed");Files["SwitcherLauncher.exe.config"]=Encoding.UTF8.GetBytes("<configuration/>");Files["SwitcherCodexBridge.exe"]=product;Files["SwitcherCodexBridge.exe.config"]=Encoding.UTF8.GetBytes("<configuration/>");Build();
         }
         internal void Build(Action<ZipArchive> extra=null,Action<SwitcherUpdatePackages.Manifest> changeManifest=null,string manifestText=null,bool includeManifest=true)
         {
@@ -92,6 +92,18 @@ internal static class SwitcherUpdateTests
                 Reject(()=>f.Stage());Assert(!Directory.Exists(Path.Combine(f.Install,"versions",f.Release.Version)),"Invalid package was exposed as a version");
             }
             foreach(string missing in new[]{"SwitcherLauncher.exe","SwitcherLauncher.exe.config"})using(var f=new Fixture(sandbox)){f.Files.Remove(missing);f.Build();Reject(()=>f.Stage());Assert(!Directory.Exists(Path.Combine(f.Install,"versions",f.Version)),"Missing stable launcher file was accepted");}
+        });
+        check("updater preserves legacy metadata but requires the Codex bridge from beta three",()=>{
+            using(var f=new Fixture(sandbox)){
+                var legacy=Json.Read<SwitcherUpdatePackages.Manifest>(Json.Write(f.Manifest));legacy.files.RemoveAll(file=>file.path=="SwitcherCodexBridge.exe"||file.path=="SwitcherCodexBridge.exe.config");legacy.version="0.29.0-beta.2";
+                var accepted=SwitcherUpdatePackages.ReadManifest(Encoding.UTF8.GetBytes(Json.Write(legacy)),legacy.version);Assert(accepted.healthProtocol==1&&!accepted.files.Any(file=>file.path=="SwitcherCodexBridge.exe"),"A legacy health-protocol-one package now requires the new bridge");
+                foreach(string version in new[]{"0.29.0-beta.3","0.29.0-beta.10","0.29.0","0.30.0-alpha.1"}){legacy.version=version;Reject(()=>SwitcherUpdatePackages.ReadManifest(Encoding.UTF8.GetBytes(Json.Write(legacy)),version));}
+            }
+        });
+        check("updater rejects missing or incorrectly versioned bridges before exposing a new version",()=>{
+            foreach(string missing in new[]{"SwitcherCodexBridge.exe","SwitcherCodexBridge.exe.config"})using(var f=new Fixture(sandbox)){f.Files.Remove(missing);f.Build();Reject(()=>f.Stage());Assert(!Directory.Exists(Path.Combine(f.Install,"versions",f.Version))&&!File.Exists(Path.Combine(f.Install,"current.json")),"Incomplete bridge package became available or active");}
+            using(var f=new Fixture(sandbox)){f.Files["SwitcherCodexBridge.exe"]=File.ReadAllBytes(typeof(Enumerable).Assembly.Location);f.Build();Reject(()=>f.Stage());Assert(!Directory.Exists(Path.Combine(f.Install,"versions",f.Version)),"A valid hash concealed a bridge from another product version");}
+            using(var f=new Fixture(sandbox)){string target=f.Stage();Assert(File.Exists(Path.Combine(target,"SwitcherCodexBridge.exe.config"))&&FileVersionInfo.GetVersionInfo(Path.Combine(target,"SwitcherCodexBridge.exe")).ProductVersion==f.Version,"The validated package omitted its correctly versioned bridge");}
         });
         check("updater rejects zip traversal alternate streams aliases duplicate entries and links",()=>{
             foreach(string entry in new[]{"../escape.txt","/absolute.txt","C:/outside.txt","plugins/a:stream","plugins/../escape","plugins/NUL.txt","plugins/trailing. ","PLUGINS/creezio-relay/ui/viewer.html","plugins\\bad.txt","plugins/creezio-relay/ui/viewer.html"})using(var f=new Fixture(sandbox)){f.Build(zip=>Fixture.Write(zip,entry,new byte[]{0}));Reject(()=>f.Stage());Assert(!File.Exists(Path.Combine(f.Root,"escape.txt")),"ZIP escaped staging root");}

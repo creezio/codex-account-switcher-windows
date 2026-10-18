@@ -39,6 +39,8 @@ namespace Creezio.Switcher
         public string ThreadId {get;set;}
         public string Title {get;set;}
     }
+    internal interface IPortalNativeAdmission
+    { void VerifySend(PortalInstanceGrant grant); }
     internal interface IPortalNative
     {
         object Describe(PortalInstanceGrant grant);
@@ -199,6 +201,7 @@ namespace Creezio.Switcher
                 var root=Webhooks.Authorize(store,slug,bearer);var config=RequireConfig(store,root);var grant=Grant(config,instanceId);native.Verify(grant);
                 string id=Webhooks.Hash(root.Id+"\nportal:"+instanceId+"\nchat:"+(chatId??"")+"\n"+idempotency).Substring(0,32),fingerprint=Webhooks.PayloadFingerprint(payload);
                 if(File.Exists(Path.Combine(store.Root,"webhook-job-"+id+".dpapi"))){var prior=Webhooks.Job(store,id);if(prior.Fingerprint!=fingerprint||prior.PortalInstanceId!=instanceId||prior.PortalChatId!=chatId)throw new WebhookException(409,"Cette cle d'idempotence designe deja un autre message.");return prior;}
+                var admission=native as IPortalNativeAdmission;if(admission!=null)admission.VerifySend(grant);
                 string thread=null,workspace=grant.Workspace;
                 if(chatId!=null){
                     if(NativeId(chatId)){var registration=Existing(store,root,config,grant,chatId,native,true);thread=registration.ThreadId;workspace=registration.Workspace;}
@@ -210,7 +213,7 @@ namespace Creezio.Switcher
                 if((root.PromptPrefix??"").Length+payload["prompt"].Length+payload["context"].Length+1024>24000)throw new WebhookException(413,"Le message et ses instructions depassent 24000 caracteres.");
                 var frozen=Copy(root);frozen.Id=Webhooks.ExecutionRouteId(root.Id,grant.InstanceId,options);frozen.SecretHash=null;frozen.InstanceId=grant.InstanceId;frozen.AccountKey=grant.AccountKey;frozen.Home=grant.Home;frozen.Workspace=workspace;frozen.ThreadId=thread;frozen.Access=grant.Access;frozen.Model=grant.Model;frozen.ReasoningEffort=grant.ReasoningEffort;frozen.PermissionProfile=grant.PermissionProfile;
                 if(options!=null){PortalAttachments.Require(store,root.Id,grant,options.Attachments);PortalAttachments.Claim(store,root.Id,grant,options.Attachments);}
-                var job=new WebhookJob{Id=id,RouteId=root.Id,PortalRevision=GrantRevision(config,grant),PortalInstanceId=grant.InstanceId,PortalChatId=chatId,ConversationId=chatId,ExternalId=idempotency,Title=payload["title"],Prompt=payload["prompt"],Context=payload["context"],Options=options,Fingerprint=fingerprint,State="queued",CreatedUtc=DateTime.UtcNow.ToString("o"),RouteSnapshot=frozen};ValidateJob(store,job);native.Verify(grant);Webhooks.SaveJob(store,job);return job;
+                var job=new WebhookJob{Id=id,RouteId=root.Id,PortalRevision=GrantRevision(config,grant),PortalInstanceId=grant.InstanceId,PortalChatId=chatId,ConversationId=chatId,ExternalId=idempotency,Title=payload["title"],Prompt=payload["prompt"],Context=payload["context"],Options=options,Fingerprint=fingerprint,State="queued",CreatedUtc=DateTime.UtcNow.ToString("o"),RouteSnapshot=frozen};ValidateJob(store,job);native.Verify(grant);if(admission!=null)admission.VerifySend(grant);Webhooks.SaveJob(store,job);return job;
             }
         }
         internal static void ValidateJob(RelayStore store,WebhookJob job)

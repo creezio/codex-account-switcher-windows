@@ -51,7 +51,7 @@ internal static class PortalConversationManagementTests
             if(!local)Store.WriteRecord("webhook-routes-v1.dpapi",new List<WebhookRoute>{new WebhookRoute{Id=Target.RouteId,Revision=Target.RouteRevision,Enabled=true,Workspace=workspace,Home=home,AccountKey=Target.AccountKey,InstanceId=Target.InstanceId}});
             NativeGoal=Shape(new{threadId=Target.ThreadId,objective="Fictional durable objective",status="paused",tokenBudget=(long?)50000,tokensUsed=17L,timeUsedSeconds=9L,createdAt=1L,updatedAt=2L});Native=new Rpc(this);
             Service=new PortalConversationManagement(Store,(route,actor)=>{Authorizations++;if(Revoked)throw new WebhookException(403,"Fictional authorization revoked");},new PortalConversationManagementDependencies{
-                Resolve=(route,actor,id,chat)=>{Assert(id==Target.InstanceId&&chat==Target.ChatId,"Remote selection was promoted");if(!local)Assert(route==Target.RouteId&&actor==Target.Actor,"Administration scope changed");return Json.Read<PortalConversationTarget>(Json.Write(Target));},
+                Resolve=(route,actor,id,chat)=>{Assert(id==Target.InstanceId&&chat==Target.ChatId,"Remote selection was promoted");if(!local)Assert(route==Target.RouteId&&actor==Target.Actor,"Administration scope changed");var copy=Json.Read<PortalConversationTarget>(Json.Write(Target));copy.GoalUsesDesktop=Target.GoalUsesDesktop;return copy;},
                 Verify=t=>{if(Revoked||Changed||t.GrantRevision!=Target.GrantRevision||t.RouteRevision!=Target.RouteRevision||t.PolicyRevision!=Target.PolicyRevision||t.SiteOrigin!=Target.SiteOrigin)throw new WebhookException(403,"Fictional pin revoked");Assert(t.Local==Local&&t.InstanceId==Target.InstanceId&&t.ThreadId==Target.ThreadId&&t.AccountKey==Target.AccountKey&&RelayStore.SamePath(t.Home,Target.Home)&&RelayStore.SamePath(t.Workspace,Target.Workspace),"Stored target pins changed");},
                 GoalConnect=t=>{Connects++;return Native;},UtcNow=()=>Clock,
                 Enqueue=(target,job,token)=>{
@@ -72,6 +72,8 @@ internal static class PortalConversationManagementTests
         internal void Pump(){Service.PumpDue(CancellationToken.None).GetAwaiter().GetResult();}
         internal void NoGoal(){Target.GoalIssue="Fictional desktop already owns its native engine";}
     }
+    private static DesktopGoalProxyState BridgePin(Fixture f)
+    {return new DesktopGoalProxyState{SchemaVersion=1,InstanceId=f.Target.InstanceId,LaunchId=Guid.NewGuid().ToString("N"),AccountKey=f.Target.AccountKey,Home=f.Target.Home,PipeName="creezio-desktop-goal-"+Guid.NewGuid().ToString("N"),ProxyPid=71,ProxyStartedTicks=100,NativePid=72,NativeStartedTicks=200,HostPid=73,HostStartedTicks=300,DesktopPid=74,DesktopStartedTicks=400,Running=true,Ready=true};}
     internal static void RunAll(Action<string,Action> check,string sandbox)
     {
         check("management reads real native goal methods without turn or resume",()=>{
@@ -95,6 +97,71 @@ internal static class PortalConversationManagementTests
         });
         check("management active desktop reports native goal limitation honestly",()=>{
             var f=new Fixture(sandbox);f.NoGoal();var view=f.Read();Assert(!Object.Equals(Field(Field(view,"capabilities"),"canWriteGoal"),true)&&Object.Equals(Field(Field(view,"capabilities"),"canManageSchedules"),true)&&f.Connects==0,"Unavailable goal opened a second engine or disabled real scheduler");Reject(()=>f.Goal(new{action="set",expectedVersion="",objective="Not executed"}),409);Assert(f.Connects==0,"Blocked desktop started native RPC");
+        });
+        check("management live owner bypasses stopped profile leases and keeps transport ephemeral",()=>{
+            var f=new Fixture(sandbox);f.Target.GoalUsesDesktop=true;
+            Assert(!Json.Write(f.Target).Contains("GoalUsesDesktop"),"Transient desktop mode entered durable schedule ownership");
+            using(var entered=new ManualResetEventSlim(false))using(var release=new ManualResetEventSlim(false)){
+                var held=Task.Run(()=>{using(new InstanceLease(f.Target.InstanceFolder))using(HeadlessProcessWire.AcquireProfileLease(f.Target.Home,CancellationToken.None)){entered.Set();release.Wait();}});
+                Assert(entered.Wait(TimeSpan.FromSeconds(20)),"Fictional profile lease did not start");
+                try{string version=f.Version();var view=f.Goal(new{action="set",expectedVersion=version,status="paused"});Assert(Text(Field(view,"goal"),"status")=="paused"&&f.Native.Sets==1,"Live native owner was not used under the desktop's leases");}
+                finally{release.Set();held.GetAwaiter().GetResult();}
+            }
+            Assert(f.Admissions.Count==0&&f.Target.Access=="headless"&&f.Native.Calls.All(method=>new[]{"thread/read","thread/goal/get","thread/goal/set"}.Contains(method)),"Live headless-grant goal admitted work or used a turn");
+        });
+        check("management live goal loss remains uncertain without reconnect or replay",()=>{
+            var f=new Fixture(sandbox);f.Target.GoalUsesDesktop=true;string version=f.Version();f.Native.FailAfterSet=true;var input=new{action="set",expectedVersion=version,status="paused"};
+            Reject(()=>f.Goal(input));int calls=f.Native.Calls.Count,connects=f.Connects;Reject(()=>f.Goal(input),409);
+            Assert(f.Native.Sets==1&&f.Native.Calls.Count==calls&&f.Connects==connects,"Live uncertain mutation reconnected or resent");
+            Assert(Text(Field(f.Read(),"goal"),"status")=="paused","Read-only reconciliation missed native commit");
+        });
+        check("desktop goal bridge binds envelope and native CAS without changing native parameters",()=>{
+            var f=new Fixture(sandbox);var pin=BridgePin(f);var packets=new List<object>();int checks=0;
+            using(var bridge=new DesktopGoalBridge(pin,f.Target.ThreadId,()=>checks++,async(request,token)=>{
+                packets.Add(Shape(request));var reply=await f.Native.Call(Text(request,"method"),Field(request,"parameters"),token);return Shape(new{ok=true,result=reply});
+            })){
+                bridge.Call("thread/read",new{threadId=f.Target.ThreadId,includeTurns=false},CancellationToken.None).GetAwaiter().GetResult();
+                var goal=bridge.Call("thread/goal/get",new{threadId=f.Target.ThreadId},CancellationToken.None).GetAwaiter().GetResult();string version=PortalConversationManagement.NativeGoalVersion(goal,f.Target.ThreadId);
+                bridge.Call("thread/goal/set",new{threadId=f.Target.ThreadId,origin="user",status="paused"},CancellationToken.None).GetAwaiter().GetResult();
+                Assert(Text(packets.Last(),"expectedVersion")==version&&Text(packets.Last(),"accountKey")==pin.AccountKey&&Text(packets.Last(),"launchId")==pin.LaunchId&&Text(packets.Last(),"home")==pin.Home,"Bridge lost owner or CAS pins");
+                Assert(Field(f.Native.LastSet,"expectedVersion")==null&&Text(f.Native.LastSet,"origin")=="user"&&checks==6,"Bridge invented native parameters or skipped owner revalidation");
+            }
+            Assert(PortalConversationManagement.NativeGoalVersion(Shape(new{goal=(object)null}),f.Target.ThreadId)=="","Empty goal does not match create CAS");
+        });
+        check("desktop goal bridge refuses turns foreign thread full history and mutation without read",()=>{
+            var f=new Fixture(sandbox);int sent=0;
+            using(var bridge=new DesktopGoalBridge(BridgePin(f),f.Target.ThreadId,()=>{},(request,token)=>{sent++;return Task.FromResult(Shape(new{ok=true,result=new{}}));})){
+                Reject(()=>bridge.Call("turn/start",new{threadId=f.Target.ThreadId},CancellationToken.None).GetAwaiter().GetResult());
+                Reject(()=>bridge.Call("thread/read",new{threadId=f.Target.ThreadId,includeTurns=true},CancellationToken.None).GetAwaiter().GetResult());
+                Reject(()=>bridge.Call("thread/goal/get",new{threadId=Guid.NewGuid().ToString("D")},CancellationToken.None).GetAwaiter().GetResult());
+                Reject(()=>bridge.Call("thread/goal/set",new{threadId=f.Target.ThreadId,origin="user",status="paused"},CancellationToken.None).GetAwaiter().GetResult());
+                Assert(sent==0,"Rejected bridge operation reached a native owner");
+            }
+        });
+        check("desktop goal bridge refuses reused process launch account home and not ready ownership",()=>{
+            var f=new Fixture(sandbox);var pin=BridgePin(f);
+            Action<DesktopGoalProxyState>[] changes={p=>p.ProxyStartedTicks++,p=>p.NativeStartedTicks++,p=>p.DesktopStartedTicks++,p=>p.HostStartedTicks++,p=>p.LaunchId=Guid.NewGuid().ToString("N"),p=>p.AccountKey="foreign",p=>p.Home=Path.GetDirectoryName(p.Home),p=>p.PipeName="creezio-desktop-goal-"+Guid.NewGuid().ToString("N"),p=>p.Ready=false,p=>p.Running=false};
+            foreach(var change in changes){var copy=Json.Read<DesktopGoalProxyState>(Json.Write(pin));change(copy);Assert(!DesktopGoalBridge.SameOwner(pin,copy),"Changed native owner remained valid");}
+            Assert(DesktopGoalBridge.SameOwner(pin,Json.Read<DesktopGoalProxyState>(Json.Write(pin))),"Identical native owner rejected");
+        });
+        check("desktop goal bridge owner change after get cannot reach set",()=>{
+            var f=new Fixture(sandbox);var pin=BridgePin(f);var current=Json.Read<DesktopGoalProxyState>(Json.Write(pin));int sent=0;
+            using(var bridge=new DesktopGoalBridge(pin,f.Target.ThreadId,()=>{if(!DesktopGoalBridge.SameOwner(pin,current))throw new InvalidOperationException("Fictional owner changed");},(request,token)=>{sent++;return Task.FromResult(Shape(new{ok=true,result=new{goal=f.NativeGoal}}));})){
+                bridge.Call("thread/goal/get",new{threadId=f.Target.ThreadId},CancellationToken.None).GetAwaiter().GetResult();current.DesktopStartedTicks++;
+                Reject(()=>bridge.Call("thread/goal/set",new{threadId=f.Target.ThreadId,origin="user",status="paused"},CancellationToken.None).GetAwaiter().GetResult());Assert(sent==1,"Owner drift reached mutation");
+            }
+        });
+        check("desktop goal bridge proxy conflicts surface as stale version without native retry",()=>{
+            var f=new Fixture(sandbox);int sent=0;
+            using(var bridge=new DesktopGoalBridge(BridgePin(f),f.Target.ThreadId,()=>{},(request,token)=>{sent++;return Task.FromResult(Text(request,"method")=="thread/goal/get"?Shape(new{ok=true,result=new{goal=f.NativeGoal}}):Shape(new{ok=false,error="conflict"}));})){
+                bridge.Call("thread/goal/get",new{threadId=f.Target.ThreadId},CancellationToken.None).GetAwaiter().GetResult();Reject(()=>bridge.Call("thread/goal/set",new{threadId=f.Target.ThreadId,origin="user",status="paused"},CancellationToken.None).GetAwaiter().GetResult(),409);Assert(sent==2&&f.Native.Sets==0,"Conflict retried or reached native mutation");
+            }
+        });
+        check("desktop goal bridge cancelled requests never reach the owner",()=>{
+            var f=new Fixture(sandbox);int sent=0;
+            using(var stop=new CancellationTokenSource())using(var bridge=new DesktopGoalBridge(BridgePin(f),f.Target.ThreadId,()=>{},(request,token)=>{sent++;return Task.FromResult(Shape(new{ok=true,result=new{}}));})){
+                stop.Cancel();try{bridge.Call("thread/goal/get",new{threadId=f.Target.ThreadId},stop.Token).GetAwaiter().GetResult();throw new Exception("Cancellation ignored");}catch(OperationCanceledException){}Assert(sent==0,"Cancelled bridge request was sent");
+            }
         });
         check("management rejects wrong native thread workspace and goal ownership",()=>{
             foreach(string mismatch in new[]{"thread","workspace","goal"}){var f=new Fixture(sandbox);f.Native.WrongThread=mismatch=="thread";f.Native.WrongWorkspace=mismatch=="workspace";f.Native.WrongGoal=mismatch=="goal";var view=f.Read();Assert(!Object.Equals(Field(Field(view,"capabilities"),"canWriteGoal"),true)&&f.Native.Sets==0,"Wrong native owner was accepted");}

@@ -1,7 +1,8 @@
 # Livraisons avec mise à jour intégrée
 
 Le payload Windows x64 comprend le Switcher autonome, son relais Framework,
-`SwitcherLauncher.exe` et le plugin `creezio-relay`. Le lanceur est compilé depuis
+`SwitcherLauncher.exe`, `SwitcherCodexBridge.exe` avec sa configuration et le plugin
+`creezio-relay`. Le lanceur est compilé depuis
 `src/*.cs`, avec l’entrée `Creezio.Switcher.SwitcherLauncher`. Les exécutables et
 `CodexAccountSwitcher.dll` portent la même version réelle, sans préfixe `v`.
 
@@ -41,6 +42,17 @@ les fichiers du ZIP sauf lui-même : chemin relatif avec `/`, longueur et SHA-25
 en minuscules. Les liens symboliques, jonctions et doublons de chemins sont
 refusés. Les octets lus pendant la compression doivent encore correspondre au
 manifeste. Aucun binaire n’est exécuté par le packaging ou son test.
+
+À partir de `0.29.0-beta.3`, le manifeste doit également contenir
+`SwitcherCodexBridge.exe` et `SwitcherCodexBridge.exe.config`. La version réelle
+du pont doit correspondre à celle de la livraison. Les manifestes des versions
+antérieures restent lisibles sans ces deux fichiers ; `healthProtocol` reste à 1.
+
+Le pont est préparé pour les instances au prochain lancement de leur interface
+Codex. Une interface déjà ouverte avec une ancienne version doit être relancée
+une seule fois pour activer ce transport des objectifs. La mise à jour ne ferme
+pas automatiquement ces interfaces. Windows, Switcher Live et l’API continuent
+d’utiliser les capacités annoncées par l’instance pour chaque action.
 
 ## Publier et vérifier
 

@@ -13,7 +13,7 @@
     <Compile Include="CloudMissionQueueTests.cs;CloudQueueApiTests.cs;CloudQueueRepositoryTests.cs"/>
     <Compile Include="RelayReconnectTests.cs;RelayMcpBootstrapTests.cs;SwitcherUpdateTests.cs;SwitcherLifecycleTests.cs;SwitcherInstallationTests.cs"/>
     <Compile Include="VaultConcurrencyTests.cs;PortalAdministrationTests.cs;PortalEnrollmentTests.cs;PortalNativeHeadlessTests.cs;PortalPluginTests.cs"/>
-    <Compile Include="PortalSkillTests.cs;PortalConversationManagementTests.cs;PortalManagementHttpTests.cs"/>
+    <Compile Include="PortalSkillTests.cs;PortalConversationManagementTests.cs;DesktopGoalProxyTests.cs;PortalManagementHttpTests.cs"/>
     <Compile Include="CloudTasksBackendTests.cs"/>
     <Compile Include="CloudEnvironmentSetupTests.cs"/>
     <Compile Include="CloudGitHubTests.cs"/>

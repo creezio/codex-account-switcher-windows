@@ -74,6 +74,9 @@ namespace Creezio.Switcher
         public string InstanceId { get; set; }
         public string LaunchId { get; set; }
         public string DesktopExecutable { get; set; }
+        public string AccountKey { get; set; }
+        public string NativeCodexExecutable { get; set; }
+        public string MetadataBridgeExecutable { get; set; }
         public string Name { get; set; }
     }
     internal static class InstancePaths
@@ -228,7 +231,11 @@ namespace Creezio.Switcher
             if(Probe(instance).Running) throw new InvalidOperationException("Cette instance est déjà ouverte.");
             var package=await FindPackage(token);
             string folder=InstancePaths.Folder(root,instance.Id);
-            var request=new InstanceLaunch {Root=root,InstanceId=instance.Id,LaunchId=Guid.NewGuid().ToString("N"),DesktopExecutable=package.Executable,Name=instance.Name};
+            var accounts=new AccountService(root);var selected=NamedInstances.Resolve(accounts,instance.Id);NamedInstances.VerifyAccount(accounts,selected);
+            if(selected.AccountKey!=instance.AccountKey)throw new InvalidOperationException("Le compte de cette instance a change avant son lancement.");
+            string native=accounts.Settings.CodexExecutable,bridge=Path.Combine(Path.GetDirectoryName(HostExecutable()),"SwitcherCodexBridge.exe");
+            if(String.IsNullOrWhiteSpace(native)||!File.Exists(native)||!File.Exists(bridge))throw new InvalidOperationException("Le moteur Codex ou la passerelle locale de cette version de Switcher est indisponible.");
+            var request=new InstanceLaunch {Root=root,InstanceId=instance.Id,LaunchId=Guid.NewGuid().ToString("N"),DesktopExecutable=package.Executable,Name=instance.Name,AccountKey=instance.AccountKey,NativeCodexExecutable=Path.GetFullPath(native),MetadataBridgeExecutable=Path.GetFullPath(bridge)};
             string preparation="acquire-instance";
             try{using(var lease=new InstanceLease(folder)) {
                 preparation="recover-temporaries";AtomicFiles.RecoverLegacyInstance(folder);

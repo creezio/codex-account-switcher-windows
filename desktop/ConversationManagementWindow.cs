@@ -52,6 +52,7 @@ namespace Creezio.Switcher.Desktop
         private readonly Dictionary<string,CheckBox> days=new Dictionary<string,CheckBox>();
         private readonly TextBlock notice=Ui.Text("",13),goalSummary=Ui.Text("",12,true),scheduleSummary=Ui.Text("",12,true);
         internal string StatusText=>notice.Text;
+        internal string GoalSummaryText=>goalSummary.Text;
         internal ConversationManagementWindow(DesktopContext context,Window owner,string instanceId,string chatId,ConversationManagementUiService adapter=null)
         {
             service=adapter??ConversationManagementUiService.Create(context);instance=instanceId;chat=chatId;Owner=owner;Title="Tâches et objectif de la discussion";Width=940;Height=760;MinWidth=700;MinHeight=480;WindowStartupLocation=WindowStartupLocation.CenterOwner;SetResourceReference(BackgroundProperty,"CanvasBrush");SetResourceReference(ForegroundProperty,"TextBrush");Confirm=message=>Ui.Confirm(this,message,"Tâches et objectif");
@@ -81,7 +82,8 @@ namespace Creezio.Switcher.Desktop
         {
             if(value==null||value.InstanceId!=instance||value.ChatId!=chat||value.Capabilities==null)throw new InvalidOperationException("Les réglages reçus ne correspondent pas à cette discussion.");snapshot=value;changing=true;
             if(!goalEdited||saved=="goal"){goalBase=value.Goal;Objective.Text=value.Goal?.Objective??"";Budget.Text=value.Goal?.TokenBudget?.ToString(CultureInfo.InvariantCulture)??"";GoalStatus.SelectedValue=value.Goal?.Status??"paused";goalEdited=false;}
-            goalSummary.Text=value.Capabilities.GoalIssue??(value.Goal==null?"Aucun objectif enregistré.":(value.Goal.TokensUsed+" jetons utilisés · "+Math.Round(value.Goal.TimeUsedSeconds/60)+" min · "+(value.Goal.TokenBudget.HasValue?"budget "+value.Goal.TokenBudget:"sans budget")));
+            SaveGoalButton.Content=value.Goal==null?"Créer l’objectif":"Enregistrer l’objectif";
+            goalSummary.Text=!String.IsNullOrWhiteSpace(value.Capabilities.GoalIssue)?value.Capabilities.GoalIssue:(!value.Capabilities.CanReadGoal?"L’objectif natif n’est pas accessible sur cette instance pour le moment.":!value.Capabilities.CanWriteGoal?"La modification de cet objectif n’est pas disponible pour le moment.":value.Goal==null?"Aucun objectif enregistré.":(value.Goal.TokensUsed+" jetons utilisés · "+Math.Round(value.Goal.TimeUsedSeconds/60)+" min · "+(value.Goal.TokenBudget.HasValue?"budget "+value.Goal.TokenBudget:"sans budget")));
             Schedules.ItemsSource=value.Schedules;scheduleSummary.Text="Ordonnanceur Switcher · fuseau du PC : "+value.Capabilities.TimeZoneId+" · "+value.Schedules.Length+" tâche(s).";
             if(saved=="schedule"){hasSchedule=false;scheduleBase=null;scheduleEdited=false;ScheduleName.Text="";Prompt.Text="";}
             changing=false;if(saved!="")notice.Text="Modification confirmée par le Switcher.";Controls();

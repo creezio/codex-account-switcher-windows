@@ -6,6 +6,7 @@ param(
   [switch]$Replace
 )
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'update-package-contract.ps1')
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $bin=[IO.Path]::GetFullPath($BinaryDirectory).TrimEnd('\')
 $archives=if($ArchiveDirectory){[IO.Path]::GetFullPath($ArchiveDirectory).TrimEnd('\')}else{Join-Path $repo 'outputs'}
@@ -27,6 +28,11 @@ $guiVersion=[Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $bin 'Codex
 if($version -notmatch '\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\z' -or $version -ne $guiVersion){throw 'Les versions réelles du relais et de la GUI doivent être identiques.'}
 $withoutBuildMetadata=($version -split '\+',2)[0];$prerelease=($withoutBuildMetadata -split '-',2)
 if($prerelease.Count -gt 1){foreach($identifier in $prerelease[1].Split('.')){if($identifier -match '\A0[0-9]+\z'){throw 'Version prerelease non canonique.'}}}
+if(Test-SwitcherCodexBridgeRequired $version){
+  $required+=@('SwitcherCodexBridge.exe','SwitcherCodexBridge.exe.config')
+  foreach($relative in @('SwitcherCodexBridge.exe','SwitcherCodexBridge.exe.config')){if(-not(Test-Path -LiteralPath (Join-Path $bin $relative) -PathType Leaf)){throw "Payload incomplet : $relative"}}
+  if([Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $bin 'SwitcherCodexBridge.exe')).ProductVersion -cne $version){throw 'La version réelle du pont Codex doit correspondre à la livraison.'}
+}
 $zip=Join-Path $archives ('CodexAccountSwitcher-'+$version+'-windows-x64.zip')
 $sums=Join-Path $archives ('SHA256SUMS-'+$version+'.txt')
 $manifestPath=Join-Path $bin 'switcher-update.json'

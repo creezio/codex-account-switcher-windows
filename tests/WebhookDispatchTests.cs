@@ -47,6 +47,13 @@ internal static class WebhookDispatchTests
     }
     internal static void RunAll(Action<string,Action> check,string root)
     {
+        check("webhook headless mode never falls through to an open desktop after admission",()=>{
+            var headless=new WebhookRoute{Access="headless"};WebhookDispatch.RequireExecutionMode(headless,new InstanceState{Phase="stopped",Running=false});
+            foreach(var state in new[]{(InstanceState)null,new InstanceState{Phase="running",Running=true},new InstanceState{Phase="background",Running=true},new InstanceState{Phase="unknown"},new InstanceState{Phase="starting"},new InstanceState{Phase="stopping"}}){
+                bool rejected=false;try{WebhookDispatch.RequireExecutionMode(headless,state);}catch(InvalidOperationException){rejected=true;}Assert(rejected,"A GUI or unknown owner widened the headless route");
+            }
+            WebhookDispatch.RequireExecutionMode(new WebhookRoute{Access="desktop"},new InstanceState{Phase="running",Running=true});
+        });
         check("webhook admission reuses durable relay and does not invoke model",()=>{var f=new Fixture(root);var j=f.Process(f.Accept("one"));Assert(j.RelayJobId==j.Id&&f.Store.Messages().Count==1&&f.Native.Inner.Created==0,"admission performed native work");var m=f.Store.Message(j.Id);Assert(m.OperatorOrigin&&m.WebhookJobId==j.Id&&m.Prompt.Contains("Only inspect")&&m.Prompt.Contains("Issue 12")&&RelayEngine.Envelope(m,f.Store.Channel("target")).Contains("route webhook"),"origin or context lost");});
         check("webhook duplicate admission creates exactly one native job",()=>{var f=new Fixture(root);var j=f.Process(f.Accept("stable"));f.Process(f.Accept("stable"));Assert(f.Store.Messages().Count==1&&f.Connections==1,"duplicate relay admission");f.Run(j);f.Process(j);Assert(f.Native.Inner.Created==1&&f.Native.Inner.WorkSent==1,"native work duplicated");});
         check("webhook crash after relay admission reconciles the same receipt",()=>{var f=new Fixture(root);var j=f.Process(f.Accept("crash"));j.RelayJobId=null;j.State="queued";Webhooks.SaveJob(f.Store,j);f.Offline=true;j=f.Process(j);Assert(j.RelayJobId==j.Id&&f.Connections==1&&f.Store.Messages().Count==1,"crash replayed admission");});
