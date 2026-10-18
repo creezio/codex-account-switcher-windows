@@ -76,17 +76,19 @@ namespace Creezio.Switcher
         private readonly Action ready;private readonly SemaphoreSlim goalGate=new SemaphoreSlim(1,1);
         private readonly ConcurrentDictionary<string,Pending> pending=new ConcurrentDictionary<string,Pending>();
         private readonly string prefix="creezio-metadata-"+Guid.NewGuid().ToString("N")+"-";
-        private long sequence;private int disposed,initialized,announced;private volatile bool initializeSucceeded;
+        private long sequence;private int disposed,announced;private volatile bool initializeSucceeded;
         internal bool Ready {get{return Volatile.Read(ref announced)!=0&&Volatile.Read(ref disposed)==0;}}
         internal DesktopGoalMultiplexer(Action<string> native,Action<string> desktop,Action verify,Func<string,string> workspace,Action<object> verifyAccount,Action ready=null)
         {this.native=native;this.desktop=desktop;this.verify=verify;this.workspace=workspace;this.verifyAccount=verifyAccount;this.ready=ready;}
         private string Id(){return Json.Write(prefix+Interlocked.Increment(ref sequence).ToString(CultureInfo.InvariantCulture));}
         private static bool Mutation(string method){return method=="thread/goal/set"||method=="thread/goal/clear";}
-        private void Announce(){if(initializeSucceeded&&Volatile.Read(ref initialized)!=0&&Interlocked.CompareExchange(ref announced,1,0)==0&&ready!=null)ready();}
+        // The desktop completes its handshake on the native initialize reply.
+        // Its optional initialized notification is still forwarded verbatim.
+        private void Announce(){if(initializeSucceeded&&Interlocked.CompareExchange(ref announced,1,0)==0&&ready!=null)ready();}
         internal async Task FromDesktop(string line)
         {
             if(Volatile.Read(ref disposed)!=0)throw new ObjectDisposedException("DesktopGoalMultiplexer");var envelope=DesktopGoalEnvelope.Read(line);
-            if(envelope==null||envelope.Method==null||envelope.Id==null){native(line);if(envelope!=null&&envelope.Method=="initialized"){Interlocked.Exchange(ref initialized,1);Announce();}return;}
+            if(envelope==null||envelope.Method==null||envelope.Id==null){native(line);return;}
             bool gate=Mutation(envelope.Method);if(gate){await goalGate.WaitAsync().ConfigureAwait(false);if(Volatile.Read(ref disposed)!=0){goalGate.Release();throw new ObjectDisposedException("DesktopGoalMultiplexer");}}
             string id=Id();var item=new Pending{OriginalId=envelope.Id,Method=envelope.Method,Gate=gate};pending[id]=item;
             try{native(envelope.ReplaceId(line,id));}catch{Pending removed;if(pending.TryRemove(id,out removed)&&removed.Gate)goalGate.Release();throw;}

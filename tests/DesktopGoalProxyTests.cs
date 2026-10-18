@@ -63,6 +63,39 @@ internal static class DesktopGoalProxyTests
         check("desktop goal proxy private endpoint stays unavailable before native initialize",()=>{
             using(var f=new Fixture(sandbox)){Reject(()=>f.Call("thread/goal/get",new{threadId=f.Thread}),"unavailable");Assert(f.Native.Count==0,"Private request initialized another engine");}
         });
+        check("desktop goal proxy accepts the desktop initialize success without an initialized notification",()=>{
+            using(var f=new Fixture(sandbox)){
+                f.Mux.FromDesktop("{\"id\":\"__codex_initialize__\",\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"codex_desktop\"}},\"trace\":{}}").GetAwaiter().GetResult();
+                Assert(f.Mux.Ready&&f.Readies==1,"Successful native initialize did not publish the desktop bridge");
+                Assert(Json.Get(f.Call("thread/goal/get",new{threadId=f.Thread}),"goal")!=null,"The existing initialized engine could not serve metadata");
+                Assert(f.Methods().SequenceEqual(new[]{"initialize","account/read","thread/read","thread/goal/get"}),"Readiness injected a notification, second initialization or model request");
+            }
+        });
+        check("desktop goal proxy never publishes a failed native initialize",()=>{
+            using(var f=new Fixture(sandbox)){
+                f.Respond=false;f.Mux.FromDesktop("{\"id\":9,\"method\":\"initialize\",\"params\":{}}").GetAwaiter().GetResult();string id=DesktopGoalEnvelope.Read(f.Native.Last()).Id;
+                f.Mux.FromNative("{\"id\":"+id+",\"error\":{\"code\":-32603,\"message\":\"Fictional initialization failure\"}}");
+                Assert(!f.Mux.Ready&&f.Readies==0,"A native initialize error published the bridge");
+                int count=f.Native.Count;Reject(()=>f.Call("thread/goal/get",new{threadId=f.Thread}),"unavailable");Assert(f.Native.Count==count,"Failed initialization admitted private native traffic");
+                Assert(Convert.ToInt32(Json.Get(Json.Read<object>(f.Desktop.Single()),"id"))==9,"The native initialize error lost its desktop request ID");
+            }
+        });
+        check("desktop goal proxy initialized notification alone cannot publish readiness",()=>{
+            using(var f=new Fixture(sandbox)){
+                const string notification="{\"method\":\"initialized\",\"params\":{}}";f.Mux.FromDesktop(notification).GetAwaiter().GetResult();
+                Assert(!f.Mux.Ready&&f.Readies==0&&f.Native.Single()==notification,"An unconfirmed notification granted readiness or changed native bytes");
+                Reject(()=>f.Call("thread/goal/get",new{threadId=f.Thread}),"unavailable");Assert(f.Native.Count==1,"The notification started a private initialization");
+            }
+        });
+        check("desktop goal proxy publishes initialize success once and preserves optional notifications",()=>{
+            using(var f=new Fixture(sandbox)){
+                f.Mux.FromDesktop("{\"id\":7,\"method\":\"initialize\",\"params\":{}}").GetAwaiter().GetResult();string id=DesktopGoalEnvelope.Read(f.Native.Single()).Id;
+                const string notification="{\"method\":\"initialized\"}";f.Mux.FromDesktop(notification).GetAwaiter().GetResult();f.Mux.FromDesktop(notification).GetAwaiter().GetResult();
+                f.Mux.FromNative("{\"id\":"+id+",\"result\":{}}");
+                Assert(f.Mux.Ready&&f.Readies==1,"An optional notification or replay published readiness twice");
+                Assert(f.Native.Count==3&&f.Native.Skip(1).All(line=>line==notification)&&f.Desktop.Count==1,"A notification or duplicate response changed the desktop stream");
+            }
+        });
         check("desktop goal proxy preserves native callbacks and goal notifications verbatim",()=>{
             using(var f=new Fixture(sandbox)){f.Ready();string callback="{\"method\":\"item/tool/requestUserInput\",\"id\":17,\"params\":{\"text\":\"fictitious\"}}",reply="{\"id\":17,\"result\":{\"ok\":true}}",notification="{\"method\":\"thread/goal/updated\",\"params\":{\"goal\":null}}";f.Mux.FromNative(callback);f.Mux.FromDesktop(reply).GetAwaiter().GetResult();f.Mux.FromNative(notification);Assert(f.Desktop.Contains(callback)&&f.Desktop.Contains(notification)&&f.Native.Contains(reply),"A reverse callback or notification changed");}
         });

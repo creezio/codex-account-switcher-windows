@@ -48,7 +48,7 @@ manifeste. Aucun binaire n’est exécuté par le packaging ou son test.
 du pont doit correspondre à celle de la livraison. Les manifestes des versions
 antérieures restent lisibles sans ces deux fichiers ; `healthProtocol` reste à 1.
 
-Le pont est préparé pour les instances au prochain lancement de leur interface
+La livraison `0.29.0-beta.4` prépare le pont au prochain lancement de l’interface
 Codex. Une interface déjà ouverte avec une ancienne version doit être relancée
 une seule fois pour activer ce transport des objectifs. La mise à jour ne ferme
 pas automatiquement ces interfaces. Windows, Switcher Live et l’API continuent

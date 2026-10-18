@@ -108,7 +108,7 @@ révision attendue du nom sur l’instance cible. Un remplacement concurrent ren
 
 ## Objectifs natifs
 
-À partir de la beta.3, le pont livré avec Switcher peut joindre le moteur d’une
+À partir de la beta.4, le pont livré avec Switcher peut joindre le moteur d’une
 interface Codex ouverte pour gérer ses objectifs. Il est activé au prochain
 lancement de cette interface. Une ancienne interface déjà ouverte demande une
 seule relance manuelle ; Switcher ne la ferme pas automatiquement. Les panneaux
