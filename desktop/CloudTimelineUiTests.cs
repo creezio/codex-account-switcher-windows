@@ -6,6 +6,8 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Threading;
 using System.Windows.Documents;
 
 namespace Creezio.Switcher.Desktop
@@ -45,6 +47,8 @@ namespace Creezio.Switcher.Desktop
             var opened = new List<string>();
             var window = new CloudJobsWindow(context, shell) { Opacity = 0, ShowInTaskbar = false, Width = 1400, Height = 900 };
             var dashboard = window.Dashboard;
+            var layoutRoot = (FrameworkElement)window.Content;
+            var originalTransform = layoutRoot.LayoutTransform;
             window.JobsFixture = () => { reads++; return Task.FromResult(new[] { Json.Read<CloudJob>(Json.Write(mission)) }); };
             window.MonitoringFixture = job =>
             {
@@ -108,18 +112,25 @@ namespace Creezio.Switcher.Desktop
                 double retainedY = retained.TranslatePoint(new Point(0, 0), dashboard.TimelineScroll).Y;
                 assert(dashboard.DetailTabs.SelectedIndex == 0 && window.SelectedJobId == selectedMission && Math.Abs(retainedY - anchor.Y) < 3 && dashboard.TimelineScroll.VerticalOffset > beforeInsertion, "insertion d’une observation plus récente maintient la même étape à l’écran grâce à l’ancre de lecture");
 
+                // Earlier scroll/anchor checks retain their original viewport.
+                // Only this large-layout assertion needs a screen-independent surface.
+                layoutRoot.LayoutTransform = new ScaleTransform(0.5, 0.5); window.UpdateLayout();
+                await Until(() => layoutRoot.ActualWidth >= 1400 && layoutRoot.ActualHeight >= 900);
+                await window.Dispatcher.InvokeAsync(() => window.UpdateLayout(), DispatcherPriority.ContextIdle);
                 dashboard.TimelineScroll.ScrollToTop(); window.UpdateLayout();
                 assert(window.JobsList.ActualHeight > 350 && dashboard.TimelineScroll.ActualHeight > 300 && !Descendants(dashboard.TimelineScroll).OfType<ScrollViewer>().Any(scroll => !ReferenceEquals(scroll, dashboard.TimelineScroll)), "grand écran donne la place à la chronologie sans empiler des défilements internes");
                 Capture(window, Path.Combine(root, "Cloud-timeline-GitHub.png"));
 
-                window.Width = 880; window.Height = 580; window.UpdateLayout();
+                layoutRoot.LayoutTransform = Transform.Identity; window.Width = 880; window.Height = 580; window.UpdateLayout();
+                await Until(() => Math.Abs(window.ActualWidth - 880) < 1 && Math.Abs(window.ActualHeight - 580) < 1);
+                await window.Dispatcher.InvokeAsync(() => window.UpdateLayout(), DispatcherPriority.ContextIdle);
                 assert(window.JobsList.IsVisible && window.JobsList.ActualWidth > 700, "format compact présente d’abord la liste des missions sur toute la largeur disponible");
                 dashboard.OpenSelectedDetails(); window.UpdateLayout();
                 Capture(window, Path.Combine(root, "Cloud-timeline-compact.png"));
                 assert(!window.JobsList.IsVisible && dashboard.TimelineScroll.IsVisible && dashboard.TimelineScroll.ActualHeight > 80 && dashboard.GithubShortcuts.IsVisible, "fiche compacte garde les liens GitHub et une chronologie lisible dans son propre espace");
                 assert(reads >= 4 && cloudActions == 0 && opened.Count == 2, "recette chronologie reste entièrement locale sans soumission, progression Cloud ou lancement de navigateur réel");
             }
-            finally { if (window.IsLoaded) window.Close(); }
+            finally { layoutRoot.LayoutTransform = originalTransform; if (window.IsLoaded) window.Close(); }
             assert(!window.RefreshTimerRunning, "fermeture de la recette chronologie arrête son actualisation visuelle");
         }
     }

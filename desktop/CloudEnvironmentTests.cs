@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
 
 namespace Creezio.Switcher.Desktop
@@ -324,15 +325,22 @@ namespace Creezio.Switcher.Desktop
                 assert(Button("Créer une mission").IsEnabled&&!Descendants(cloud).OfType<Button>().Any(item=>Object.Equals(item.Content,"Suivre la publication"))&&!cloud.ActionsMenu.Items.OfType<MenuItem>().Any(item=>Object.Equals(item.Header,"Suivre la publication")),"ancien échec terminal ne masque pas la version prête et ne propose plus un suivi inutile");
                 assert(Descendants(cloud).OfType<Expander>().All(expander=>!expander.IsExpanded),"configuration, diagnostic et ancienne erreur restent repliés par défaut");
                 double originalWidth=shell.Width,originalHeight=shell.Height;
-                foreach(var size in new[]{new Size(1280,860),new Size(980,620)}){
-                    shell.Width=size.Width;shell.Height=size.Height;shell.UpdateLayout();await Task.Delay(20);shell.UpdateLayout();
-                    var primary=Button("Créer une mission");var refresh=Button("Actualiser le Cloud");
-                    bool Within(FrameworkElement element){var point=element.TranslatePoint(new Point(),shell);return point.X>=0&&point.Y>=0&&point.X+element.ActualWidth<=shell.ActualWidth+1&&point.Y+element.ActualHeight<=shell.ActualHeight+1;}
-                    assert(Within(primary)&&Within(refresh)&&cloud.ActualHeight>200,"actions Cloud visibles sans défilement imbriqué à "+size.Width+" × "+size.Height);
-                    assert(size.Width==1280?cloud.EnvironmentList.IsVisible:cloud.EnvironmentChoice.IsVisible,"catalogue Cloud s’adapte à la largeur "+size.Width);
-                    Capture(shell,Path.Combine(root,"Instance-cloud-"+size.Width+"x"+size.Height+".png"));
+                var layoutRoot=(FrameworkElement)shell.Content;var originalTransform=layoutRoot.LayoutTransform;
+                try{
+                    foreach(var size in new[]{new Size(1280,860),new Size(980,620)}){
+                        bool large=size.Width==1280;
+                        layoutRoot.LayoutTransform=large?new ScaleTransform(0.5,0.5):Transform.Identity;
+                        shell.Width=size.Width;shell.Height=size.Height;shell.UpdateLayout();
+                        await Until(()=>large?layoutRoot.ActualWidth>=1280&&layoutRoot.ActualHeight>=860:Math.Abs(shell.ActualWidth-size.Width)<1&&Math.Abs(shell.ActualHeight-size.Height)<1);
+                        await shell.Dispatcher.InvokeAsync(()=>shell.UpdateLayout(),DispatcherPriority.ContextIdle);
+                        var primary=Button("Créer une mission");var refresh=Button("Actualiser le Cloud");
+                        bool Within(FrameworkElement element){var bounds=element.TransformToAncestor(shell).TransformBounds(new Rect(0,0,element.ActualWidth,element.ActualHeight));return bounds.Left>=0&&bounds.Top>=0&&bounds.Right<=shell.ActualWidth+1&&bounds.Bottom<=shell.ActualHeight+1;}
+                        assert(Within(primary)&&Within(refresh)&&cloud.ActualHeight>200,"actions Cloud visibles sans défilement imbriqué à "+size.Width+" × "+size.Height);
+                        assert(size.Width==1280?cloud.EnvironmentList.IsVisible:cloud.EnvironmentChoice.IsVisible,"catalogue Cloud s’adapte à la largeur "+size.Width);
+                        Capture(shell,Path.Combine(root,"Instance-cloud-"+size.Width+"x"+size.Height+".png"));
+                    }
                 }
-                shell.Width=originalWidth;shell.Height=originalHeight;shell.UpdateLayout();
+                finally{layoutRoot.LayoutTransform=originalTransform;shell.Width=originalWidth;shell.Height=originalHeight;shell.UpdateLayout();}
                 instances.ShowTab(1);
                 shell.UpdateLayout();
             }

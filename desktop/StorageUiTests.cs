@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
 
 namespace Creezio.Switcher.Desktop
@@ -43,17 +44,22 @@ namespace Creezio.Switcher.Desktop
             context.Store.WriteRecord("storage-maintenance.dpapi",new StorageMaintenanceReport{CheckedUtc=DateTime.UtcNow.ToString("o"),FreeBytes=measured.FreeBytes,Results=new[]{new StorageCleanupResult{Path=locked.Path,Code="win32-32",Message="Fichier verrouillé",Removed=false}}});
             var automatic=page.LoadAutomaticReport();assert(automatic.Results.Single().Code=="win32-32"&&page.AutomaticReportSummary.Text.Contains("1 conservé(s)")&&scans==1&&cleans==0,"rapport automatique affiche les résultats enregistrés sans analyse ni nettoyage live");
             var oldWidth=shell.Width;var oldHeight=shell.Height;
+            var layoutRoot=(FrameworkElement)shell.Content;var oldTransform=layoutRoot.LayoutTransform;
             try
             {
                 foreach(var size in new[]{new Size(1280,860),new Size(980,620)})
                 {
-                    shell.Width=size.Width;shell.Height=size.Height;shell.UpdateLayout();await Task.Delay(20);shell.UpdateLayout();
-                    bool Inside(FrameworkElement element){var point=element.TranslatePoint(new Point(),shell);return point.X>=0&&point.Y>=0&&point.X+element.ActualWidth<=shell.ActualWidth+1&&point.Y+element.ActualHeight<=shell.ActualHeight+1;}
+                    bool large=size.Width==1280;
+                    layoutRoot.LayoutTransform=large?new ScaleTransform(0.5,0.5):Transform.Identity;
+                    shell.Width=size.Width;shell.Height=size.Height;shell.UpdateLayout();
+                    await Until(()=>large?layoutRoot.ActualWidth>=1280&&layoutRoot.ActualHeight>=860:Math.Abs(shell.ActualWidth-size.Width)<1&&Math.Abs(shell.ActualHeight-size.Height)<1);
+                    await shell.Dispatcher.InvokeAsync(()=>shell.UpdateLayout(),DispatcherPriority.ContextIdle);
+                    bool Inside(FrameworkElement element){var bounds=element.TransformToAncestor(shell).TransformBounds(new Rect(0,0,element.ActualWidth,element.ActualHeight));return bounds.Left>=0&&bounds.Top>=0&&bounds.Right<=shell.ActualWidth+1&&bounds.Bottom<=shell.ActualHeight+1;}
                     assert(page.Entries.ActualHeight>=65&&Inside(page.PreviewButton)&&Inside(page.AnalyzeButton),"grille et actions Stockage restent visibles à "+size.Width+" × "+size.Height);
                     assert(size.Width==1280?page.Scopes.IsVisible:page.CompactScopes.IsVisible,"sélection des emplacements adaptée à la largeur "+size.Width);Capture(shell,Path.Combine(root,"Stockage-"+size.Width+"x"+size.Height+".png"));
                 }
             }
-            finally{shell.Width=oldWidth;shell.Height=oldHeight;shell.UpdateLayout();}
+            finally{layoutRoot.LayoutTransform=oldTransform;shell.Width=oldWidth;shell.Height=oldHeight;shell.UpdateLayout();}
             StorageEntry[] previewed=null;page.ConfirmCleanup=entries=>{previewed=entries;return false;};page.CleanFixture=(paths,token)=>{cleans++;return Task.FromResult(new StorageCleanupResult[0]);};await page.CleanSelected();
             assert(previewed.Select(entry=>entry.Id).OrderBy(id=>id).SequenceEqual(new[]{scratch.Id,locked.Id}.OrderBy(id=>id))&&cleans==0,"prévisualisation contient seulement les temporaires cochés et annuler ne lance pas le moteur");
             var preview=new StorageCleanupPreview(shell,previewed);

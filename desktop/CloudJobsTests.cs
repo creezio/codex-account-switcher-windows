@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
 
 namespace Creezio.Switcher.Desktop
@@ -216,6 +217,7 @@ namespace Creezio.Switcher.Desktop
         private static async Task CloudDashboardFilters(CloudJobsWindow window,List<CloudJob> jobs,string root,Action<bool,string> assert)
         {
             var dashboard=window.Dashboard;var previous=window.MonitoringFixture;double previousWidth=window.Width,previousHeight=window.Height;
+            var layoutRoot=(FrameworkElement)window.Content;var previousTransform=layoutRoot.LayoutTransform;
             var states=jobs.ToDictionary(job=>job.Id,job=>job.State);
             jobs[0].State="completed";jobs[2].State="completed";jobs[3].State="attention";jobs[2].Lot="lot-8-02";jobs[2].Feature="meili-incremental";jobs[2].Branch="codex/worker/meili-incremental/lot-8-02";
             var now=DateTime.UtcNow;
@@ -241,9 +243,14 @@ namespace Creezio.Switcher.Desktop
                 dashboard.SetView(3);assert(window.JobsList.Items.Count==2,"historique rassemble les états terminaux et laisse les interventions non terminées dans À traiter");
                 dashboard.SetView(0);dashboard.AccountFilter.SelectedIndex=1;assert(window.JobsList.Items.Count==35,"filtre de compte exécutant masque les autres comptes sans perdre les 70 missions du tableau");
                 dashboard.AccountFilter.SelectedIndex=0;dashboard.Search.Text="mission-absente-de-la-recette";assert(window.JobsList.Items.Count==0&&window.SelectedJobId==null&&Descendants(window).OfType<TextBlock>().Any(text=>text.IsVisible&&text.Text=="Aucune mission pour cette vue."),"recherche vide affiche un état explicite et aucune ancienne fiche de mission");
-                dashboard.Search.Text="";window.JobsList.SelectedIndex=0;dashboard.DetailTabs.SelectedIndex=0;window.Width=1400;window.Height=900;window.UpdateLayout();
+                dashboard.Search.Text="";window.JobsList.SelectedIndex=0;dashboard.DetailTabs.SelectedIndex=0;window.Width=1400;window.Height=900;
+                layoutRoot.LayoutTransform=new ScaleTransform(0.5,0.5);window.UpdateLayout();
+                await Until(()=>layoutRoot.ActualWidth>=1400&&layoutRoot.ActualHeight>=900);
+                await window.Dispatcher.InvokeAsync(()=>window.UpdateLayout(),DispatcherPriority.ContextIdle);
                 assert(window.JobsList.ActualHeight>350&&dashboard.DetailTabs.ActualHeight>300,"grand écran donne la priorité à la liste et au détail plutôt qu’à une pile de boutons");Capture(window,Path.Combine(root,"Cloud-delegations-dashboard.png"));
-                window.Width=880;window.Height=580;window.UpdateLayout();
+                layoutRoot.LayoutTransform=Transform.Identity;window.Width=880;window.Height=580;window.UpdateLayout();
+                await Until(()=>Math.Abs(window.ActualWidth-880)<1&&Math.Abs(window.ActualHeight-580)<1);
+                await window.Dispatcher.InvokeAsync(()=>window.UpdateLayout(),DispatcherPriority.ContextIdle);
                 assert(window.JobsList.IsVisible&&window.JobsList.ActualHeight>120&&window.JobsList.ActualWidth>700,"format compact 880×580 affiche la liste en pleine largeur au lieu d’une fiche trop étroite");Capture(window,Path.Combine(root,"Cloud-delegations-compact.png"));
                 string selected=window.SelectedJobId;dashboard.OpenSelectedDetails();window.UpdateLayout();
                 assert(!window.JobsList.IsVisible&&dashboard.DetailTabs.IsVisible&&dashboard.DetailTabs.ActualHeight>100&&ReferenceEquals(((TabItem)dashboard.DetailTabs.Items[1]).Content,dashboard.ResultText),"ouvrir une mission compacte donne l’espace à sa fiche et garde le résultat dans son propre onglet");Capture(window,Path.Combine(root,"Cloud-delegations-compact-detail.png"));
@@ -252,7 +259,7 @@ namespace Creezio.Switcher.Desktop
             }
             finally
             {
-                window.Width=previousWidth;window.Height=previousHeight;dashboard.Search.Text="";dashboard.AccountFilter.SelectedIndex=0;dashboard.SetView(0);foreach(var job in jobs)job.State=states[job.Id];window.MonitoringFixture=previous;await window.RefreshNow();dashboard.DetailTabs.SelectedIndex=0;
+                layoutRoot.LayoutTransform=previousTransform;window.Width=previousWidth;window.Height=previousHeight;dashboard.Search.Text="";dashboard.AccountFilter.SelectedIndex=0;dashboard.SetView(0);foreach(var job in jobs)job.State=states[job.Id];window.MonitoringFixture=previous;await window.RefreshNow();dashboard.DetailTabs.SelectedIndex=0;
             }
         }
 
