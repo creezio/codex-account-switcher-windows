@@ -3,6 +3,12 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      desktop_only:
+        description: 'Validate desktop/build/package; skip unchanged offline and core suites'
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: read
 jobs:
@@ -33,12 +39,14 @@ jobs:
         shell: powershell
         run: ./scripts/build-desktop.ps1 -Portable -OutputDirectory $env:DELIVERY_DIRECTORY
       - name: Run offline safety and storage tests
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.desktop_only }}
         shell: powershell
         run: ./scripts/test.ps1
       - name: Verify detached worker lifecycle
         shell: powershell
         run: ./scripts/worker-smoke.ps1 -BinaryDirectory $env:DELIVERY_DIRECTORY
       - name: Verify modern runtime core
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.desktop_only }}
         shell: powershell
         run: dotnet run --project tests/Core.Net10.csproj -c Release -- work/net10-validation
       - name: Test WPF interactions, renders and cross-runtime data

@@ -143,12 +143,24 @@ namespace Creezio.Switcher.Desktop
                     Viewport("échelle " + scale);
                     Capture(shell, Path.Combine(root, "Performances-scale-" + (int)(scale * 100) + ".png"), scale);
                 }
-                rootElement.LayoutTransform = Transform.Identity; shell.Width = width; shell.Height = height; shell.UpdateLayout();
-                await Task.Delay(100); shell.UpdateLayout();
+                rootElement.LayoutTransform = Transform.Identity; shell.Width = 800; shell.Height = 500; shell.UpdateLayout();
                 page.OverviewTab.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); shell.UpdateLayout();
-                await Task.Delay(50); shell.UpdateLayout();
+                await Until(() => shell.ActualWidth <= 801 && shell.ActualHeight <= 501 && page.Overview.IsVisible);
+                await shell.Dispatcher.InvokeAsync(() => shell.UpdateLayout(), System.Windows.Threading.DispatcherPriority.ContextIdle);
+                assert(Descendants(page).OfType<TextBlock>().Any(t => t.Text == "Les plus gourmands" && !t.IsVisible), "vue d’ensemble compacte masque les plus gourmands sans supprimer leur contenu");
+                Capture(shell, Path.Combine(root, "Performances-overview-compact.png"));
+
+                // Hosted desktops can cap the native window near 1024 x 768. A smaller
+                // layout scale supplies a real large logical surface on that same window.
+                shell.Width = 1280; shell.Height = 860;
+                rootElement.LayoutTransform = new ScaleTransform(0.5, 0.5); shell.UpdateLayout();
+                await Until(() => rootElement.ActualWidth >= 1280 && rootElement.ActualHeight >= 860);
+                await shell.Dispatcher.InvokeAsync(() => shell.UpdateLayout(), System.Windows.Threading.DispatcherPriority.ContextIdle);
+                File.AppendAllText(Path.Combine(root, "performance-layout.txt"), "vue d’ensemble large · surface logique " + rootElement.ActualWidth + "x" + rootElement.ActualHeight + " · fenêtre réelle " + shell.ActualWidth + "x" + shell.ActualHeight + " · page " + page.ActualWidth + "x" + page.ActualHeight + "\n");
                 assert(Descendants(page).OfType<TextBlock>().Any(t => t.Text == "Les plus gourmands" && t.IsVisible), "vue d’ensemble montre les plus gourmands en grande fenêtre");
                 Capture(shell, Path.Combine(root, "Performances-overview-full.png"));
+                rootElement.LayoutTransform = Transform.Identity; shell.Width = width; shell.Height = height; shell.UpdateLayout();
+                await shell.Dispatcher.InvokeAsync(() => shell.UpdateLayout(), System.Windows.Threading.DispatcherPriority.ContextIdle);
                 page.ProcessesTab.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
                 var activityFixture = context.ResourceActivityFixture;
