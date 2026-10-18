@@ -15,15 +15,17 @@ namespace Creezio.Switcher.Desktop
     {
         private static async Task CloudJobsAcceptance(DesktopContext context, ShellWindow shell, DesktopInstance owner, DesktopInstance client, string root, Action<bool, string> assert)
         {
+            CloudMonitoringFreshnessAcceptance(root,assert);
             string savedId = null;
             var jobs = Enumerable.Range(0, 70).Select(index => new CloudJob { SchemaVersion = 1, Id = "d" + index.ToString("x31"), Title = "Mission Cloud de recette " + index, InstanceId = index % 2 == 0 ? owner.Id : client.Id, InstanceName = "Ancien nom", AccountKey = index % 2 == 0 ? owner.AccountKey : client.AccountKey, State = "running", Result = String.Join("\n", Enumerable.Range(0, 130).Select(line => "Résultat fictif et sélectionnable · ligne " + line)), Branch = "codex/fixture/" + index, ConfigurationId = "configuration-fixture", ThreadId = "thread-fixture", ReturnState = "none" }).ToList();
             int reads = 0, checks = 0, loads = 0, submits = 0, ensures = 0;
-            var window = new CloudJobsWindow(context, shell) { Opacity = 0, ShowInTaskbar = false, Width = 880, Height = 580 };
+            var window = new CloudJobsWindow(context, shell) { Opacity = 0, ShowInTaskbar = false, Width = 1100, Height = 760 };
             window.JobsFixture = () =>
             {
                 reads++;
                 return Task.FromResult(Json.Read<CloudJob[]>(Json.Write(jobs.Select(job => job.Id == savedId ? context.Store.ReadRecord<CloudJob>("cloud-job-" + savedId + ".dpapi") : job))));
             };
+            window.MonitoringFixture=job=>new CloudJobMonitorSnapshot{LastSuccessfulCheckUtc=DateTime.UtcNow.ToString("o"),LastKnownState=job.State,NotificationState=job.ReturnToSource?(job.ReturnState=="none"?"waiting":job.ReturnState):"none",Events=new CloudJobMonitorEvent[0]};
             Button Button(string label) => Descendants(window).OfType<Button>().Single(button => Object.Equals(button.Content, label));
             TextBlock Error() => Descendants(window).OfType<TextBlock>().Single(text => AutomationProperties.GetName(text) == "Erreur des missions Cloud");
             try
@@ -34,20 +36,27 @@ namespace Creezio.Switcher.Desktop
                 assert(window.Owner == shell && Descendants(window).OfType<TextBlock>().Any(text => text.Text.Contains("compte-0@example.com")) && Descendants(window).OfType<TextBlock>().Any(text => text.Text == "En cours"), "missions Cloud affichent le compte exécutant et un statut français dans la fenêtre possédée");
                 window.JobsList.SelectedIndex = 30;
                 window.JobsList.ScrollIntoView(window.JobsList.SelectedItem);
+                window.Dashboard.DetailTabs.SelectedIndex=2;window.UpdateLayout();
                 var diagnostic = Descendants(window).OfType<Expander>().Single(); diagnostic.IsExpanded = true;
                 window.UpdateLayout();
                 var listScroll = Descendants(window.JobsList).OfType<ScrollViewer>().First(); listScroll.ScrollToVerticalOffset(20);
-                window.ResultText.Select(18, 9); window.ResultText.ScrollToVerticalOffset(100);
                 window.DetailsScroll.ScrollToBottom(); window.UpdateLayout();
-                double listOffset = listScroll.VerticalOffset, outerOffset = window.DetailsScroll.VerticalOffset, innerOffset = window.ResultText.VerticalOffset;
-                var resultControl = window.ResultText; string selected = window.SelectedJobId;
+                double listOffset = listScroll.VerticalOffset, outerOffset = window.DetailsScroll.VerticalOffset;
+                var source=window.JobsList.ItemsSource;var selectedRow=window.JobsList.SelectedItem;
+                window.Dashboard.DetailTabs.SelectedIndex=1;window.UpdateLayout();window.ResultText.Select(18,9);window.ResultText.ScrollToVerticalOffset(100);window.UpdateLayout();
+                double innerOffset=window.ResultText.VerticalOffset;var resultControl = window.ResultText; string selected = window.SelectedJobId;
                 await window.RefreshNow();
-                assert(window.SelectedJobId == selected && ReferenceEquals(resultControl, window.ResultText) && diagnostic.IsExpanded && window.ResultText.SelectionStart == 18 && window.ResultText.SelectionLength == 9, "actualisation conserve la mission sélectionnée, la réponse sélectionnable et le diagnostic ouvert");
-                assert(listOffset > 0 && outerOffset > 0 && innerOffset > 0 && Math.Abs(listScroll.VerticalOffset - listOffset) < 1 && Math.Abs(window.DetailsScroll.VerticalOffset - outerOffset) < 2 && Math.Abs(window.ResultText.VerticalOffset - innerOffset) < 2, "actualisation identique conserve les trois positions de lecture sans reconstruire les contrôles");
+                assert(window.SelectedJobId == selected && ReferenceEquals(resultControl, window.ResultText) && ReferenceEquals(source,window.JobsList.ItemsSource)&&ReferenceEquals(selectedRow,window.JobsList.SelectedItem)&&diagnostic.IsExpanded && window.ResultText.SelectionStart == 18 && window.ResultText.SelectionLength == 9, "actualisation conserve la mission, ses objets de liste, le résultat sélectionnable et les références ouvertes");
+                assert(listOffset > 0 && innerOffset > 0 && Math.Abs(listScroll.VerticalOffset - listOffset) < 1 && Math.Abs(window.ResultText.VerticalOffset - innerOffset) < 2&&window.Dashboard.DetailTabs.SelectedIndex==1, "actualisation identique conserve le défilement de liste et de résultat dans leur onglet sans reconstruire les contrôles");
+                assert(!Descendants(window.ResultText).OfType<ScrollViewer>().Any(scroll=>scroll.Content is ScrollViewer)&&!Descendants(window.DetailsScroll).OfType<TextBox>().Any(),"résultat et résumé défilent dans des onglets distincts sans zone de défilement imbriquée");
                 jobs[30].State = "attention";
                 await window.RefreshNow();
-                assert(window.SelectedJobId == selected && diagnostic.IsExpanded && window.ResultText.SelectionStart == 18 && window.DetailsScroll.VerticalOffset >= outerOffset - 2 && Descendants(window).OfType<TextBlock>().Any(text => text.Text.Contains("Intervention requise")), "changement de statut actualise le français sans perdre la lecture en cours");
+                assert(window.SelectedJobId == selected && diagnostic.IsExpanded && window.ResultText.SelectionStart == 18 && window.Dashboard.DetailTabs.SelectedIndex==1 && Descendants(window).OfType<TextBlock>().Any(text => text.Text.Contains("Intervention requise")), "changement de statut conserve la lecture du résultat sans changer l’onglet");
+                window.Dashboard.DetailTabs.SelectedIndex=2;window.UpdateLayout();window.DetailsScroll.ScrollToBottom();window.UpdateLayout();outerOffset=window.DetailsScroll.VerticalOffset;await window.RefreshNow();
+                assert(outerOffset>0&&Math.Abs(window.DetailsScroll.VerticalOffset-outerOffset)<2,"lecture du résumé conserve sa position pendant les actualisations");
                 Capture(window, Path.Combine(root, "Cloud-jobs.png"));
+                await CloudDashboardFilters(window,jobs,root,assert);
+                window.JobsList.SelectedItem=window.JobsList.Items.Cast<object>().Single(item=>ReferenceEquals(item,selectedRow));
 
                 var checkedJob = new TaskCompletionSource<bool>();
                 window.AdvanceFixture = async (id, token) => { checks++; assert(id == selected, "vérification de progression cible seulement la mission affichée"); await checkedJob.Task.WaitAsync(token); jobs.Single(job => job.Id == id).State = "completed"; return jobs.Single(job => job.Id == id); };
@@ -59,7 +68,7 @@ namespace Creezio.Switcher.Desktop
                 Button("Vérifier la progression").RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
                 assert(checks == 1 && !Button("Vérifier la progression").IsEnabled, "double clic de progression ne démarre qu’une lecture en parallèle");
                 checkedJob.SetResult(true);
-                await Until(() => Descendants(window).OfType<TextBlock>().Any(text => text.Text.Contains("Terminée")) && !Descendants(window).OfType<Button>().Any(button => Object.Equals(button.Content, "Vérifier la progression")));
+                await Until(() => Descendants(window).OfType<TextBlock>().Any(text => text.Text.Contains("Terminée")) && !Descendants(window).OfType<Button>().Any(button => button.IsVisible&&Object.Equals(button.Content, "Vérifier la progression")));
 
                 var oldLoad = new TaskCompletionSource<CloudConfiguration[]>();
                 var submitted = new TaskCompletionSource<bool>();
@@ -138,7 +147,7 @@ namespace Creezio.Switcher.Desktop
                 await Until(() => ensures == 2);
                 assert(submits == 2 && Error().Text == "", "reprise du suivi démarre le superviseur sans resoumettre la mission");
                 Button("Annuler cette mission").RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
-                await Until(() => Descendants(window).OfType<TextBlock>().Any(text => text.Text.Contains("Annulée")) && !Descendants(window).OfType<Button>().Any(button => Object.Equals(button.Content, "Annuler cette mission")));
+                await Until(() => Descendants(window).OfType<TextBlock>().Any(text => text.Text.Contains("Annulée")) && !Descendants(window).OfType<Button>().Any(button => button.IsVisible&&Object.Equals(button.Content, "Annuler cette mission")));
                 assert(context.Store.ReadRecord<CloudJob>("cloud-job-" + savedId + ".dpapi").State == "cancelled", "annulation de la mission en attente est enregistrée sans envoyer de travail Cloud");
                 int previous = reads;
                 await Until(() => reads > previous);
@@ -154,6 +163,97 @@ namespace Creezio.Switcher.Desktop
             assert(!closing.RefreshTimerRunning && pendingReads == 1, "fermeture pendant la première lecture ne redémarre jamais le timer après sa réponse tardive");
             await CloudWizardStates(shell, owner, client, root, assert);
             await CloudWizardAccountChange(context, shell, owner, client, assert);
+            await CloudDashboardFollowUps(context,shell,owner,client,root,assert);
+            await CloudDashboardReadFreshness(context,shell,owner,root,assert);
+        }
+
+        private static async Task CloudDashboardFollowUps(DesktopContext context,ShellWindow shell,DesktopInstance owner,DesktopInstance client,string root,Action<bool,string> assert)
+        {
+            var parent=new CloudJob
+            {
+                SchemaVersion=2,Id="e1a2b3c4d5e6417890abcdef12345678",Title="Mission initiale de recette",State="completed",Result="Résultat initial conservé : https://github.com/creezio/fixture/pull/42",Repository="creezio/fixture",
+                InstanceId=client.Id,InstanceName=client.Name,AccountKey=client.AccountKey,ConfigurationId="environment-follow-up",ThreadId="thread-shared-follow-up",TurnId="turn-initial",
+                Branch="codex/worker/recette/lot-8-01",ReturnToSource=true,ReturnState="delivered",SourceAccount=owner.AccountKey,SourceThread="source-orchestrator"
+            };
+            var child=new CloudJob
+            {
+                SchemaVersion=3,Kind="follow-up",Id="e2a2b3c4d5e6417890abcdef12345678",ParentId=parent.Id,RootJobId=parent.Id,ParentTurnId=parent.TurnId,FollowUpNumber=2,
+                Title="Corriger les tests de la même PR",State="running",Result="Résultat du cycle de correction",InstanceId=client.Id,InstanceName=client.Name,AccountKey=client.AccountKey,
+                ConfigurationId=parent.ConfigurationId,ThreadId=parent.ThreadId,TurnId="turn-correction",Branch=parent.Branch,Repository=parent.Repository,ReturnToSource=true,ReturnState="waiting",SourceAccount=owner.AccountKey,SourceThread=parent.SourceThread
+            };
+            var jobs=new[]{child,parent};var now=DateTime.UtcNow.ToString("o");
+            var window=new CloudJobsWindow(context,shell)
+            {
+                Opacity=0,ShowInTaskbar=false,Width=1100,Height=760,
+                JobsFixture=()=>Task.FromResult(Json.Read<CloudJob[]>(Json.Write(jobs))),
+                MonitoringFixture=job=>new CloudJobMonitorSnapshot
+                {
+                    LastSuccessfulCheckUtc=now,LastKnownState=job.State,
+                    NotificationState=job.Id==parent.Id?"delivered":"waiting",NotificationSentUtc=job.Id==parent.Id?now:null,
+                    Events=new[]{new CloudJobMonitorEvent{TimeUtc=now,Kind="fixture",Message=job.Id==parent.Id?"Journal initial terminé":"Journal du cycle de correction"}}
+                }
+            };
+            try
+            {
+                window.Show();await Until(()=>window.JobsList.Items.Count==2);var dashboard=window.Dashboard;
+                dashboard.SetView(1);dashboard.Search.Text="Corriger les tests";window.UpdateLayout();
+                var badge=Descendants(window).OfType<TextBlock>().Single(text=>AutomationProperties.GetName(text)=="Cycle de correction");
+                assert(Descendants(dashboard.GithubShortcuts).OfType<TextBlock>().SelectMany(text=>text.Inlines.OfType<System.Windows.Documents.Hyperlink>()).Any(link=>link.NavigateUri.AbsoluteUri=="https://github.com/creezio/fixture/pull/42"),"correction affiche directement la PR du cycle précédent sans devoir répéter son lien dans le mandat");
+                bool childContext=window.JobsList.Items.Count==1&&window.SelectedJobId==child.Id&&badge.IsVisible&&badge.Text=="Correction n°2"&&Descendants(window).OfType<TextBlock>().Any(text=>text.Text.Contains("Suite de « Mission initiale de recette »"))&&Descendants(window).OfType<TextBlock>().Any(text=>text.IsVisible&&text.Text=="Retour à la fin du travail");
+                dashboard.DetailTabs.SelectedIndex=1;window.UpdateLayout();bool childResult=window.ResultText.Text==child.Result;
+                dashboard.DetailTabs.SelectedIndex=0;window.UpdateLayout();bool childJournal=Descendants(window).OfType<TextBlock>().Any(text=>text.Text=="Journal du cycle de correction")&&!Descendants(window).OfType<TextBlock>().Any(text=>text.Text=="Journal initial terminé");
+                assert(childContext&&childResult&&childJournal,"cycle de correction filtré identifie son parent et son numéro en gardant un résultat et un journal propres au nouveau tour");
+                dashboard.DetailTabs.SelectedIndex=0;window.UpdateLayout();Capture(window,Path.Combine(root,"Cloud-follow-up-cycle.png"));
+                Descendants(window).OfType<Button>().Single(button=>Object.Equals(button.Content,"Voir la mission précédente")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));window.UpdateLayout();
+                bool parentContext=window.SelectedJobId==parent.Id&&dashboard.ActiveView==0&&dashboard.Search.Text==""&&window.JobsList.Items.Count==2&&!badge.IsVisible&&Descendants(window).OfType<TextBlock>().Any(text=>text.IsVisible&&text.Text=="Notification envoyée");
+                dashboard.DetailTabs.SelectedIndex=1;window.UpdateLayout();bool parentResult=window.ResultText.Text==parent.Result;
+                dashboard.DetailTabs.SelectedIndex=0;window.UpdateLayout();bool parentJournal=Descendants(window).OfType<TextBlock>().Any(text=>text.Text=="Journal initial terminé")&&!Descendants(window).OfType<TextBlock>().Any(text=>text.Text=="Journal du cycle de correction");
+                assert(parentContext&&parentResult&&parentJournal&&parent.State=="completed"&&child.State=="running"&&parent.ThreadId==child.ThreadId&&parent.Branch==child.Branch,"navigation vers le parent traverse les filtres sans copier ni remplacer les cycles et restaure son résultat et sa notification historiques");
+            }
+            finally{if(window.IsLoaded)window.Close();}
+        }
+
+        private static async Task CloudDashboardFilters(CloudJobsWindow window,List<CloudJob> jobs,string root,Action<bool,string> assert)
+        {
+            var dashboard=window.Dashboard;var previous=window.MonitoringFixture;double previousWidth=window.Width,previousHeight=window.Height;
+            var states=jobs.ToDictionary(job=>job.Id,job=>job.State);
+            jobs[0].State="completed";jobs[2].State="completed";jobs[3].State="attention";jobs[2].Lot="lot-8-02";jobs[2].Feature="meili-incremental";jobs[2].Branch="codex/worker/meili-incremental/lot-8-02";
+            var now=DateTime.UtcNow;
+            window.MonitoringFixture=job=>new CloudJobMonitorSnapshot
+            {
+                LastCheckedUtc=now.ToString("o"),LastSuccessfulCheckUtc=now.ToString("o"),LastKnownState=job.State,NextCheckUtc=job.State=="running"?now.AddSeconds(60).ToString("o"):null,
+                NotificationState=job.Id==jobs[0].Id?"delivered":job.Id==jobs[2].Id?"source-busy":job.Id==jobs[3].Id?"uncertain":"waiting",
+                NotificationSentUtc=job.Id==jobs[0].Id?now.ToString("o"):null,NotificationAttempts=job.Id==jobs[0].Id?1:0,
+                LastNotificationError=job.Id==jobs[3].Id?"Accusé de réception fictif à vérifier":null,
+                Events=new[]{new CloudJobMonitorEvent{TimeUtc=now.AddMinutes(-2).ToString("o"),Kind="registered",Message="Mission enregistrée"},new CloudJobMonitorEvent{TimeUtc=now.ToString("o"),Kind="checked",Message="Vérification effectuée sans créer de conversation"}}
+            };
+            try
+            {
+                await window.RefreshNow();
+                var sent=Descendants(window).OfType<TextBlock>().Single(text=>AutomationProperties.GetName(text)=="Missions notifiées");
+                assert(sent.Text=="1","compteur de notifications envoyées utilise les accusés de réception plutôt que la seule fin des missions");
+                dashboard.Search.Text="lot-8-02";assert(window.JobsList.Items.Count==1,"recherche retrouve une mission par son numéro de lot ou sa branche");
+                assert(Descendants(window).OfType<TextBlock>().Any(text=>text.Text=="Orchestrateur occupé"),"fiche d’une mission terminée indique séparément que sa notification attend l’orchestrateur");
+                assert(Descendants(window).OfType<TextBlock>().Any(text=>text.Text.Contains("Lot 8-02"))&&!Descendants(window).OfType<TextBlock>().Any(text=>text.Text.Contains("Lot lot-")),"numéro de lot est lisible sans préfixe doublé");
+                dashboard.DetailTabs.SelectedIndex=0;window.UpdateLayout();assert(Descendants(window).OfType<TextBlock>().Any(text=>text.Text=="Vérification effectuée sans créer de conversation"),"journal de la mission présente les vérifications et notifications sans appel Cloud");
+                dashboard.Search.Text="";dashboard.SetView(1);assert(window.JobsList.Items.Count==jobs.Count(job=>new[]{"queued","creating","prepared","sending","running","reserved"}.Contains(job.State)),"vue En cours contient les exécutions actives et masque les résultats terminés");
+                dashboard.SetView(2);assert(window.JobsList.Items.Count==2,"vue À traiter isole les interventions et remises incertaines au lieu de les afficher comme envoyées");
+                dashboard.SetView(3);assert(window.JobsList.Items.Count==2,"historique rassemble les états terminaux et laisse les interventions non terminées dans À traiter");
+                dashboard.SetView(0);dashboard.AccountFilter.SelectedIndex=1;assert(window.JobsList.Items.Count==35,"filtre de compte exécutant masque les autres comptes sans perdre les 70 missions du tableau");
+                dashboard.AccountFilter.SelectedIndex=0;dashboard.Search.Text="mission-absente-de-la-recette";assert(window.JobsList.Items.Count==0&&window.SelectedJobId==null&&Descendants(window).OfType<TextBlock>().Any(text=>text.IsVisible&&text.Text=="Aucune mission pour cette vue."),"recherche vide affiche un état explicite et aucune ancienne fiche de mission");
+                dashboard.Search.Text="";window.JobsList.SelectedIndex=0;dashboard.DetailTabs.SelectedIndex=0;window.Width=1400;window.Height=900;window.UpdateLayout();
+                assert(window.JobsList.ActualHeight>350&&dashboard.DetailTabs.ActualHeight>300,"grand écran donne la priorité à la liste et au détail plutôt qu’à une pile de boutons");Capture(window,Path.Combine(root,"Cloud-delegations-dashboard.png"));
+                window.Width=880;window.Height=580;window.UpdateLayout();
+                assert(window.JobsList.IsVisible&&window.JobsList.ActualHeight>120&&window.JobsList.ActualWidth>700,"format compact 880×580 affiche la liste en pleine largeur au lieu d’une fiche trop étroite");Capture(window,Path.Combine(root,"Cloud-delegations-compact.png"));
+                string selected=window.SelectedJobId;dashboard.OpenSelectedDetails();window.UpdateLayout();
+                assert(!window.JobsList.IsVisible&&dashboard.DetailTabs.IsVisible&&dashboard.DetailTabs.ActualHeight>100&&ReferenceEquals(((TabItem)dashboard.DetailTabs.Items[1]).Content,dashboard.ResultText),"ouvrir une mission compacte donne l’espace à sa fiche et garde le résultat dans son propre onglet");Capture(window,Path.Combine(root,"Cloud-delegations-compact-detail.png"));
+                Descendants(window).OfType<Button>().Single(button=>Object.Equals(button.Content,"← Missions")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));window.UpdateLayout();
+                assert(window.JobsList.IsVisible&&window.SelectedJobId==selected,"retour aux missions compactes retrouve la même sélection sans refaire la mission");
+            }
+            finally
+            {
+                window.Width=previousWidth;window.Height=previousHeight;dashboard.Search.Text="";dashboard.AccountFilter.SelectedIndex=0;dashboard.SetView(0);foreach(var job in jobs)job.State=states[job.Id];window.MonitoringFixture=previous;await window.RefreshNow();dashboard.DetailTabs.SelectedIndex=0;
+            }
         }
 
         private static async Task CloudWizardStates(ShellWindow shell, DesktopInstance owner, DesktopInstance client, string root, Action<bool, string> assert)

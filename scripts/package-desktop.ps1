@@ -1,12 +1,18 @@
 [CmdletBinding()]
-param([switch]$SkipBuild,[string]$BinaryDirectory)
+param([switch]$SkipBuild,[string]$BinaryDirectory,[switch]$Replace)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Path $repo 'outputs\v0.19.0-beta.1'}
+$bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{$sourceVersion=[regex]::Match([IO.File]::ReadAllText((Join-Path $repo 'src\RelayWorker.cs')),'internal const string Version="([^"]+)"').Groups[1].Value;if(-not $sourceVersion){throw 'Version source introuvable.'};Join-Path $repo ('outputs\v'+$sourceVersion)}
+$packageCursor=$bin
+while($packageCursor){if((Test-Path -LiteralPath $packageCursor) -and ((Get-Item -LiteralPath $packageCursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Dossier de packaging lié refusé.'};$packageCursor=[IO.Path]::GetDirectoryName($packageCursor)}
+# Documentation is refreshed before hashing. Never overwrite a link to a source.
+if(Test-Path -LiteralPath $bin){foreach($packageDocument in Get-ChildItem -LiteralPath $bin -Force -File | Where-Object {$_.Extension -in @('.md','.txt')}){if(($packageDocument.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $packageDocument.LinkType -eq 'HardLink'){throw 'Documentation liée refusée avant packaging.'}}}
 $archiveDrive=Get-PSDrive -Name ([IO.Path]::GetPathRoot($bin).Substring(0,1))
 if($archiveDrive.Free -lt 20GB){throw 'Création du ZIP refusée : au moins 20 Gio libres requis avant cette opération volumineuse. Ouvrez Stockage ; les fichiers de livraison sont conservés.'}
 if(-not $SkipBuild){& (Join-Path $PSScriptRoot 'build-desktop.ps1') -OutputDirectory $bin -Portable}
 foreach($required in @('CodexAccountSwitcher.exe','CodexAccountSwitcher.dll','CodexAccountSwitcher.runtimeconfig.json','coreclr.dll','PresentationFramework.dll','CreezioRelay.exe','plugins')){if(-not(Test-Path -LiteralPath (Join-Path $bin $required))){throw "Livraison autonome incomplète : $required"}}
+$version=[Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $bin 'CodexAccountSwitcher.dll')).ProductVersion
+if($version -notmatch '\A\d+\.\d+\.\d+(?:\.\d+)?(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?\z'){throw 'Version réelle de livraison invalide.'}
 $instructions=@'
 CODEX ACCOUNT SWITCHER — 0.19.0-beta.1 — WINDOWS X64
 
@@ -14,6 +20,15 @@ Extraire TOUT le ZIP et lancer CodexAccountSwitcher.exe.
 Garder les DLL, fichiers JSON, exécutables et dossier plugins ensemble.
 Le runtime .NET 10 de cette interface WPF est inclus. Aucun SDK à installer.
 Le moteur de relais utilise .NET Framework 4.8, présent sur Windows 10/11.
+
+Pour conserver une seule entrée de lancement : ouvrir Paramètres, puis
+Application et mises à jour, et installer l'entrée permanente.
+Le raccourci du menu Démarrer ouvre ensuite la version installée depuis
+%LOCALAPPDATA%\Programs\Creezio\CodexAccountSwitcher\Switcher.exe.
+Activer les mises à jour automatiques et le démarrage Windows dans ce panneau.
+Le démarrage Windows conserve Switcher dans la zone de notification.
+Une mise à jour attend la disponibilité du Switcher pour son redémarrage ;
+la fenêtre ouverte propose aussi Installer et redémarrer.
 
 0.19 : Stockage, temporaires vérifiés et prévention des copies volumineuses.
 Stockage : analyse à la demande et nettoyage avec prévisualisation.
@@ -147,13 +162,21 @@ WINDOWS-CONSOLE-VALIDATION.md pour les tests et limites.
 
 https://github.com/creezio/codex-account-switcher-windows
 '@
+$instructions=$instructions.Replace('CODEX ACCOUNT SWITCHER — 0.19.0-beta.1 — WINDOWS X64',('CODEX ACCOUNT SWITCHER — '+$version+' — WINDOWS X64'))
 [IO.File]::WriteAllText((Join-Path $bin 'LIRE-MOI.txt'),$instructions,[Text.UTF8Encoding]::new($false))
 Copy-Item -LiteralPath (Join-Path $repo 'LICENSE') -Destination (Join-Path $bin 'LICENSE.txt') -Force
 Copy-Item -LiteralPath (Join-Path $repo 'README.md') -Destination $bin -Force
 Copy-Item -LiteralPath (Join-Path $repo 'docs\PERFORMANCE-DASHBOARD.md') -Destination $bin -Force
 foreach($name in @('CLOUD-NATIVE-PILOT.md','RELEASE-0.17.2.md','RELEASE-0.17.1.md','RELEASE-0.17.md','STARTUP-RECOVERY.md','TRANSFERS.md','THREAD-COPY.md','LOGIN-BROWSER.md','INSTANCE-WIZARD-FIX.md','RESOURCE-LINKS.md','RESOURCE-LINKS-VALIDATION.md','INSTANCE-LIFECYCLE.md','SHARED-PAGES.md','SHARED-PAGES-VALIDATION.md','INSTANCE-RESOURCES.md','TOOL-TUNNEL.md','SIMPLE-INSTANCES.md','UI-VALIDATION.md','UI-REBUILD-PLAN.md','RELAY.md','WINDOWS-CONSOLE.md','WINDOWS-CONSOLE-VALIDATION.md')){Copy-Item -LiteralPath (Join-Path $repo ('docs\'+$name)) -Destination $bin -Force}
 Copy-Item -LiteralPath (Join-Path $repo 'docs\STORAGE.md') -Destination $bin -Force
-$zip=Join-Path $repo 'outputs\CodexAccountSwitcher-0.19.0-beta.1-windows-x64.zip'
+foreach($name in @('SKILLS.md','PORTAL-MANAGEMENT.md','PORTAL-COMPOSER.md')){Copy-Item -LiteralPath (Join-Path $repo ('docs\'+$name)) -Destination $bin -Force}
+if(Test-Path -LiteralPath (Join-Path $bin 'SwitcherLauncher.exe')){
+  if(Test-Path -LiteralPath (Join-Path $repo 'docs\APPLICATION-UPDATES.md')){Copy-Item -LiteralPath (Join-Path $repo 'docs\APPLICATION-UPDATES.md') -Destination $bin -Force}
+  & (Join-Path $PSScriptRoot 'package-update.ps1') -BinaryDirectory $bin -Replace:$Replace
+  return
+}
+# Older portable directories keep their original manifest-free packaging path.
+$zip=Join-Path $repo ('outputs\CodexAccountSwitcher-'+$version+'-windows-x64.zip')
 # All published runtime assemblies are required. Test helpers and debug symbols are not shipped.
 $items=Get-ChildItem -LiteralPath $bin | Where-Object {$_.Name -notmatch '(Smoke|Tests|\.pdb$)' -and $_.Name -ne 'RUNTIME-SHARED.json' } | ForEach-Object FullName
 Add-Type -AssemblyName System.IO.Compression
@@ -181,5 +204,5 @@ try{
 }finally{$archive.Dispose()}
 Move-Item -LiteralPath $temporary -Destination $zip -Force
 $hash=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-[IO.File]::WriteAllText((Join-Path $repo 'outputs\SHA256SUMS-0.19.0-beta.1.txt'),$hash+'  '+[IO.Path]::GetFileName($zip)+"`n")
+[IO.File]::WriteAllText((Join-Path $repo ('outputs\SHA256SUMS-'+$version+'.txt')),$hash+'  '+[IO.Path]::GetFileName($zip)+"`n")
 Get-Item -LiteralPath $zip | Select-Object Name,Length

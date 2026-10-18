@@ -16,3 +16,4 @@ if($free -lt 2GB){throw 'Au moins 2 Gio libres requis pour préparer la livraiso
 if($Portable){& $dotnet publish (Join-Path $repo 'desktop\Switcher.Desktop.csproj') -c Release -r win-x64 --self-contained true -o $target}
 else{& $dotnet build (Join-Path $repo 'desktop\Switcher.Desktop.csproj') -c Release -o $target}
 if($LASTEXITCODE -ne 0){throw 'Échec de compilation WPF.'}
+if($Portable){& (Join-Path $PSScriptRoot 'package-update.ps1') -BinaryDirectory $target -ManifestOnly | Out-Host}

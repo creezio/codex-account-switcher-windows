@@ -14,13 +14,18 @@ namespace Creezio.Switcher
         public int Pid {get;set;}
         public long Started {get;set;}
         public string Version {get;set;}
+        public int? ExecutionVersion {get;set;}
+        public int? CloudJobSchemaVersion {get;set;}
+        public int? CloudQueueAdmissionVersion {get;set;}
         public string Updated {get;set;}
         public string Error {get;set;}
         public bool Paused {get;set;}
     }
     internal static class RelayWorker
     {
-        internal const string Version="0.19.0-beta.1";
+        // Portal missions require the per-instance grant to be revalidated
+        // immediately before sending into a native conversation.
+        internal const string Version="0.29.0-beta.2";
         public static RelayWorkerState Status(RelayStore store){var state=store.ReadRecord<RelayWorkerState>("worker.dpapi");state.Paused=Paused(store);return state;}
         public static bool Running(RelayStore store){var s=Status(store);return DesktopRuntime.SameProcess(s.Pid,s.Started);}
         public static bool Paused(RelayStore store){return store.ReadRecord<RelayWorkerState>("worker-stop.dpapi").Paused;}
@@ -88,7 +93,7 @@ namespace Creezio.Switcher
         {
             var store=new RelayStore(root);if(Paused(store))return 0;FileStream lease;try{lease=store.Lease("worker");}catch(IOException){return 0;}
             using(lease)using(var quit=new CancellationTokenSource())using(var process=Process.GetCurrentProcess()){
-                DateTime start=DateTime.UtcNow;var state=new RelayWorkerState{Pid=process.Id,Started=process.StartTime.ToUniversalTime().Ticks,Version=Version};
+                DateTime start=DateTime.UtcNow;var state=new RelayWorkerState{Pid=process.Id,Started=process.StartTime.ToUniversalTime().Ticks,Version=Version,ExecutionVersion=CloudJobWorker.ExecutionVersion,CloudJobSchemaVersion=CloudJobWorker.SchemaVersion};
                 Action heartbeat=delegate{try{state.Updated=DateTime.UtcNow.ToString("o");store.WriteRecord("worker.dpapi",state);DateTime stop;if(DateTime.TryParse(store.ReadRecord<RelayWorkerState>("worker-stop.dpapi").Updated,out stop)&&stop.ToUniversalTime()>start)quit.Cancel();}catch(IOException){}};
                 heartbeat();
                 using(var timer=new System.Threading.Timer(o=>heartbeat(),null,2000,2000)){
@@ -129,24 +134,44 @@ namespace Creezio.Switcher
     }
     internal static class RelayReconnect
     {
+        internal sealed class Endpoint
+        {
+            internal string PipePath,ThreadId;
+            internal int Pid;
+            internal long Started;
+        }
         public static async Task Refresh(RelayStore store,CancellationToken token)
         {
-            foreach(var channel in store.Channels().Where(c=>c.Enabled&&AgentProviders.Kind(c)=="codex"&&!DesktopRuntime.SameProcess(c.ServerPid,c.ServerStartTicks))){
+            await RefreshCore(store,()=>new AccountService(Path.GetDirectoryName(store.Root)),Discover,DesktopRuntime.SameProcess,token).ConfigureAwait(false);
+        }
+        private static DesktopInstance RequireInstance(AccountService accounts,RelayChannel channel)
+        {
+            var matches=accounts.Data.Instances.Where(i=>!i.Archived&&(String.IsNullOrEmpty(channel.InstanceId)||i.Id==channel.InstanceId)&&i.AccountKey==channel.AccountKey&&RelayStore.SamePath(accounts.Instances.Home(i),channel.Home)).ToArray();
+            if(matches.Length!=1||String.IsNullOrEmpty(channel.AnchorThreadId))throw new InvalidOperationException("L’instance, le compte ou le chat d’ancrage ne correspond plus au canal enregistré.");
+            NamedInstances.VerifyAccount(accounts,matches[0]);return matches[0];
+        }
+        private static async Task<Endpoint> Discover(RelayStore store,AccountService accounts,DesktopInstance instance,RelayChannel channel,CancellationToken token)
+        {
+            string pipe;using(var client=NamedInstances.OpenDesktop(store,accounts,instance,token,out pipe)){
+                var snapshot=await client.Call(channel.AnchorThreadId,"read_thread",new{threadId=channel.AnchorThreadId,turnLimit=1,includeOutputs=false,maxOutputCharsPerItem=1000},token).ConfigureAwait(false);
+                DirectMessages.RequireThread(snapshot,channel.AnchorThreadId);
+                return new Endpoint{PipePath=pipe,Pid=client.ServerPid,Started=client.ServerStartTicks,ThreadId=channel.AnchorThreadId};
+            }
+        }
+        internal static async Task RefreshCore(RelayStore store,Func<AccountService> accounts,Func<RelayStore,AccountService,DesktopInstance,RelayChannel,CancellationToken,Task<Endpoint>> discover,Func<int,long,bool> alive,CancellationToken token)
+        {
+            foreach(var channel in store.Channels().Where(c=>c.Enabled&&AgentProviders.Kind(c)=="codex")){
+                token.ThrowIfCancellationRequested();
                 try{
-                    if(!InstanceRules.ValidId(channel.InstanceId))continue;
-                    string root=Path.GetDirectoryName(store.Root),home=InstancePaths.Home(root,channel.InstanceId);
-                    if(!RelayStore.SamePath(home,channel.Home))continue;
-                    var statePath=Path.Combine(InstancePaths.Folder(root,channel.InstanceId),"state.json");
-                    if(!File.Exists(statePath))continue;
-                    var state=Json.Read<InstanceState>(SafeFiles.ReadText(statePath));
-                    if(!DesktopRuntime.SameProcess(state.DesktopPid,state.DesktopStartTicks)||String.IsNullOrEmpty(state.AppToolsPipe))continue;
-                    if(AuthIdentity.Parse(SafeFiles.ReadText(Path.Combine(home,"auth.json"))).Key!=channel.AccountKey)continue;
-                    using(var client=new AppToolsClient(state.AppToolsPipe,state.DesktopPid,state.DesktopStartTicks)){
-                        var snapshot=await client.Call(channel.AnchorThreadId,"read_thread",new {threadId=channel.AnchorThreadId,turnLimit=1,includeOutputs=false,maxOutputCharsPerItem=1000},token);
-                        if(Json.Str(Json.Get(Json.Get(snapshot,"thread"),"id"))!=channel.AnchorThreadId)continue;
-                        channel.PipePath=state.AppToolsPipe;channel.ServerPid=state.DesktopPid;channel.ServerStartTicks=state.DesktopStartTicks;channel.ConnectedUtc=DateTime.UtcNow.ToString("o");channel.Diagnostic="Reconnexion vérifiée";store.Register(channel);
-                    }
-                }catch(OperationCanceledException){throw;}catch(Exception e){channel.Diagnostic=Program.SafeError(e);store.Register(channel);}
+                    if(alive(channel.ServerPid,channel.ServerStartTicks))continue;
+                    var before=accounts();var instance=RequireInstance(before,channel);
+                    var endpoint=await discover(store,before,instance,channel,token).ConfigureAwait(false);
+                    token.ThrowIfCancellationRequested();var after=accounts();var fresh=RequireInstance(after,channel);
+                    var state=after.Instances.Runtime.Probe(fresh);
+                    if(fresh.Id!=instance.Id||endpoint==null||String.IsNullOrEmpty(endpoint.PipePath)||endpoint.ThreadId!=channel.AnchorThreadId||!state.Running||state.Phase=="unknown"||state.DesktopPid!=endpoint.Pid||state.DesktopStartTicks!=endpoint.Started||!alive(endpoint.Pid,endpoint.Started))throw new InvalidOperationException("La preuve de reconnexion Codex n’est plus valide.");
+                    store.RefreshDesktopEndpoint(channel,endpoint.PipePath,endpoint.Pid,endpoint.Started,"Reconnexion vérifiée");
+                }catch(OperationCanceledException){throw;}
+                catch(Exception){store.RefreshDesktopEndpoint(channel,null,0,0,"Reconnexion non confirmée. Vérifiez que l’instance et son compte d’origine sont toujours ouverts. Aucun autre moteur n’a été lancé.");}
             }
         }
     }

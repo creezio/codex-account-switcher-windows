@@ -5,7 +5,11 @@ description: Use tools or private plugins through another named Codex instance w
 
 The user configures resource access in Account Switcher → Instances → the owner
 instance → Ressources & accès → Partager avec → select the requesting instance,
-check resources and choose read/edit, then save. For other plugins, use the plugin
+check resources and choose read/edit, then save. For Sites, publishing is a
+separate explicit right: "Lecture, modification et publication". Ordinary
+"Lecture et modification" still permits metadata edits only. The owner must
+select the publishing right for the intended Site and save it; existing shares
+are never silently upgraded. For other plugins, use the plugin
 card's Configurer les actions: the owner, recipient and plugin stay fixed, and
 only that plugin's actions are selectable. These action grants use the owner's
 provider access; they do not imply a per-resource restriction. Advanced rules remain
@@ -88,15 +92,46 @@ Current scope: local named Windows instances. Remote-PC invitations do not
 export these tools. Existing prompt-based task delegation remains a separate
 workflow for work requiring another agent's reasoning.
 
-Native local-file uploads are not supported by direct `mcpServer/tool/call` in
-the tested Codex build. Do not pass file paths, invent file references, silently
-drop an archive or send it through an unrelated account. In particular, saving
-and publishing a new Sites version is blocked in this release; Pages text edits,
-Sites reads and compatible tools use the direct path. An already saved Site
-version may have a separate native deployment operation: preserve its exact ID,
-access scope and normal provider workflow. A tool's presence is not a claim that
-every workflow of its plugin is supported. Provider widgets and resource downloads
-remain in the owner's native provider interface.
+The Switcher supports the declared local `.tar.gz` archive parameter of the
+EXACT shared `sites.save_site_version` or `sites.save_version_and_deploy_private`
+operation when `describe_shared_tool` confirms this transport. The invoking chat
+must have native Full Access recorded. Supply the absolute unchanged archive path,
+the authorized `project_id`, and exact pushed `commit_sha`. The Switcher locks and
+hashes the original archive, uploads it with the owner's own authentication,
+finalizes the real file, and sends its native reference. No owner model turn is
+started. The share, account and source permissions are rechecked before saving.
+Keep the same operation ID after uncertainty and inspect the provider; never
+retry an uncertain save under a new ID. No local project/archive copy is needed.
+
+Other native file parameters remain unsupported. Do not invent file references,
+silently drop an archive or send it through an unrelated account. If the loaded
+relay still describes all file uploads as unavailable, use the current Switcher
+delivery or report the version mismatch instead of rebuilding the Site. Pages
+text edits, Sites reads and compatible tools use the direct path. Sites saving without an archive
+is available only when the EXACT authorized native tool schema makes `archive`
+optional and documents remote build fallback when local packaging cannot
+complete. This requires the owner to have shared that write operation for this
+exact Site; a read-only share is insufficient. Do not create or expand the share.
+
+For that fallback, follow the Sites skill, retain evidence that local packaging
+really cannot complete, and verify that the Site's source repository contains
+the exact full commit SHA to publish. Never skip a feasible local package just
+because this tunnel cannot upload it, simulate a failure, or treat an old failure
+as proof for a changed build. Pass only the authorized `project_id` and exact
+`commit_sha` to `save_site_version` (or the documented owner-private combined
+operation after ownership/audience verification), with NO `archive` key, not even
+null. Native permissions and interactive approvals still apply. A shared source
+repository credential is scoped to that Site and must remain in memory/stdin.
+The official source helper can push before packaging fails: reconcile the pushed
+SHA before retrying, and never infer that a failed package means no source push.
+
+Save success is not publication success. Preserve the returned version and any
+saved_version_id, deploy only that exact saved version through the normal tool
+for its existing audience, then inspect the terminal deployment result. An
+already saved Site version may have a separate native deployment operation;
+preserve its exact ID, access scope and normal provider workflow. A tool's
+presence is not a claim that every workflow of its plugin is supported. Provider
+widgets and resource downloads remain in the owner's native provider interface.
 
 On Windows, if the installed Sites publishing helper resolves `bash` to WSL,
 use an already-installed Git Bash in that helper process's PATH. GNU tar needs

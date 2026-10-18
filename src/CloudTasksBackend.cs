@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.WebSockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -62,6 +63,30 @@ namespace Creezio.Switcher
     internal interface ICloudTasksInventoryConnection
     {
         Task<CloudToolInventory> InventoryTools(string threadId, CancellationToken token);
+    }
+    internal interface ICloudTaskTurnConnection
+    {
+        Task<CloudTaskTurn> ReadTurn(string threadId, string turnId, CancellationToken token);
+    }
+    internal sealed class CloudTaskReconciliation
+    {
+        public string AccountKey { get; set; }
+        public string ThreadId { get; set; }
+        public string ConfigurationId { get; set; }
+        public CloudTaskTurn Turn { get; set; }
+        public bool HistoryComplete { get; set; }
+        public string Evidence { get; set; }
+    }
+    internal interface ICloudTaskReconciliationConnection
+    {
+        Task<CloudTaskReconciliation> FindSubmittedTurn(string threadId,string configurationId,string clientUserMessageId,string promptSha256,DateTime attemptedUtc,CancellationToken token);
+    }
+    // Only this transport can prove that its turn/start RPC was never entered.
+    // Do not infer this fact from an empty history or a server-side refusal.
+    internal sealed class CloudTaskNotDispatchedException : CloudBackendException
+    {
+        private static string ErrorCode(Exception error){var backend=error as CloudBackendException;return backend!=null&&Regex.IsMatch(backend.Code??"","^[a-z][a-z0-9-]{0,79}$")?backend.Code:"dispatch-not-sent";}
+        public CloudTaskNotDispatchedException(Exception error) : base(ErrorCode(error),"Le contrôle préalable a échoué avant l'envoi de turn/start. Aucun prompt métier n'a été transmis par cette tentative.") { }
     }
     internal interface ICloudTasksConnection : IDisposable
     {
@@ -144,7 +169,8 @@ namespace Creezio.Switcher
                 do
                 {
                     result = await socket.ReceiveAsync(new ArraySegment<byte>(bytes), token).ConfigureAwait(false);
-                    if (result.MessageType != WebSocketMessageType.Text || buffer.Length + result.Count > 4194304) throw new IOException("Invalid Cloud WebSocket frame.");
+                    if(result.MessageType!=WebSocketMessageType.Text){Stage=result.MessageType==WebSocketMessageType.Close?"frame-close":"frame-nontext";throw new IOException("Invalid Cloud WebSocket frame.");}
+                    if(buffer.Length+result.Count>4194304){Stage="frame-too-large";throw new IOException("Invalid Cloud WebSocket frame.");}
                     buffer.Write(bytes, 0, result.Count);
                 } while (!result.EndOfMessage);
                 return new UTF8Encoding(false, true).GetString(buffer.ToArray());
@@ -155,7 +181,7 @@ namespace Creezio.Switcher
     }
 
     // Native desktop backend adapter; no CLI cloud, browser automation, or protected IPC.
-    internal sealed class CloudTasksBackend : ICloudTasksConnection, ICloudOnboardingConnection, ICloudTasksInventoryConnection
+    internal sealed class CloudTasksBackend : ICloudTasksConnection, ICloudOnboardingConnection, ICloudTasksInventoryConnection, ICloudTasksExecutionConnection, ICloudTaskTurnConnection, ICloudTaskReconciliationConnection
     {
         public const string ProtocolVersion = CloudBackend.ProtocolVersion;
         private readonly ICloudTasksTransport transport;
@@ -233,12 +259,15 @@ namespace Creezio.Switcher
             Current(); return result;
         }
         public Task<CloudTaskThread> Start(string configId, string cwd, CancellationToken token)
-        { return StartCore(configId, cwd, false, token); }
+        { return StartCore(configId, cwd, false, null, token); }
+        public Task<CloudTaskThread> Start(string configId, string cwd, CloudTaskExecutionOptions options, CancellationToken token)
+        { return StartCore(configId, cwd, false, options, token); }
         public Task<CloudTaskThread> StartOnboarding(string configId, CancellationToken token)
-        { return StartCore(configId, "/workspace", true, token); }
-        private async Task<CloudTaskThread> StartCore(string configId, string cwd, bool onboarding, CancellationToken token)
+        { return StartCore(configId, "/workspace", true, null, token); }
+        private async Task<CloudTaskThread> StartCore(string configId, string cwd, bool onboarding, CloudTaskExecutionOptions options, CancellationToken token)
         {
             Id(configId);
+            options = CloudTaskExecutionOptions.Validate(options);
             if (cwd != null && (cwd.Length > 4096 || !cwd.StartsWith("/", StringComparison.Ordinal) || cwd.Any(Char.IsControl))) throw Invalid("Dossier Cloud invalide.");
             Current();
             if (readConfiguration == null) throw Invalid("La vérification de l'environnement Cloud n'est pas configurée.");
@@ -250,9 +279,11 @@ namespace Creezio.Switcher
             }
             else if (config.VersionRevision.Value <= 1 || String.IsNullOrWhiteSpace(config.LatestReadyVersionId) || !new[] { "ready", "pending", "failed" }.Contains(config.Status))
                 throw Invalid("Publiez et vérifiez cet environnement Cloud dans Codex avant de lancer une mission.");
+            if (options.Required) await ValidateExecutionModel(options, null, token).ConfigureAwait(false);
             var environment = new Dictionary<string, object> { { onboarding ? "onboardingConfigId" : "environmentConfigId", configId } };
             if (!onboarding && cwd != null) environment["cwd"] = cwd;
-            var body = new { serviceName = "codex_cloud", ephemeral = false, threadSource = "user", environments = new[] { environment }, deferredEnvironment = true, pluginsMcp = new { productSku = "codex" } };
+            var body = new Dictionary<string, object> { { "serviceName", "codex_cloud" }, { "ephemeral", false }, { "threadSource", "user" }, { "environments", new[] { environment } }, { "deferredEnvironment", true }, { "pluginsMcp", new { productSku = "codex" } } };
+            ApplyExecution(body, options, false);
             var result = await Rpc("thread/start", body, true, token).ConfigureAwait(false);
             try
             {
@@ -276,22 +307,7 @@ namespace Creezio.Switcher
             if (latest != null)
             {
                 var turn = ParseTurn(latest);
-                var items = await Rpc("thread/items/list", new { threadId = threadId, turnId = turn.Id, limit = 100, sortDirection = "desc", cursor = (string)null }, false, token).ConfigureAwait(false);
-                var rows = Rows(Json.Get(items, "data")).ToArray();
-                var text = new List<string>(); bool truncated = false;
-                foreach (var row in rows.Reverse())
-                {
-                    var item = Json.Get(row, "item") ?? row;
-                    if (Json.Get(row, "item") != null && Optional(row, "turnId") != turn.Id) throw Incompatible();
-                    if (Optional(item, "type") != "agentMessage" || !new[] { "final", "final_answer" }.Contains(Optional(item, "phase"))) continue;
-                    string part = Optional(item, "text");
-                    if (part != null) text.Add(part);
-                    if (Object.Equals(Json.Get(item, "truncated"), true)) truncated = true;
-                }
-                string final = String.Join("\n\n", text);
-                if (final.Length > 250000) { final = final.Substring(0, 250000); truncated = true; }
-                turn.Text = Redact(final);
-                turn.TextComplete = !truncated && Json.Get(items, "nextCursor") == null;
+                await ReadTurnText(threadId,turn,token).ConfigureAwait(false);
                 thread.LatestTurn = turn;
             }
             if (!nativeAttention && attentionSequence == attentionBefore && thread.Status == "idle" && thread.LatestTurn != null && new[] { "completed", "failed", "interrupted" }.Contains(thread.LatestTurn.Status))
@@ -299,19 +315,158 @@ namespace Creezio.Switcher
             observed[thread.Id] = thread;
             return thread;
         }
+        public async Task<CloudTaskTurn> ReadTurn(string threadId, string turnId, CancellationToken token)
+        {
+            Id(threadId); Id(turnId);
+            CloudTaskThread previous; observed.TryGetValue(threadId, out previous);
+            string expectedConfiguration = previous == null ? null : previous.VerifiedEnvironmentConfigId;
+            try
+            {
+                var context = await ReadTurnContext(threadId, expectedConfiguration, token).ConfigureAwait(false);
+                expectedConfiguration = context.VerifiedEnvironmentConfigId;
+                // A later follow-up must never replace the result of the admitted
+                // turn. Search only bounded native history, without resuming work.
+                string cursor = null; var cursors = new HashSet<string>(StringComparer.Ordinal);
+                var ids = new HashSet<string>(StringComparer.Ordinal); CloudTaskTurn target = null;
+                for (int pageIndex = 0; pageIndex < 4 && target == null; pageIndex++)
+                {
+                    var page = await Rpc("thread/turns/list", new { threadId = threadId, cursor = cursor, limit = 25, itemsView = "notLoaded", sortDirection = "desc" }, false, token).ConfigureAwait(false);
+                    var turns = Rows(Json.Get(page, "data")).ToArray();
+                    if (turns.Length > 25) throw Incompatible();
+                    foreach (var row in turns)
+                    {
+                        var turn = ParseTurn(row);
+                        if (!ids.Add(turn.Id)) throw Incompatible();
+                        if (turn.Id == turnId) target = turn;
+                    }
+                    if (target != null) break;
+                    cursor = Optional(page, "nextCursor");
+                    if (cursor == null) break;
+                    if (cursor.Length == 0 || cursor.Length > 4096 || cursor.Any(Char.IsControl) || !cursors.Add(cursor)) throw Incompatible();
+                }
+                if (target != null) await ReadTurnText(threadId, target, token).ConfigureAwait(false);
+                await ReadTurnContext(threadId, expectedConfiguration, token).ConfigureAwait(false);
+                return target;
+            }
+            catch
+            {
+                if (previous != null) observed[threadId] = previous; else observed.Remove(threadId);
+                throw;
+            }
+        }
+        private async Task<CloudTaskThread> ReadTurnContext(string threadId, string expectedConfiguration, CancellationToken token)
+        {
+            var result = await Rpc("thread/read", new { threadId = threadId, includeTurns = false }, false, token).ConfigureAwait(false);
+            var thread = ParseThread(Json.Get(result, "thread"));
+            if (thread.Id != threadId || thread.AccountKey != binding.AccountKey || String.IsNullOrEmpty(thread.VerifiedEnvironmentConfigId) || expectedConfiguration != null && thread.VerifiedEnvironmentConfigId != expectedConfiguration) throw Incompatible();
+            return thread;
+        }
+        internal static string PromptSha256(string text)
+        {using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(text??""))).Replace("-","").ToLowerInvariant();}
+        public async Task<CloudTaskReconciliation> FindSubmittedTurn(string threadId,string configurationId,string clientUserMessageId,string promptSha256,DateTime attemptedUtc,CancellationToken token)
+        {
+            Id(threadId);Id(configurationId);
+            if(clientUserMessageId==null||!Regex.IsMatch(clientUserMessageId,"^[A-Za-z0-9_-]{1,128}$")||promptSha256==null||!Regex.IsMatch(promptSha256,"^[0-9a-f]{64}$"))throw Invalid("Preuve du message Cloud invalide.");
+            var before=await ReadTurnContext(threadId,configurationId,token).ConfigureAwait(false);
+            var result=new CloudTaskReconciliation{AccountKey=before.AccountKey,ThreadId=threadId,ConfigurationId=configurationId};
+            string cursor=null;bool complete=false;int itemPages=0;var cursors=new HashSet<string>(StringComparer.Ordinal);var ids=new HashSet<string>(StringComparer.Ordinal);var matches=new List<CloudTaskTurn>();string evidence=null;
+            // A bounded or empty history never proves non-delivery. Compare
+            // only native user input, in memory; never assistant/tool quotations.
+            for(int pageIndex=0;pageIndex<4;pageIndex++){
+                var page=await Rpc("thread/turns/list",new{threadId=threadId,cursor=cursor,limit=25,itemsView="notLoaded",sortDirection="desc"},false,token).ConfigureAwait(false);
+                var turns=Rows(Json.Get(page,"data")).ToArray();if(turns.Length>25)throw Incompatible();
+                foreach(var row in turns){
+                    var turn=ParseTurn(row);if(!ids.Add(turn.Id))throw Incompatible();
+                    var started=Json.Number(Json.Get(row,"startedAt"));
+                    if(started.HasValue){var earliest=(attemptedUtc.ToUniversalTime().AddMinutes(-5)-new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc)).TotalSeconds;if(started.Value<earliest)continue;}
+                    string itemCursor=null;var itemCursors=new HashSet<string>(StringComparer.Ordinal);var itemIds=new HashSet<string>(StringComparer.Ordinal);bool itemsComplete=false;bool matched=false;string matchEvidence=null;
+                    for(int itemPage=0;itemPage<10&&itemPages<40;itemPage++){
+                        itemPages++;
+                        var items=await ReadItemsPage(threadId,turn.Id,itemCursor,token).ConfigureAwait(false);
+                        var rows=Rows(Json.Get(items,"data")).ToArray();if(rows.Length>10)throw Incompatible();
+                        foreach(var itemRow in rows){
+                            var item=Json.Get(itemRow,"item")??itemRow;string rowTurn=Optional(itemRow,"turnId");
+                            if((Json.Get(itemRow,"item")!=null||rowTurn!=null)&&rowTurn!=turn.Id)throw Incompatible();
+                            string itemId=Optional(item,"id");if(itemId!=null&&!itemIds.Add(itemId))throw Incompatible();
+                            if(Optional(item,"type")!="userMessage")continue;
+                            string clientId=Optional(item,"clientId");var content=Rows(Json.Get(item,"content")).ToArray();
+                            if(content.Length!=1||Optional(content[0],"type")!="text"||Object.Equals(Json.Get(item,"truncated"),true))continue;
+                            string text=Optional(content[0],"text");bool sameHash=text!=null&&PromptSha256(text)==promptSha256;
+                            if(clientId==clientUserMessageId&&!sameHash)throw new CloudBackendException("reconciliation-conflict","L'identifiant du message existe avec un contenu différent. Aucun rapprochement ni nouvel envoi autorisé.");
+                            if(sameHash&&(clientId==null||clientId==clientUserMessageId)){if(matched)throw Incompatible();matched=true;matchEvidence=clientId==null?"exact-prompt-sha256":"client-id-and-prompt-sha256";}
+                        }
+                        itemCursor=Optional(items,"nextCursor");if(itemCursor==null){itemsComplete=true;break;}
+                        if(itemCursor.Length==0||itemCursor.Length>4096||itemCursor.Any(Char.IsControl)||!itemCursors.Add(itemCursor))throw Incompatible();
+                    }
+                    if(!itemsComplete){await ReadTurnContext(threadId,configurationId,token).ConfigureAwait(false);return result;}
+                    if(matched){matches.Add(turn);evidence=matchEvidence;if(matches.Count>1)throw new CloudBackendException("reconciliation-conflict","Plusieurs tours portent le même message. Aucun rapprochement ni nouvel envoi autorisé.");}
+                }
+                cursor=Optional(page,"nextCursor");if(cursor==null){complete=true;break;}
+                if(cursor.Length==0||cursor.Length>4096||cursor.Any(Char.IsControl)||!cursors.Add(cursor))throw Incompatible();
+            }
+            await ReadTurnContext(threadId,configurationId,token).ConfigureAwait(false);
+            result.HistoryComplete=complete;if(complete&&matches.Count==1){result.Turn=matches[0];result.Evidence=evidence;}
+            return result;
+        }
+        private async Task<object> ReadItemsPage(string threadId,string turnId,string cursor,CancellationToken token)
+        {
+            try{return await Rpc("thread/items/list",new{threadId=threadId,turnId=turnId,limit=10,sortDirection="desc",cursor=cursor},false,token).ConfigureAwait(false);}
+            catch(CloudBackendException error){
+                if(error.Code!="response-too-large")throw;
+            }
+            // A read can safely retry the same cursor with one item. Never
+            // increase the frame limit or replay a business mutation.
+            return await Rpc("thread/items/list",new{threadId=threadId,turnId=turnId,limit=1,sortDirection="desc",cursor=cursor},false,token).ConfigureAwait(false);
+        }
+        private async Task ReadTurnText(string threadId, CloudTaskTurn turn, CancellationToken token)
+        {
+            string cursor = null; var cursors = new HashSet<string>(StringComparer.Ordinal);
+            var itemIds = new HashSet<string>(StringComparer.Ordinal); var parts = new List<string>();
+            int length = 0; bool truncated = false, complete = false;
+            for (int pageIndex = 0; pageIndex < 100; pageIndex++)
+            {
+                var page = await ReadItemsPage(threadId,turn.Id,cursor,token).ConfigureAwait(false);
+                var rows = Rows(Json.Get(page, "data")).ToArray();
+                if (rows.Length > 10) throw Incompatible();
+                foreach (var row in rows)
+                {
+                    var item = Json.Get(row, "item") ?? row;
+                    string rowTurn = Optional(row, "turnId");
+                    if ((Json.Get(row, "item") != null || rowTurn != null) && rowTurn != turn.Id) throw Incompatible();
+                    string itemId = Optional(item, "id");
+                    if (itemId != null && !itemIds.Add(itemId)) throw Incompatible();
+                    if (Optional(item, "type") != "agentMessage" || !new[] { "final", "final_answer" }.Contains(Optional(item, "phase"))) continue;
+                    string text = Optional(item, "text");
+                    if (text != null) { parts.Add(text); length += text.Length; }
+                    if (Object.Equals(Json.Get(item, "truncated"), true)) truncated = true;
+                }
+                cursor = Optional(page, "nextCursor");
+                if (cursor == null) { complete = true; break; }
+                if (cursor.Length == 0 || cursor.Length > 4096 || cursor.Any(Char.IsControl) || !cursors.Add(cursor)) throw Incompatible();
+                if (length > 250000) { truncated = true; break; }
+            }
+            parts.Reverse(); string final = String.Join("\n\n", parts);
+            if (final.Length > 250000) { final = final.Substring(0, 250000); truncated = true; }
+            turn.Text = Redact(final); turn.TextComplete = complete && !truncated;
+        }
         public Task<CloudTaskTurn> StartTurn(string threadId, string prompt, CancellationToken token)
         { return StartTurn(threadId, prompt, Guid.NewGuid().ToString("N"), token); }
         public Task<CloudTaskTurn> StartTurn(string threadId, string prompt, string clientUserMessageId, CancellationToken token)
-        { return SendTurn(threadId, prompt, clientUserMessageId, null, false, token); }
+        { return SendTurn(threadId, prompt, clientUserMessageId, null, false, null, token); }
+        public Task<CloudTaskTurn> StartTurn(string threadId, string prompt, string clientUserMessageId, CloudTaskExecutionOptions options, CancellationToken token)
+        { return SendTurn(threadId, prompt, clientUserMessageId, null, false, options, token); }
         public Task<CloudTaskTurn> StartOnboardingTurn(string threadId, string prompt, CancellationToken token)
         { return StartOnboardingTurn(threadId, prompt, Guid.NewGuid().ToString("N"), null, token); }
         public Task<CloudTaskTurn> StartOnboardingTurn(string threadId, string prompt, string clientUserMessageId, CancellationToken token)
         { return StartOnboardingTurn(threadId, prompt, clientUserMessageId, null, token); }
         public Task<CloudTaskTurn> StartOnboardingTurn(string threadId, string prompt, string clientUserMessageId, IDictionary<string, string> repositoryNames, CancellationToken token)
-        { return SendTurn(threadId, prompt, clientUserMessageId, repositoryNames, true, token); }
-        private async Task<CloudTaskTurn> SendTurn(string threadId, string prompt, string clientUserMessageId, IDictionary<string, string> repositoryNames, bool onboarding, CancellationToken token)
+        { return SendTurn(threadId, prompt, clientUserMessageId, repositoryNames, true, null, token); }
+        private async Task<CloudTaskTurn> SendTurn(string threadId, string prompt, string clientUserMessageId, IDictionary<string, string> repositoryNames, bool onboarding, CloudTaskExecutionOptions options, CancellationToken token)
         {
+            bool rpcEntered=false;
+            try{
             Id(threadId);
+            options = CloudTaskExecutionOptions.Validate(options);
             if (String.IsNullOrWhiteSpace(prompt) || prompt.Length > 250000 || prompt.IndexOf('\0') >= 0) throw Invalid("Mission Cloud vide ou trop longue.");
             if (clientUserMessageId == null || clientUserMessageId.Length > 128 || !Regex.IsMatch(clientUserMessageId, "^[A-Za-z0-9_-]+$")) throw Invalid("Identifiant du message Cloud invalide.");
             if (onboarding && repositoryNames == null) throw Invalid("Les noms GitHub vérifiés des dépôts sont requis pour préparer cet environnement.");
@@ -319,6 +474,9 @@ namespace Creezio.Switcher
             if (String.IsNullOrEmpty(thread.VerifiedEnvironmentConfigId)) throw Invalid("L'environnement de cette conversation Cloud n'est pas encore confirmé par le serveur. Relisez son état ; aucun prompt n'a été envoyé.");
             if (thread.AwaitingApproval || thread.AwaitingInput || thread.Status != "idle" || (thread.LatestTurn != null && new[] { "inProgress", "running" }.Contains(thread.LatestTurn.Status)))
                 throw Invalid("Cette conversation Cloud travaille déjà ou attend une intervention dans Codex.");
+            if (options.ReasoningEffort != null && options.Model == null && String.IsNullOrWhiteSpace(thread.Model))
+                throw new CloudBackendException("execution-model-unverified", "Le modèle courant de ce chat Cloud n'est pas confirmé. Indiquez explicitement le modèle avant de choisir son raisonnement.");
+            if (options.Required) await ValidateExecutionModel(options, thread.Model, token).ConfigureAwait(false);
             var inputs = new List<object>();
             if (onboarding)
             {
@@ -337,10 +495,113 @@ namespace Creezio.Switcher
             }
             else inputs.Add(new { type = "text", text = prompt, text_elements = new object[0] });
             var parameters = new Dictionary<string, object> { { "threadId", threadId }, { "clientUserMessageId", clientUserMessageId }, { "input", inputs.ToArray() } };
+            ApplyExecution(parameters, options, true);
             if (onboarding) { parameters["turnTrigger"] = "environment_onboarding"; parameters["cwd"] = "/workspace"; parameters["runtimeWorkspaceRoots"] = new[] { "/workspace", "/tmp" }; }
-            var result = await Rpc("turn/start", parameters, true, token).ConfigureAwait(false);
+            rpcEntered=true;var result = await Rpc("turn/start", parameters, true, token).ConfigureAwait(false);
             try { return ParseTurn(Json.Get(result, "turn")); }
             catch (CloudBackendException) { throw new CloudBackendUncertainException("message envoyé sans confirmation du tour"); }
+            }catch(Exception error){if(!rpcEntered)throw new CloudTaskNotDispatchedException(error);throw;}
+        }
+
+        private static void ApplyExecution(IDictionary<string, object> parameters, CloudTaskExecutionOptions options, bool turn)
+        {
+            if (options.Model != null) parameters["model"] = options.Model;
+            if (options.ReasoningEffort != null)
+            {
+                if (turn) parameters["effort"] = options.ReasoningEffort;
+                else parameters["config"] = new Dictionary<string, object> { { "model_reasoning_effort", options.ReasoningEffort } };
+            }
+            // The deployed Cloud server supports this native legacy builder.
+            // Custom profiles retain their exact profile ID and are never widened.
+            if (options.PermissionProfile == ":danger-full-access")
+            {
+                if (turn) parameters["sandboxPolicy"] = new { type = "dangerFullAccess" };
+                else parameters["sandbox"] = "danger-full-access";
+                parameters["approvalPolicy"] = "never"; parameters["approvalsReviewer"] = "user";
+            }
+            else if (options.PermissionProfile != null) parameters["permissions"] = options.PermissionProfile;
+        }
+        private async Task ValidateExecutionModel(CloudTaskExecutionOptions options, string currentModel, CancellationToken token)
+        {
+            if (options.Model == null && options.ReasoningEffort == null) return;
+            string requested = options.Model ?? currentModel, cursor = null;
+            object selected = null; var cursors = new HashSet<string>(StringComparer.Ordinal);
+            do
+            {
+                var page = await Rpc("model/list", new { includeHidden = true, cursor = cursor, limit = 100 }, false, token).ConfigureAwait(false);
+                var models = Rows(Json.Get(page, "data")).ToArray();
+                if (models.Length > 100) throw Incompatible();
+                foreach (var model in models)
+                {
+                    bool matches = requested == null ? Object.Equals(Json.Get(model, "isDefault"), true) : Optional(model, "model") == requested;
+                    if (matches) { if (selected != null) throw Incompatible(); selected = model; }
+                }
+                cursor = Optional(page, "nextCursor");
+                if (cursor != null && (cursor.Length == 0 || cursor.Length > 4096 || cursor.Any(Char.IsControl) || !cursors.Add(cursor) || cursors.Count > 50)) throw Incompatible();
+            } while (cursor != null);
+            if (selected == null) throw new CloudBackendException("execution-model-unavailable", "Le modèle demandé n'est pas disponible sur ce compte Cloud. Aucun autre modèle n'a été choisi.");
+            if (options.ReasoningEffort != null)
+            {
+                var efforts = Json.Get(selected, "supportedReasoningEfforts");
+                if (efforts == null || !Rows(efforts).Any(value => Optional(value, "reasoningEffort") == options.ReasoningEffort))
+                    throw new CloudBackendException("execution-effort-unavailable", "Ce modèle Cloud ne propose pas le niveau de raisonnement demandé. Aucun niveau de remplacement n'a été choisi.");
+            }
+        }
+        public async Task<CloudTaskExecutionObservation> ReadExecution(string threadId, CancellationToken token)
+        {
+            Id(threadId);
+            CloudTaskThread prior;
+            string expectedConfiguration = observed.TryGetValue(threadId, out prior) ? prior.VerifiedEnvironmentConfigId : null;
+            // No requested setting is replayed here. A native resume supplies the
+            // server's persisted settings, while deferred goals cannot start work.
+            var result = await Rpc("thread/resume", new { threadId = threadId, excludeTurns = true, deferGoalContinuation = true }, true, token).ConfigureAwait(false);
+            return ParseExecution(threadId, result, expectedConfiguration, prior);
+        }
+        public async Task<CloudTaskExecutionObservation> ConfigureExecution(string threadId, CloudTaskExecutionOptions options, CancellationToken token)
+        {
+            Id(threadId); options = CloudTaskExecutionOptions.Validate(options);
+            if (!options.Required) throw Invalid("Aucun réglage Cloud explicite à appliquer.");
+            var prior = await Read(threadId, token).ConfigureAwait(false);
+            RequireUnstartedExecutionThread(prior);
+            string configurationId = prior.VerifiedEnvironmentConfigId;
+            if (readConfiguration == null) throw Invalid("La vérification de l'environnement Cloud n'est pas configurée.");
+            var config = await readConfiguration(configurationId, token).ConfigureAwait(false); Current();
+            if (config == null || config.Id != configurationId || !config.VersionRevision.HasValue || config.VersionRevision.Value <= 1 || String.IsNullOrEmpty(config.VersionId) || String.IsNullOrEmpty(config.LatestReadyVersionId) || config.Status != "ready" || config.Draft != null)
+                throw Invalid("L'environnement de ce nouveau chat Cloud doit être publié, prêt et sans brouillon avant ses réglages d'exécution.");
+            await ValidateExecutionModel(options, prior.Model, token).ConfigureAwait(false);
+            // Discovery can take time. Recheck the untouched native thread rather
+            // than changing settings on a chat that someone has started meanwhile.
+            var fresh = await Read(threadId, token).ConfigureAwait(false);
+            RequireUnstartedExecutionThread(fresh);
+            if (fresh.VerifiedEnvironmentConfigId != configurationId) throw new CloudBackendException("execution-environment-changed", "L'environnement de ce nouveau chat Cloud a changé. Aucun réglage n'a été appliqué.");
+            var parameters = new Dictionary<string, object> { { "threadId", threadId }, { "excludeTurns", true }, { "deferGoalContinuation", true } };
+            ApplyExecution(parameters, options, false);
+            var result = await Rpc("thread/resume", parameters, true, token).ConfigureAwait(false);
+            return ParseExecution(threadId, result, configurationId, fresh);
+        }
+        private static void RequireUnstartedExecutionThread(CloudTaskThread thread)
+        {
+            if (thread == null || String.IsNullOrEmpty(thread.VerifiedEnvironmentConfigId) || thread.Status != "idle" || thread.AwaitingApproval || thread.AwaitingInput || thread.LatestTurn != null)
+                throw Invalid("Les réglages initiaux exigent un nouveau chat Cloud au repos, sans aucun tour ni intervention native. Aucun chat déjà utilisé n'est modifié.");
+        }
+        private CloudTaskExecutionObservation ParseExecution(string threadId, object result, string expectedConfiguration, CloudTaskThread prior)
+        {
+            var thread = ParseThread(Json.Get(result, "thread"));
+            if (thread.Id != threadId || String.IsNullOrEmpty(thread.VerifiedEnvironmentConfigId)) throw Incompatible();
+            if (expectedConfiguration != null && thread.VerifiedEnvironmentConfigId != expectedConfiguration)
+            {
+                observed[threadId] = prior;
+                throw new CloudBackendException("execution-environment-changed", "L'environnement de ce chat Cloud a changé pendant la relecture de ses réglages. Aucun nouveau prompt n'est autorisé.");
+            }
+            string model = Optional(result, "model"), effort = Optional(result, "reasoningEffort");
+            var policyValue = Json.Get(result, "approvalPolicy");
+            string policy = policyValue as string, reviewer = Optional(result, "approvalsReviewer");
+            if (policyValue != null && policy == null && Json.Obj(policyValue).ContainsKey("granular")) policy = "granular";
+            string profile = Optional(Json.Get(result, "activePermissionProfile"), "id");
+            bool fullAccess = Optional(Json.Get(result, "sandbox"), "type") == "dangerFullAccess" && policy == "never" && reviewer == "user";
+            if (profile == ":danger-full-access" && !fullAccess) profile = null;
+            if (profile == null && fullAccess) profile = ":danger-full-access";
+            return new CloudTaskExecutionObservation { Model = model, ReasoningEffort = effort, PermissionProfile = profile, ApprovalPolicy = policy, ApprovalsReviewer = reviewer, Verified = !String.IsNullOrWhiteSpace(model) };
         }
 
         private AuthIdentity Current()
@@ -382,7 +643,7 @@ namespace Creezio.Switcher
         }
         private async Task<object> Rpc(string method, object parameters, bool mutation, CancellationToken token)
         {
-            await gate.WaitAsync(token).ConfigureAwait(false); bool sent = false;
+            try{await gate.WaitAsync(token).ConfigureAwait(false);}catch(Exception error){if(mutation&&method=="turn/start")throw new CloudTaskNotDispatchedException(error);throw;} bool sent = false;
             try
             {
                 using (var timeout = Deadline(token, mutation ? 120 : 35))
@@ -396,6 +657,7 @@ namespace Creezio.Switcher
             catch (CloudBackendUncertainException) { transport.Abort(); initialized = false; throw; }
             catch (CloudBackendException e)
             {
+                if(mutation&&!sent&&method=="turn/start")throw new CloudTaskNotDispatchedException(e);
                 if (mutation && sent && (e.Code == "authentication" || e.Code == "invalid-response")) { transport.Abort(); initialized = false; throw new CloudBackendUncertainException(e.Code); }
                 throw;
             }
@@ -403,14 +665,17 @@ namespace Creezio.Switcher
             {
                 transport.Abort(); initialized = false;
                 if (mutation && sent) throw new CloudBackendUncertainException("envoi interrompu");
+                if(mutation&&method=="turn/start")throw new CloudTaskNotDispatchedException(new OperationCanceledException());
                 if (token.IsCancellationRequested) throw new OperationCanceledException(token);
                 throw new CloudBackendException("timeout", "Le service natif Codex Cloud n'a pas répondu dans le délai prévu.");
             }
-            catch
+            catch(Exception error)
             {
                 transport.Abort(); initialized = false;
                 if (mutation && sent) throw new CloudBackendUncertainException("connexion interrompue");
-                throw new CloudBackendException("unavailable", "La lecture de la mission Cloud a été interrompue. Vous pouvez relire son état.");
+                if(mutation&&method=="turn/start")throw new CloudTaskNotDispatchedException(error);
+                var webSocket=transport as CloudTaskWebSocket;if(webSocket!=null&&webSocket.Stage=="frame-too-large")throw new CloudBackendException("response-too-large","La page native dépasse la limite mémoire de 4 Mio ; aucune donnée tronquée n'est considérée complète. méthode="+method+".");
+                throw new CloudBackendException("unavailable", "La lecture de la mission Cloud a été interrompue. Vous pouvez relire son état. méthode="+method+" · "+SafeDiagnostic(error,transport as CloudTaskWebSocket));
             }
             finally { gate.Release(); }
         }

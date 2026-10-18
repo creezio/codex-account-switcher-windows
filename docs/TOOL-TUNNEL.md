@@ -42,6 +42,11 @@ ressource impose un argument racine exact (par exemple `project_id` ou `page_id`
 Les outils sans cet argument ne sont alors pas autorisés. Le partage est local à
 ce PC ; les invitations de PC distants ne donnent aucun droit sur ces outils.
 
+Depuis 0.27, la compatibilité porte sur l'identité, les risques et les
+contraintes exécutables ; les textes de présentation peuvent évoluer sans
+réautorisation. Les règles détaillées figurent plus bas. Les partages enregistrés
+ne sont pas réécrits et les appels ne sont jamais rejoués automatiquement.
+
 Chaque appel porte un identifiant stable et une empreinte de son contenu. Le
 résultat est conservé chiffré avec DPAPI et relu uniquement par le chat émetteur.
 Les champs d'identification connus (`token`, `access_token`, `password`, etc.)
@@ -58,8 +63,8 @@ contrôles distincts. L’accès complet aux commandes locales n’accorde pas l
 à une Page ou un Site. Le transport vérifie l'état effectif installé, activé et
 appelable des apps, et ne modifie pas les permissions des plugins. Les comptes
 et les profils sont revérifiés avant l'appel et avant de retourner la réponse.
-Les appels d'un même compte sont sérialisés ; les changements de contrat
-demandent de recharger le partage. DPAPI protège le stockage sous l'utilisateur
+Les appels d'un même compte sont sérialisés ; seules les ruptures de contrat
+demandent de réautoriser le partage concerné. DPAPI protège le stockage sous l'utilisateur
 Windows courant, pas contre un programme exécuté avec les mêmes droits Windows.
 
 ## Parcours utilisateur
@@ -83,7 +88,31 @@ compteur total visible. Aucun outil n'est coché par défaut. La mise à jour du
 plugin suit l'installation et la vérification périodique existantes ; les chats
 déjà ouverts peuvent conserver leur ancien plugin et nécessiter un nouveau chat.
 
-## Limites vérifiées de 0.10.0-beta.1
+## Transfert d’archive Sites — 0.22.3-beta.1
+
+Le relais transfère maintenant le paramètre `archive` des deux outils de sauvegarde
+Sites déclarés dans un partage existant. Le chat source doit avoir l’Accès complet
+effectivement enregistré. L’archive `.tar.gz` est verrouillée et son SHA256 conservé
+dans le reçu ; aucun checkout ni paquet supplémentaire n’est créé. Le transfert
+utilise l’authentification du propriétaire, une URL signée sans en-tête de connexion,
+puis la finalisation du fichier. La référence native réelle est passée à Sites.
+Les droits et le compte sont revérifiés avant la sauvegarde. Aucun tour de modèle
+n’est exécuté sur le propriétaire. Les autres arguments de fichiers restent refusés.
+
+Le 17 octobre 2026, le paquet existant ProjetQA de 50 855 910 octets, source
+`52d3d2634df4616b859e24098e421e8a962a0e99`, a été transféré et sauvegardé en v148.
+Le déploiement `appgdep_6ad32c261a908191a6737dcacb8f4b0d` a terminé `succeeded`,
+avec `env_set_revision=7` et `has_mcp=true`. Le partage n’a pas été élargi et aucune
+instance Codex n’a été fermée. 17 tests du client de transfert et 49 tests du
+relais/périmètre passent, avec cette recette réelle. La validation fonctionnelle
+complète du produit reste indépendante de cette preuve de transport.
+
+Le journal conserve l’identifiant de chaque opération avant envoi. Une opération
+interrompue reste incertaine : relire l’état du fournisseur et réutiliser le même
+identifiant, sans création automatique d’une deuxième sauvegarde. Les identifiants
+de connexion et URLs signées ne sont ni affichés ni conservés dans le journal.
+
+## Limites historiques vérifiées de 0.10.0-beta.1
 
 - Le transport direct de cette version Codex ne transforme pas un chemin local
   en pièce jointe native. Un test réel Sites a retourné `INVALID_ARGUMENT` pour
@@ -147,3 +176,23 @@ désactive les partages de recette et masque les identifiants des résultats de
 recette antérieurs ; elle préserve les ressources et les reçus.
 
 Référence : https://learn.chatgpt.com/docs/app-server
+
+
+## Compatibilité après une mise à jour
+
+Les autorisations de ressources restent enregistrées indépendamment des textes de présentation des outils. Une description, un titre, un commentaire de schéma ou un exemple modifié ne demandent plus de réenregistrer le partage. Les nouveaux paramètres facultatifs sans valeur par défaut sont compatibles pour les appels qui ne les utilisent pas ; ils ne deviennent pas automatiquement autorisés dans le partage existant.
+
+L'identité du serveur et du connecteur, les indications de risque, les droits lecture/écriture, les types, les champs obligatoires, les valeurs par défaut et les contraintes exécutables sont contrôlés. Une vraie rupture reste bloquée avec un chemin et une raison précise. Le reçu d'appel conserve `ContractStatus` et `ContractReason`, sans copier de secrets ni modifier le partage. Les règles de transport sont vérifiées sur la définition autorisée et sur la définition actuelle.
+
+Une ancienne génération de processus MCP déjà chargée garde son code en mémoire : l'installation des nouveaux fichiers ne constitue pas une preuve de rechargement dans Codex. L'interface distingue ces deux états.
+
+
+## Mise à jour automatique du moteur du relais
+
+Depuis 0.27, le plugin du Switcher démarre un lanceur stdio stable. La maintenance publie pour chaque profil un pointeur chiffré avec le compte, le chemin, la version et le SHA256 du moteur attendu. Le lanceur vérifie le pointeur avant un appel et toutes les 30 secondes ; les octets du binaire sont vérifiés avant son lancement, pas relus en boucle pendant les appels.
+
+Un nouveau moteur n'est adopté qu'entre les appels. Le lanceur rejoue uniquement la négociation `initialize`/`initialized`, conserve la connexion avec Codex et envoie `notifications/tools/list_changed` après confirmation. Un appel métier n'est jamais rejoué. Une mise à jour non confirmée bloque les nouveaux appels après au plus trois essais. Un appel dont la réponse a été perdue reste incertain et n'est pas interrompu pour forcer une mise à jour.
+
+Le mécanisme concerne **le relais du Switcher**. Il ne redémarre ni Codex ni les autres plugins. Un ancien processus MCP démarré directement avant cette version doit d'abord charger le lanceur lors d'un vrai rechargement natif, par exemple au chargement d'une nouvelle connexion. L'installation sur disque ne prouve pas ce chargement. Les instances fermées ou les prochains moteurs sans fenêtre chargeront la nouvelle configuration à leur démarrage.
+
+Dans la carte Relais Switcher, l'interface sépare l'installation et l'état observé : premier chargement requis, attente, moteur confirmé pour les connexions gérées, ou erreur précise. Une confirmation desktop exige les PID/heures de démarrage du lanceur, de son enfant et du Codex propriétaire ; un simple processus de découverte sans fenêtre ne confirme pas une connexion desktop. Les anciennes connexions directes ne sont pas comptées comme migrées.

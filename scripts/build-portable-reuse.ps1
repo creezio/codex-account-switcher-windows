@@ -14,7 +14,7 @@ function Assert-PlainBuildPath([string]$Path) {
 
 function Assert-IncompleteApplicationDirectory([string]$Directory) {
   if(Test-Path -LiteralPath (Join-Path $Directory 'RUNTIME-SHARED.json')){throw 'Cette livraison possède déjà un runtime partagé ; aucune reprise autorisée.'}
-  $applicationNames=@('CodexAccountSwitcher.exe','CodexAccountSwitcher.exe.config','CodexAccountSwitcher.dll','CodexAccountSwitcher.deps.json','CodexAccountSwitcher.runtimeconfig.json','CodexAccountSwitcher.pdb','CreezioRelay.exe','CreezioRelay.exe.config')
+  $applicationNames=@('CodexAccountSwitcher.exe','CodexAccountSwitcher.exe.config','CodexAccountSwitcher.dll','CodexAccountSwitcher.deps.json','CodexAccountSwitcher.runtimeconfig.json','CodexAccountSwitcher.pdb','CreezioRelay.exe','CreezioRelay.exe.config','SwitcherLauncher.exe','SwitcherLauncher.exe.config')
   $pending=[Collections.Generic.Stack[string]]::new()
   $pending.Push($Directory)
   while($pending.Count){
@@ -44,7 +44,7 @@ $pipelineCursor=$pipelineLock
 while($pipelineCursor){if(Test-Path -LiteralPath $pipelineCursor){$pipelineInfo=Get-Item -LiteralPath $pipelineCursor -Force;if(($pipelineInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -or (-not $pipelineInfo.PSIsContainer -and $pipelineInfo.LinkType -eq 'HardLink')){throw 'Chemin lié refusé pour le verrou de compilation.'}};$pipelineCursor=Split-Path -Parent $pipelineCursor}
 $pipelineLease=[IO.FileStream]::new($pipelineLock,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None,1,[IO.FileOptions]::DeleteOnClose)
 try {
-if(-not $OutputDirectory){$OutputDirectory=Join-Path $repo 'outputs\v0.19.0-beta.1'}
+if(-not $OutputDirectory){$buildVersion=[regex]::Match([IO.File]::ReadAllText((Join-Path $repo 'src\RelayWorker.cs')),'internal const string Version="([^"]+)"').Groups[1].Value;if(-not $buildVersion){throw 'Version source introuvable.'};$OutputDirectory=Join-Path $repo ('outputs\v'+$buildVersion)}
 if(-not $RuntimeDirectory){$RuntimeDirectory=Join-Path $repo 'outputs\v0.16.1-beta.1'}
 $target=[IO.Path]::GetFullPath($OutputDirectory).TrimEnd('\')
 $source=[IO.Path]::GetFullPath($RuntimeDirectory).TrimEnd('\')
@@ -79,7 +79,7 @@ if([IO.Path]::GetPathRoot($target) -ne [IO.Path]::GetPathRoot($source)){throw 'L
 if(-not(Test-Path -LiteralPath $source -PathType Container)){throw 'Runtime portable existant introuvable.'}
 if((Get-Item -LiteralPath $source).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Le runtime source ne doit pas être une jonction.'}
 $drive=Get-PSDrive -Name ([IO.Path]::GetPathRoot($target).Substring(0,1))
-if($drive.Free -lt 2GB){throw 'Au moins 2 Gio libres requis pour les petits fichiers applicatifs et le ZIP.'}
+if($drive.Free -lt 20GB){throw 'Au moins 20 Gio libres requis avant la compilation et le packaging.'}
 $dotnet=Join-Path $env:LOCALAPPDATA 'Creezio\tools\dotnet\dotnet.exe'
 if(-not(Test-Path -LiteralPath $dotnet)){throw 'SDK local existant requis ; aucun telechargement ni installation.'}
 $packages=Join-Path $env:USERPROFILE '.nuget\packages'
@@ -124,7 +124,7 @@ if($LASTEXITCODE -ne 0){throw 'Restauration hors ligne impossible ; aucune insta
 # Publish app files first into a fresh directory. Runtime hardlinks do not exist yet.
 & $dotnet publish $project -c Release -r win-x64 --self-contained true --no-restore -o $target ("-p:RuntimeFrameworkVersion="+$RuntimeVersion) -p:CopyLocalLockFileAssemblies=false -p:SkipCopyUnchangedFiles=true ("-p:CustomAfterMicrosoftCommonTargets="+$temporaryTargets) ("-p:SwitcherRuntimeInventory="+$inventory)
 if($LASTEXITCODE -ne 0){throw 'Publication applicative échouée ; aucun lien partagé créé.'}
-foreach($required in @('CodexAccountSwitcher.exe','CodexAccountSwitcher.dll','CodexAccountSwitcher.deps.json','CodexAccountSwitcher.runtimeconfig.json')){
+foreach($required in @('CodexAccountSwitcher.exe','CodexAccountSwitcher.dll','CodexAccountSwitcher.deps.json','CodexAccountSwitcher.runtimeconfig.json','SwitcherLauncher.exe','SwitcherLauncher.exe.config')){
   if(-not(Test-Path -LiteralPath (Join-Path $target $required) -PathType Leaf)){throw "Publication applicative incomplète : $required"}
 }
 $newConfig=Get-Content -LiteralPath (Join-Path $target 'CodexAccountSwitcher.runtimeconfig.json') -Raw | ConvertFrom-Json
@@ -159,7 +159,7 @@ foreach($line in Get-Content -LiteralPath $inventory){
 if($runtimeFiles.Count -lt 200 -or -not $runtimeFiles.ContainsKey('coreclr.dll') -or -not $runtimeFiles.ContainsKey('PresentationFramework.dll')){throw 'Inventaire de runtime incomplet.'}
 # Marker is written before links: every later normal build must refuse this directory.
 $marker=Join-Path $target 'RUNTIME-SHARED.json'
-[IO.File]::WriteAllText($marker,(@{RuntimeVersion=$RuntimeVersion;SourceDirectory=$source;ImmutableRuntimeOnly=$true;Files=@($runtimeFiles.Values | Sort-Object RelativePath | Select-Object RelativePath,Sha256,Length)} | ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText($marker,(@{RuntimeVersion=$RuntimeVersion;ImmutableRuntimeOnly=$true;Files=@($runtimeFiles.Values | Sort-Object RelativePath | Select-Object RelativePath,Sha256,Length)} | ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
 $sourceMarker=Join-Path $source 'RUNTIME-SHARED.json'
 if(-not(Test-Path -LiteralPath $sourceMarker)){
   # The source becomes shared too. Protect it before the first link is created.
@@ -174,5 +174,6 @@ foreach($entry in $runtimeFiles.Values){
   if((Get-FileHash -LiteralPath $link -Algorithm SHA256).Hash -ne $entry.Sha256){throw "Lien de runtime invalide : $($entry.RelativePath)"}
 }
 Remove-Item -LiteralPath $temporaryTargets,$inventory
+& (Join-Path $PSScriptRoot 'package-update.ps1') -BinaryDirectory $target -ManifestOnly | Out-Host
 [pscustomobject]@{OutputDirectory=$target;RuntimeFilesShared=$runtimeFiles.Count;RuntimeBytesReused=($runtimeFiles.Values | Measure-Object Length -Sum).Sum;RuntimeVersion=$RuntimeVersion}
 } finally { $pipelineLease.Dispose() }

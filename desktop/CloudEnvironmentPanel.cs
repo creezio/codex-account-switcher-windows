@@ -564,6 +564,8 @@ namespace Creezio.Switcher.Desktop
                 var choices=await WizardAccounts(false);
                 if(disposed)return;
                 if(choices.Length==0)throw new InvalidOperationException("Connectez un compte permanent à une instance avant de créer un environnement Cloud.");
+                var preferences=await context.Read(accounts=>context.Store.ReadRecord<CloudEnvironmentPreferences>(CloudEnvironmentPreferences.Record));
+                if(disposed)return;
                 var form=new CloudEnvironmentWizard(shell,choices,LoadWizardRepositories,async(intent,token)=>
                 {
                     if(intent?.Account==null||intent.Create==null||intent.Patch!=null||!String.IsNullOrEmpty(intent.ConfigurationId))throw new InvalidOperationException("La création de cet environnement n’est plus cohérente. Fermez cet assistant et préparez une nouvelle demande.");
@@ -587,7 +589,7 @@ namespace Creezio.Switcher.Desktop
                         throw failure;
                     }
                     finally{End();}
-                },lifetime.Token,owner.Id);
+                },lifetime.Token,owner.Id,defaultNetwork:preferences.NewEnvironmentNetwork);
                 form.ShowDialog();
                 if(!form.Saved||created==null||disposed)return;
             }

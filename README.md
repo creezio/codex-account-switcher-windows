@@ -3,10 +3,98 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.19.0-beta.1 — Stockage, temporaires et prévention des copies volumineuses.** Windows 10/11 x64, interface en
+**Version 0.29.0-beta.2 — Catalogue de skills, planifications et objectifs depuis Switcher Live, Windows et l’API.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
+Depuis le Site, un administrateur autorisé peut choisir un compte enregistré ou connecter un nouveau compte avec le lien et le code officiels OpenAI. Le compte réellement connecté est affiché avant confirmation ; le Switcher prépare ensuite son instance, son relais et ses skills sans ouvrir de fenêtre Codex. Les identifiants restent sur le PC. L’administration utilise une clé serveur distincte des clés de messages et une liste locale d’administrateurs. Voir [la configuration et le parcours](docs/WEBHOOKS.md#administration-distante-des-comptes-et-instances).
+
 [Télécharger les versions Windows](https://github.com/creezio/codex-account-switcher-windows/releases)
+
+Dans **Compétences**, consultez les skills préinstallés et leur provenance,
+créez ou modifiez vos skills, importez un ZIP et déployez une copie vers une
+instance autorisée. Switcher Live propose les mêmes actions dans les ressources
+de l’instance. **Planifications** et le panneau **Tâches et objectif** d’une
+discussion permettent de préparer un planning Switcher ou de modifier son
+objectif natif. Les plannings sont créés en pause ; leur exécution exige que
+le PC et Switcher fonctionnent. La gestion des objectifs exige actuellement
+un profil arrêté et disponible. Voir [les interfaces et le contrat API](docs/PORTAL-MANAGEMENT.md).
+
+Dans **Webhooks**, créez une entrée vers une instance, un dossier et un chat
+nouveau ou existant. Copiez son URL et sa clé dans votre application : le Switcher
+reçoit les missions, évite les doublons et expose leur résultat. Cloudflare Tunnel
+fournit une adresse HTTPS temporaire ou un domaine stable configuré par vos soins.
+Voir [la configuration et les exemples d'appels](docs/WEBHOOKS.md).
+
+Le portail **Switcher Live** propose un composeur avec fichiers et dossiers,
+plugins et skills recherchables, modèle, effort et mode Plan lorsqu'il est
+disponible. Les mêmes options sont accessibles par webhook, avec des uploads
+liés au compte cible et des réessais sans doublon. Les fichiers non envoyés
+expirent après 24 heures ; les fichiers envoyés restent disponibles pour leur
+historique. Un sélecteur permet de choisir explicitement les permissions natives
+de chaque chat ; les nouveaux chats proposent GPT-6.1 Sol · Ultra · Accès complet.
+Voir [le contrat complet et les limites du composeur](docs/PORTAL-COMPOSER.md).
+
+Le relais dispose d’un lanceur stable pour remplacer son moteur entre deux appels
+après une mise à jour. Le premier chargement du lanceur dans Codex reste distinct
+de son installation sur disque ; l’interface affiche la version effectivement
+observée. Les anciens processus directs ne sont pas interrompus. Les changements
+de documentation compatibles des outils partagés ne demandent plus de refaire
+les autorisations. Voir [les règles de compatibilité](docs/TOOL-TUNNEL.md).
+
+Dans **Tâches → Surveillances**, suivez un chat existant et recevez une alerte s’il
+attend une intervention, échoue ou s’arrête avant la fin de sa mission. Le moteur
+du Switcher lit son état toutes les 60 secondes, sans tâche planifiée Codex ni
+appel à un modèle. Les alertes et leur chronologie sont conservées et dédupliquées.
+Un avertissement après 15 minutes sans progrès visible reste distinct d’un blocage
+confirmé. **Paramètres → Compatibilité Codex** présente les contrôles automatiques
+déclenchés après un changement de version, sans ouvrir les instances fermées ni
+envoyer de mission de test. [Fonctionnement et limites](docs/NATIVE-CHAT-MONITORING.md).
+
+Dans **Délégations → File préparée**, configurez une équipe pour un dépôt et un
+chat orchestrateur, puis préparez ses missions complètes. Le Switcher attribue
+automatiquement les missions prêtes aux comptes autorisés disponibles, selon
+les priorités, les dépendances et les réservations de fichiers. Les paramètres
+de modèle et de permissions sont figés ; aucun modèle n’est appelé pour planifier.
+Une dépendance attend par défaut **Valider après revue**, et non la seule fin du
+chat Cloud. Le Switcher ne fusionne aucune PR à votre place.
+
+Le délai d’alerte d’inactivité est réglable par équipe (5 minutes au départ).
+L’alerte est conservée dans la file et affichée près de l’horloge lorsque les
+notifications du Switcher sont activées. Un clic ouvre la file préparée. Les
+comptes exécutants peuvent rester sans fenêtre ; une file vide ne démarre pas
+de moteur d’inférence. Le planificateur reprend ses données chiffrées après
+réouverture du Switcher. Les reprises utilisent les mêmes identifiants et le
+même compte dès qu’un envoi a pu être engagé.
+
+La page **Délégations** réunit les missions Cloud envoyées par le Switcher, les
+comptes exécutants, les branches et les notifications de leurs orchestrateurs.
+Filtrez par compte ou statut, puis ouvrez **Chronologie**, **Résultat** ou **Détails**.
+La chronologie s’ouvre par défaut : étapes observées, temps écoulé actualisé et
+heure locale complète. Les liens mentionnés vers les issues et PR GitHub sont
+cliquables ; le dépôt et la branche sont accessibles dans les références.
+Ces liens ne prouvent pas que la PR est validée ou fusionnée. Le journal conserve
+jusqu’à 100 transitions du Switcher, pas les commandes internes de l’agent Cloud.
+Une ancienne étape sans date reste explicitement non datée.
+Le suivi vérifie le tour confié à l’agent toutes les 60 secondes et transmet son
+résultat au chat source ; aucun outil de notification n’est demandé à l’agent Cloud.
+Les échéances et le journal sont conservés localement, chiffrés, et repris au
+démarrage. Un compte source indisponible garde sa notification en attente.
+Après réouverture de Codex, son canal est vérifié avant de retenter le même chat,
+sans changer son compte ni ses permissions. Gardez le Switcher ouvert ou réduit
+près de l’horloge pour assurer le suivi. Les fenêtres Codex des comptes exécutants
+peuvent rester fermées pendant les missions Cloud.
+Un envoi dont la réception est incertaine est rapproché en lecture seule ; il
+n’est jamais répété automatiquement sans preuve. « Notification envoyée » signifie
+que Codex a accepté le message, pas que le travail a été relu ou intégré.
+
+Dans **Paramètres → Équipe Cloud**, réglez le nombre de missions simultanées
+(1 à 8, toujours une par compte). Les autres missions attendent ; diminuer la
+limite n’arrête pas le travail en cours. L’orchestrateur peut demander des
+corrections avec `follow_up_cloud_job` : même développeur, même conversation,
+même environnement et même branche/PR, avec un nouveau cycle suivi séparément.
+Les issues GitHub portent les missions, les PR portent les livraisons.
+[Organisation d’une équipe et cycle de revue](docs/CLOUD-TEAMS.md).
+[Reprise des anciennes demandes, envois incertains et fiabilité du suivi](docs/CLOUD-QUEUE-RECOVERY.md).
 
 La page **Stockage** mesure les instances et projets, distingue les données à
 préserver des temporaires vérifiés et présente les refus Windows exacts. Le
@@ -273,7 +361,8 @@ restent dans **Réglages avancés**, sans être requis pour une mission explicit
 [Parcours, plan et validation 0.9](docs/SIMPLE-INSTANCES.md).
 
 Une instance entièrement neuve doit avoir reçu un premier message dans Codex.
-Les permissions restent propres à chaque chat ; le relais ne les modifie pas.
+Les permissions restent propres à chaque chat ; une sélection explicite dans le
+composeur Site ou `options.permissionProfile` du webhook peut les modifier.
 Les anciens chats peuvent conserver l'ancien plugin jusqu'à un nouveau chat.
 
 ![Vue d’ensemble avec des données fictives](assets/overview.png)

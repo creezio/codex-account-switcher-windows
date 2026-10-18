@@ -13,6 +13,14 @@ using System.Windows.Media;
 
 namespace Creezio.Switcher.Desktop
 {
+    public sealed class CloudEnvironmentPreferences
+    {
+        public string NewEnvironmentNetwork { get; set; } = "disabled";
+        internal const string Record = "cloud-environment-preferences.dpapi";
+        internal static readonly string[] Policies = { "disabled", "restricted", "unrestricted" };
+        internal static readonly string[] Labels = { "Internet désactivé", "Gestionnaires de paquets uniquement", "Internet : toutes les adresses" };
+        internal static int Index(string policy) => Math.Max(0, Array.IndexOf(Policies, policy));
+    }
     internal sealed class CloudEnvironmentAccountChoice
     {
         public string Id { get; set; }
@@ -59,6 +67,7 @@ namespace Creezio.Switcher.Desktop
         private readonly Func<CloudEnvironmentAccountChoice, CancellationToken, Task<CloudGitHubRepository[]>> load;
         private readonly Func<CloudEnvironmentWizardIntent, CancellationToken, Task> submit;
         private readonly CloudConfiguration original;
+        private readonly int initialNetworkIndex;
         private readonly CancellationTokenSource lifetime;
         private CancellationTokenSource loadCancellation, reviewCancellation;
         private readonly List<CloudEnvironmentRepositoryRow> rows = new List<CloudEnvironmentRepositoryRow>();
@@ -76,10 +85,11 @@ namespace Creezio.Switcher.Desktop
         internal CloudEnvironmentWizard(Window owner, CloudEnvironmentAccountChoice[] choices,
             Func<CloudEnvironmentAccountChoice, CancellationToken, Task<CloudGitHubRepository[]>> loadRepositories,
             Func<CloudEnvironmentWizardIntent, CancellationToken, Task> submit, CancellationToken token,
-            string initialInstanceId = null, CloudConfiguration edit = null)
+            string initialInstanceId = null, CloudConfiguration edit = null, string defaultNetwork = "disabled")
         {
             load = loadRepositories; this.submit = submit; lifetime = CancellationTokenSource.CreateLinkedTokenSource(token);
             original = edit == null ? null : Json.Read<CloudConfiguration>(Json.Write(edit));
+            initialNetworkIndex = original == null ? CloudEnvironmentPreferences.Index(defaultNetwork) : 0;
             var accounts = choices.Select(value => new CloudEnvironmentAccountChoice { Id = value.Id, AccountKey = value.AccountKey, Label = value.Label }).ToArray();
             if (original != null && (accounts.Length != 1 || !String.IsNullOrEmpty(initialInstanceId) && accounts[0].Id != initialInstanceId)) throw new InvalidOperationException("La modification doit cibler uniquement le compte propriétaire de cet environnement.");
             Owner = owner; Title = original == null ? "Créer un environnement Cloud" : "Modifier l’environnement Cloud"; ShowInTaskbar = false;
@@ -119,8 +129,10 @@ namespace Creezio.Switcher.Desktop
             var settings = new StackPanel(); pages[2].Children.Add(settings); settings.Children.Add(Ui.Text("Nom de l’environnement", 13)); settings.Children.Add(EnvironmentName);
             EnvironmentName.Text = original?.Name ?? ""; EnvironmentName.IsReadOnly = original != null; AutomationProperties.SetName(EnvironmentName, "Nom de l’environnement Cloud");
             if (original != null) settings.Children.Add(Ui.Text("Pour changer le nom, utilisez l’action Renommer de l’environnement.", 12, true));
-            settings.Children.Add(Ui.Text("Accès réseau", 13)); settings.Children.Add(Network);
-            Network.ItemsSource = original == null ? new[] { "Réseau désactivé", "Gestionnaires de paquets uniquement", "Accès réseau sans restriction" } : new[] { "Conserver la règle actuelle", "Réseau désactivé", "Gestionnaires de paquets uniquement", "Accès réseau sans restriction" }; Network.SelectedIndex = 0; AutomationProperties.SetName(Network, "Accès réseau de l’environnement Cloud");
+            settings.Children.Add(Ui.Text("Accès Internet", 13)); settings.Children.Add(Network);
+            Network.ItemsSource = original == null ? CloudEnvironmentPreferences.Labels : new[] { "Conserver la règle actuelle" }.Concat(CloudEnvironmentPreferences.Labels).ToArray(); Network.SelectedIndex = initialNetworkIndex; AutomationProperties.SetName(Network, "Accès réseau de l’environnement Cloud");
+            const string networkHelp = "Toutes les adresses autorise les connexions Internet sortantes. Les identifiants restent limités à leurs domaines autorisés. Le choix par défaut des nouvelles créations se règle dans Paramètres → Environnements Cloud.";
+            Network.ToolTip = networkHelp; AutomationProperties.SetHelpText(Network, networkHelp);
             settings.Children.Add(Ui.Text("Dossier de travail Cloud", 13)); settings.Children.Add(Directory); Directory.Text = original?.Cwd ?? ""; AutomationProperties.SetName(Directory, "Dossier de travail de l’environnement Cloud");
             settings.Children.Add(Ui.Text("Chemin absolu, par exemple /workspace. Laissez vide à la création pour utiliser le dossier défini par Codex.", 12, true));
             var startup = pages[3]; startup.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); startup.RowDefinitions.Add(new RowDefinition()); startup.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); startup.RowDefinitions.Add(new RowDefinition());
@@ -150,7 +162,7 @@ namespace Creezio.Switcher.Desktop
             var root = new Grid(); root.Children.Add(choice); var text = Ui.Text(hint, 14, true); text.Margin = new Thickness(10, 0, 32, 10); text.VerticalAlignment = VerticalAlignment.Center; text.IsHitTestVisible = false; root.Children.Add(text);
             choice.SelectionChanged += delegate { text.Visibility = choice.SelectedItem == null ? Visibility.Visible : Visibility.Collapsed; choice.ToolTip = (choice.SelectedItem as CloudEnvironmentAccountChoice)?.Label; }; return root;
         }
-        private bool Dirty() => !String.IsNullOrEmpty(EnvironmentName.Text) && original == null || EnvironmentName.Text != (original?.Name ?? "") || Install.Text != (original?.InstallScript ?? "") || Start.Text != (original?.StartSkill ?? "") || Directory.Text != (original?.Cwd ?? "") || Network.SelectedIndex != 0 || rows.Any(row => row.Selected != (original?.Repositories?.Any(repo => repo.RepositoryId == row.Id) ?? false) || row.Selected && row.Ref != row.OriginalRef);
+        private bool Dirty() => !String.IsNullOrEmpty(EnvironmentName.Text) && original == null || EnvironmentName.Text != (original?.Name ?? "") || Install.Text != (original?.InstallScript ?? "") || Start.Text != (original?.StartSkill ?? "") || Directory.Text != (original?.Cwd ?? "") || Network.SelectedIndex != initialNetworkIndex || rows.Any(row => row.Selected != (original?.Repositories?.Any(repo => repo.RepositoryId == row.Id) ?? false) || row.Selected && row.Ref != row.OriginalRef);
         private void ShowStep(int step)
         {
             CancelReview(); Step = step; ErrorText.Text = "";
@@ -225,7 +237,8 @@ namespace Creezio.Switcher.Desktop
         }
         private CloudNetworkPolicy Policy()
         {
-            int index = Network.SelectedIndex - (original == null ? 0 : 1); if (index < 0) return null;
+            int index = Network.SelectedIndex - (original == null ? 0 : 1); if (original != null && Network.SelectedIndex == 0) return null;
+            if (index < 0 || index >= CloudEnvironmentPreferences.Policies.Length) throw new InvalidOperationException("Choisissez une règle d’accès Internet pour cet environnement.");
             return index == 1 ? new CloudNetworkPolicy { Type = "restricted", Presets = new List<string> { "package_managers" }, EgressHosts = new List<string>() } : new CloudNetworkPolicy { Type = index == 2 ? "unrestricted" : "disabled" };
         }
         private CloudEnvironmentWizardIntent BuildIntent(bool requireChange = true)
@@ -254,7 +267,7 @@ namespace Creezio.Switcher.Desktop
         {
             var repositories = intent.Create?.Repositories ?? intent.Patch.Repositories ?? original.Repositories;
             var policy = intent.Create?.NetworkPolicy ?? intent.Patch?.NetworkPolicy ?? original?.NetworkPolicy;
-            string network = policy == null ? "Règle non fournie" : policy.Type == "disabled" ? "Désactivé" : policy.Type == "unrestricted" ? "Sans restriction" : "Restreint";
+            string network = policy == null ? "Règle non fournie" : policy.Type == "disabled" ? "Internet désactivé" : policy.Type == "unrestricted" ? "Internet : toutes les adresses" : "Restreint";
             if (policy?.Presets?.Count > 0) network += " · " + String.Join(", ", policy.Presets.Select(value => value == "package_managers" ? "Gestionnaires de paquets" : value));
             if (policy?.EgressHosts?.Count > 0) network += "\nDestinations : " + String.Join(", ", policy.EgressHosts);
             var lines = new List<string> { "COMPTE PROPRIÉTAIRE", intent.Account.Label, "", original == null ? "CRÉATION PRIVÉE · PRÉPARATION NON DÉCLENCHÉE" : "MODIFICATION · " + original.Name, "Nom : " + (intent.Create?.Name ?? original.Name), "", "DÉPÔTS ET RÉFÉRENCES" };

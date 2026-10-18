@@ -11,7 +11,20 @@ namespace Creezio.Switcher.Desktop
         internal readonly string Root;
         internal readonly RelayStore Store;
         internal readonly bool Fixture;
+        internal Func<ApplicationUpdateStatus> ApplicationUpdateStatusFixture;
+        internal Func<Task<ApplicationUpdateStatus>> CheckApplicationUpdateFixture,DownloadApplicationUpdateFixture,InstallApplicationFixture;
+        internal Action<bool,bool> SaveApplicationUpdatePreferencesFixture;
+        internal Func<Task<bool>> ApplicationUpdateApplyFixture;
+        internal ApplicationUpdateStatus ApplicationUpdateStatus()=>Fixture?(ApplicationUpdateStatusFixture?.Invoke()??new ApplicationUpdateStatus{InstalledVersion=RelayWorker.Version,Phase="idle",Message="État de recette : aucune vérification réseau effectuée."}):ApplicationUpdates.Read(Store);
+        private static InvalidOperationException MissingUpdateFixture()=>new InvalidOperationException("Cette action de mise à jour n’est pas configurée dans la recette ; aucun service réel n’a été contacté.");
+        internal Task<ApplicationUpdateStatus> CheckApplicationUpdate()=>Fixture?(CheckApplicationUpdateFixture?.Invoke()??Task.FromException<ApplicationUpdateStatus>(MissingUpdateFixture())):ApplicationUpdates.Check(Store,CancellationToken.None);
+        internal Task<ApplicationUpdateStatus> DownloadApplicationUpdate()=>Fixture?(DownloadApplicationUpdateFixture?.Invoke()??Task.FromException<ApplicationUpdateStatus>(MissingUpdateFixture())):ApplicationUpdates.Download(Store,CancellationToken.None);
+        internal Task<ApplicationUpdateStatus> InstallApplication()=>Fixture?(InstallApplicationFixture?.Invoke()??Task.FromException<ApplicationUpdateStatus>(MissingUpdateFixture())):ApplicationUpdates.InstallCurrent(Store,CancellationToken.None);
+        internal void SaveApplicationUpdatePreferences(bool automatic,bool startWindows)
+        {if(Fixture){if(SaveApplicationUpdatePreferencesFixture==null)throw MissingUpdateFixture();SaveApplicationUpdatePreferencesFixture(automatic,startWindows);}else ApplicationUpdates.SavePreferences(Store,automatic,startWindows);}
+        internal Task<bool> ApplicationUpdateApply()=>Fixture?(ApplicationUpdateApplyFixture?.Invoke()??Task.FromException<bool>(MissingUpdateFixture())):ApplicationUpdates.Apply(Store,CancellationToken.None);
         internal string InitialPage="Accueil";
+        internal bool ShowSurveillancesOnLoad { get; set; }
         internal Func<StorageScope[]> StorageScopesFixture;
         // Read the existing project index only. Inventory must never start a
         // Codex instance, fetch a repository or inspect conversation contents.
@@ -74,6 +87,7 @@ namespace Creezio.Switcher.Desktop
         private ResourceLinkServer resourceLinks;
         internal void StopResourceLinks(){resourceLinks?.Dispose();resourceLinks=null;}
         internal Func<DesktopInstance,InstanceState> InstanceStateFixture;
+        internal Func<DesktopInstance,RelayIntegrationState> InstanceIntegrationFixture;
         internal Func<string,Task<string>> InstanceWindowFixture;
         internal Func<string,bool,InstanceState,Task<string>> InstanceLifecycleFixture;
         internal Func<ResourceSnapshot> ResourceSnapshotFixture;
@@ -112,6 +126,7 @@ namespace Creezio.Switcher.Desktop
             try{return await DesktopWindows.CloseOrRestart(Accounts(),id,restart,expected,CancellationToken.None);}finally{gate.Release();}
         }
         internal InstanceState InstanceState(AccountService accounts,DesktopInstance instance)=>Fixture?(InstanceStateFixture?.Invoke(instance)??new InstanceState{Running=false,Phase="stopped"}):accounts.Instances.Runtime.Probe(instance);
+        internal RelayIntegrationState InstanceIntegration(AccountService accounts,DesktopInstance instance)=>Fixture&&InstanceIntegrationFixture!=null?InstanceIntegrationFixture(instance):RelayIntegration.Status(Store,accounts.Instances.Home(instance));
         internal async Task<string> OpenOrShowInstance(string id)
         {
             if(Fixture)return await (InstanceWindowFixture?.Invoke(id)??Task.FromException<string>(new InvalidOperationException("Activation non configurée dans cette recette.")));
@@ -183,7 +198,7 @@ namespace Creezio.Switcher.Desktop
             await gate.WaitAsync();
             try
             {
-                await action(Accounts());
+                using(await Task.Run(()=>VaultMutation.Acquire(Root,CancellationToken.None)))await action(Accounts());
             }
             finally { gate.Release(); }
         }
@@ -191,7 +206,9 @@ namespace Creezio.Switcher.Desktop
         {
             if (Fixture)
                 return;
+            await RestoreCloudMonitoring();
             await MaintainStorage();
+            await RestoreWebhooks();
             await MaintainIntegrations();
             await gate.WaitAsync();
             try
@@ -204,10 +221,49 @@ namespace Creezio.Switcher.Desktop
         {
             if (Fixture)
                 return;
+            await RestoreChatMonitoring();
+            await RestoreWebhooks();
             if(resourceLinks==null)resourceLinks=ResourceLinkServer.Start(Store);
             if (RemotePeers.Config(Store).Enabled) RemoteGateway.Start(Store);
             await Mutate(a => { a.Instances.AdoptAccounts(); var policy = RelayPolicies.Load(Store); if (policy.KeepWorkerRunning || Store.ActiveMessages().Any() || new Assistance(Store).List().Any(t=>t.State=="answered"||t.State=="delivering")) RelayWorker.Ensure(Store); return Task.CompletedTask; });
+            await RestoreCloudMonitoring();
             if (await Read(a=>a.Settings.MaintainIntegration)) await MaintainIntegrations(true);
+        }
+        internal Action EnsureCloudWorkerFixture, EnsureLocalReturnWorkerFixture;
+        internal Task RestoreWebhooks()
+        {
+            if(!Fixture&&Webhooks.Config(Store).Enabled)WebhookWorker.Ensure(Store);
+            return Task.CompletedTask;
+        }
+        internal Action EnsureChatWatchWorkerFixture { get; set; }
+        internal Task RestoreChatMonitoring()
+        {
+            return Task.Run(() => {
+                if(!Fixture)PortalScheduleWorker.Ensure(Store);
+                if (!new ChatWatches(Store).HasEnabled()) return;
+                if (Fixture) EnsureChatWatchWorkerFixture?.Invoke();
+                else ChatWatchWorker.Ensure(Store);
+            });
+        }
+        internal Action EnsureCloudQueueWorkerFixture;
+        internal Task RestoreCloudMonitoring()
+        {
+            return Read(a => {
+                if (new CloudMissionQueue(Store).HasEnabledTeams()) {
+                    if (Fixture) EnsureCloudQueueWorkerFixture?.Invoke();
+                    else CloudQueueWorker.Ensure(Store);
+                }
+                var jobs = new CloudJobs(Store);
+                if (CloudJobWorker.HasRemotePending(jobs)) {
+                    if (Fixture) EnsureCloudWorkerFixture?.Invoke();
+                    else CloudJobWorker.Ensure(Store);
+                }
+                if (jobs.LocalReturns().Any()) {
+                    if (Fixture) EnsureLocalReturnWorkerFixture?.Invoke();
+                    else RelayWorker.Ensure(Store);
+                }
+                return true;
+            });
         }
     }
 }

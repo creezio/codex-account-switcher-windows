@@ -60,7 +60,7 @@ namespace Creezio.Switcher
         [DllImport("kernel32.dll")] private static extern bool GetProcessTimes(IntPtr process,out long created,out long exited,out long kernel,out long user);
         [DllImport("psapi.dll")] private static extern bool GetProcessMemoryInfo(IntPtr process,ref ProcessMemory memory,uint size);
         [DllImport("ntdll.dll")] private static extern int NtQueryInformationProcess(IntPtr process,int kind,IntPtr value,int size,out int returned);
-        private static string CommandLine(int pid)
+        internal static string CommandLine(int pid)
         {
             var handle=OpenProcess(0x1000,false,pid);if(handle==IntPtr.Zero)return null;
             try{int length;NtQueryInformationProcess(handle,60,IntPtr.Zero,0,out length);if(length<=0||length>262144)return null;var buffer=Marshal.AllocHGlobal(length);

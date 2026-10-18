@@ -6,7 +6,7 @@ if (-not $OutputDirectory) { $OutputDirectory = Join-Path $projectRoot 'build' }
 $destination = [IO.Path]::GetFullPath($OutputDirectory)
 $buildCursor=$destination
 while($buildCursor){if((Test-Path -LiteralPath $buildCursor) -and ((Get-Item -LiteralPath $buildCursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Un lien ou une jonction empêche cette compilation.'};$buildCursor=Split-Path -Parent $buildCursor}
-foreach($buildName in @('CodexAccountSwitcher.exe','CreezioRelay.exe','CodexAccountSwitcher.dll','CodexAccountSwitcher.deps.json','CodexAccountSwitcher.runtimeconfig.json','CodexAccountSwitcher.pdb','CodexAccountSwitcher.exe.config','CreezioRelay.exe.config','RUNTIME-SHARED.json')){
+foreach($buildName in @('CodexAccountSwitcher.exe','CreezioRelay.exe','SwitcherLauncher.exe','SwitcherLauncher.exe.config','CodexAccountSwitcher.dll','CodexAccountSwitcher.deps.json','CodexAccountSwitcher.runtimeconfig.json','CodexAccountSwitcher.pdb','CodexAccountSwitcher.exe.config','CreezioRelay.exe.config','RUNTIME-SHARED.json')){
   $buildFile=Join-Path $destination $buildName
   if(Test-Path -LiteralPath $buildFile){$buildInfo=Get-Item -LiteralPath $buildFile -Force;if(($buildInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $buildInfo.LinkType -eq 'HardLink'){throw "Fichier applicatif partagé ou lié : $buildName. Aucune réécriture autorisée."}}
 }
@@ -26,7 +26,7 @@ $free = (Get-PSDrive -Name ([IO.Path]::GetPathRoot($destination).Substring(0,1))
 if ($free -lt 100MB) { throw 'At least 100 MB of free space is required for this small build.' }
 New-Item -ItemType Directory -Path $destination -Force | Out-Null
 $sources = Get-ChildItem -LiteralPath (Join-Path $projectRoot 'src') -Filter '*.cs' | ForEach-Object FullName
-$arguments = @('/nologo','/target:winexe','/main:Creezio.Switcher.Program','/platform:anycpu','/optimize+','/warn:4','/warnaserror+',('/out:' + (Join-Path $destination 'CodexAccountSwitcher.exe')),('/win32manifest:' + (Join-Path $projectRoot 'src\app.manifest')),'/reference:System.dll','/reference:System.Core.dll','/reference:System.Drawing.dll','/reference:System.Windows.Forms.dll','/reference:System.Web.Extensions.dll','/reference:System.Security.dll','/reference:System.Net.Http.dll') + $sources
+$arguments = @('/nologo','/target:winexe','/main:Creezio.Switcher.Program','/platform:anycpu','/optimize+','/warn:4','/warnaserror+',('/out:' + (Join-Path $destination 'CodexAccountSwitcher.exe')),('/win32manifest:' + (Join-Path $projectRoot 'src\app.manifest')),'/reference:System.dll','/reference:System.Core.dll','/reference:System.Drawing.dll','/reference:System.Windows.Forms.dll','/reference:System.Web.Extensions.dll','/reference:System.Security.dll','/reference:System.Net.Http.dll','/reference:System.IO.Compression.dll','/reference:System.IO.Compression.FileSystem.dll') + $sources
 # An existing portable delivery already has its native WPF apphost. Never
 # replace that host with the legacy Framework GUI during an app-only refresh.
 if(-not $RefreshApplication){
@@ -36,9 +36,12 @@ if(-not $RefreshApplication){
 $relayArguments = $arguments | Where-Object { $_ -notlike '/target:*' -and $_ -notlike '/main:*' -and $_ -notlike '/out:*' }
 & $compiler (@('/target:exe','/main:Creezio.Switcher.RelayCli',('/out:' + (Join-Path $destination 'CreezioRelay.exe'))) + $relayArguments)
 if ($LASTEXITCODE -ne 0) { throw 'Relay compilation failed.' }
+& $compiler (@('/target:winexe','/main:Creezio.Switcher.SwitcherLauncher',('/out:' + (Join-Path $destination 'SwitcherLauncher.exe'))) + $relayArguments)
+if ($LASTEXITCODE -ne 0) { throw 'Stable launcher compilation failed.' }
 $config = '<?xml version="1.0"?><configuration><startup><supportedRuntime version="v4.0" sku=".NETFramework,Version=v4.8" /></startup></configuration>'
 [IO.File]::WriteAllText((Join-Path $destination 'CodexAccountSwitcher.exe.config'), $config)
 [IO.File]::WriteAllText((Join-Path $destination 'CreezioRelay.exe.config'), $config)
+[IO.File]::WriteAllText((Join-Path $destination 'SwitcherLauncher.exe.config'), $config)
 $pluginSource = Join-Path $projectRoot 'plugins'
 $pluginPending=[Collections.Generic.Stack[string]]::new()
 foreach($pluginRoot in @($pluginSource,(Join-Path $destination 'plugins'))){if(Test-Path -LiteralPath $pluginRoot){$pluginPending.Push($pluginRoot)}}

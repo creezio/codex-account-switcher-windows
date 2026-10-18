@@ -30,6 +30,50 @@ internal static class TestRunner
         try
         {
             string a=FakeAuth("alice","workspace-a"),b=FakeAuth("bob","workspace-b");
+            if(args.Length==2&&args[1]=="--plugins"){PortalPluginTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
+            if(args.Length==2&&args[1]=="--skills"){PortalSkillTests.RunAll(Check,sandbox);PortalManagementHttpTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
+            if(args.Length==2&&args[1]=="--management"){PortalSkillTests.RunAll(Check,sandbox);PortalConversationManagementTests.RunAll(Check,sandbox);PortalManagementHttpTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
+            if(args.Length==2&&args[1]=="--updates"){SwitcherUpdateTests.RunAll(Check,sandbox);SwitcherLifecycleTests.RunAll(Check,sandbox);SwitcherInstallationTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
+            if(args.Length==2&&args[1]=="--lifecycle"){SwitcherLifecycleTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
+            if(args.Length==2&&args[1]=="--installation"){SwitcherInstallationTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
+            if(args.Length==2&&args[1]=="--webhook"){
+                WebhookTests.RunAll(Check,sandbox);WebhookHttpAuthTests.RunAll(Check,sandbox);CloudflareTunnelTests.RunAll(Check,sandbox);WebhookDispatchTests.RunAll(Check,sandbox);WebhookChatTests.RunAll(Check,sandbox);WebhookWebSocketTests.RunAll(Check,sandbox);PortalTests.RunAll(Check,sandbox);PortalMcpTests.RunAll(Check,sandbox);PortalHttpTests.RunAll(Check,sandbox);PortalComposerOptionsTests.RunAll(Check,sandbox);PortalComposerTests.RunAll(Check,sandbox);PortalPermissionTests.RunAll(Check,sandbox);PortalAttachmentTests.RunAll(Check,sandbox);
+                GeneralRelayTests.RunAll(Check,sandbox);HeadlessTransportTests.RunAll(Check,sandbox,a);
+                Console.WriteLine(passed+" tests passed.");return 0;
+            }
+            if(args.Length==2&&args[1]=="--mcp-bootstrap"){
+                RelayMcpBootstrapTests.RunAll(Check,sandbox);
+                Console.WriteLine(passed+" tests passed.");return 0;
+            }
+            if(args.Length==2&&args[1]=="--enrollment"){
+                VaultConcurrencyTests.RunAll(Check,sandbox);
+                PortalAdministrationTests.RunAll(Check,sandbox);
+                PortalEnrollmentTests.RunAll(Check,sandbox);
+                PortalNativeHeadlessTests.RunAll(Check,sandbox);
+                Console.WriteLine(passed+" tests passed.");return 0;
+            }
+            if(args.Length==2&&args[1]=="--tool-contract"){
+                ToolContractCompatibilityTests.RunAll(Check,sandbox);
+                ToolTunnelTests.RunAll(Check,sandbox);SitesArchiveTests.RunAll(Check,sandbox);
+                Console.WriteLine(passed+" tests passed.");return 0;
+            }
+            if(args.Length==2&&args[1]=="--cloud-budget"){
+                CloudJobTests.RunAll((name,test)=>{if(name.StartsWith("cloud worker gives")||name.StartsWith("cloud uncertain dispatch records")||name.StartsWith("cloud cancellation during")||name.StartsWith("cloud cancellation before")||name.StartsWith("cloud dispatch diagnostics"))Check(name,test);},sandbox,a);
+                Console.WriteLine(passed+" tests passed.");return 0;
+            }
+            if(args.Length==2&&args[1]=="--cloud-jobs"){
+                CloudJobTests.RunAll(Check,sandbox,a);CloudCapacityTests.RunAll(Check,sandbox);CloudTasksBackendTests.RunAll(Check);
+                Console.WriteLine(passed+" tests passed.");return 0;
+            }
+            if(args.Length==2&&args[1]=="--cloud-queue"){
+                CloudCapacityTests.RunAll(Check,sandbox);CloudMissionQueueTests.RunAll(Check,sandbox);CloudQueueApiTests.RunAll(Check,sandbox);CloudQueueRepositoryTests.RunAll(Check,sandbox);
+                Console.WriteLine(passed+" tests passed.");return 0;
+            }
+            if(args.Length==2&&args[1]=="--chat-watch"){
+                ChatWatchTests.RunAll(Check,sandbox,a,b);
+                CodexCompatibilityTests.RunAll(Check,sandbox);
+                Console.WriteLine(passed+" tests passed.");return 0;
+            }
             StorageTests.RunAll(Check,sandbox);
             StorageBudgetTests.RunAll(Check,sandbox);
             OwnedTemporaryTests.RunAll(Check,sandbox);
@@ -37,7 +81,8 @@ internal static class TestRunner
             if(args.Length==2&&args[1]=="--headless"){
                 HeadlessToolTests.RunAll(Check,sandbox);HeadlessRuntimeTests.RunAll(Check,sandbox,a);
                 HeadlessTransportTests.RunAll(Check,sandbox,a);HeadlessApprovalTests.RunAll(Check,sandbox,a);HeadlessSourceTests.RunAll(Check,sandbox,a);
-                CloudBackendTests.RunAll(Check);CloudTasksBackendTests.RunAll(Check);CloudGitHubTests.RunAll(Check);CloudJobTests.RunAll(Check,sandbox,a);ProcessResourceTests.RunAll(Check);
+                CloudBackendTests.RunAll(Check);CloudTasksBackendTests.RunAll(Check);CloudGitHubTests.RunAll(Check);CloudJobTests.RunAll(Check,sandbox,a);CloudCapacityTests.RunAll(Check,sandbox);RelayReconnectTests.RunAll(Check,sandbox,a,b);ProcessResourceTests.RunAll(Check);
+                CloudMissionQueueTests.RunAll(Check,sandbox);CloudQueueApiTests.RunAll(Check,sandbox);CloudQueueRepositoryTests.RunAll(Check,sandbox);
                 Console.WriteLine(passed+" tests passed.");return 0;
             }
             Check("identity distinguishes workspace and user",delegate {Assert(AuthIdentity.Parse(a).Key!=AuthIdentity.Parse(FakeAuth("alice","workspace-b")).Key,"workspace collision");Assert(AuthIdentity.Parse(a).Key!=AuthIdentity.Parse(FakeAuth("bob","workspace-a")).Key,"user collision");});
@@ -66,7 +111,12 @@ internal static class TestRunner
             CloudMutationJournalTests.RunAll(Check,sandbox);
             CloudEnvironmentUpdateTests.RunAll(Check,sandbox);
             CloudJobTests.RunAll(Check,sandbox,a);
+            CloudCapacityTests.RunAll(Check,sandbox);
+            CloudMissionQueueTests.RunAll(Check,sandbox);
+            CloudQueueApiTests.RunAll(Check,sandbox);
+            CloudQueueRepositoryTests.RunAll(Check,sandbox);
             CloudTasksBackendTests.RunAll(Check);
+            RelayReconnectTests.RunAll(Check,sandbox,a,b);
             CloudEnvironmentSetupTests.RunAll(Check,sandbox);
             CloudGitHubTests.RunAll(Check);
             LoginBrowserTests.RunAll(Check,sandbox);
@@ -75,7 +125,9 @@ internal static class TestRunner
             SimpleWorkflowTests.RunAll(Check,sandbox,a,b);
             ThreadCopyTests.RunAll(Check,sandbox,a,b);
             TransferTests.RunAll(Check,sandbox);
-            ToolTunnelTests.RunAll(Check,sandbox);SharedPagesTests.RunAll(Check,sandbox);ResourceLinksTests.RunAll(Check,sandbox);
+            ToolContractCompatibilityTests.RunAll(Check,sandbox);ToolTunnelTests.RunAll(Check,sandbox);SitesArchiveTests.RunAll(Check,sandbox);
+            Check("native file upload protocol suite",()=>Assert(NativeFileUploadTests.Main(new[]{Folder("native-file-upload")})==0,"native file upload regression"));
+            SharedPagesTests.RunAll(Check,sandbox);ResourceLinksTests.RunAll(Check,sandbox);
             HeadlessToolTests.RunAll(Check,sandbox);
             HeadlessRuntimeTests.RunAll(Check,sandbox,a);
             HeadlessTransportTests.RunAll(Check,sandbox,a);
@@ -83,7 +135,17 @@ internal static class TestRunner
             HeadlessSourceTests.RunAll(Check,sandbox,a);
             ResourceCatalogTests.RunAll(Check,sandbox);
             RelayTests.RunAll(Check,sandbox);
+            ChatWatchTests.RunAll(Check,sandbox,a,b);
+            CodexCompatibilityTests.RunAll(Check,sandbox);
             GeneralRelayTests.RunAll(Check,sandbox);
+            WebhookTests.RunAll(Check,sandbox);WebhookHttpAuthTests.RunAll(Check,sandbox);CloudflareTunnelTests.RunAll(Check,sandbox);WebhookDispatchTests.RunAll(Check,sandbox);WebhookChatTests.RunAll(Check,sandbox);WebhookWebSocketTests.RunAll(Check,sandbox);PortalTests.RunAll(Check,sandbox);PortalMcpTests.RunAll(Check,sandbox);PortalHttpTests.RunAll(Check,sandbox);PortalComposerOptionsTests.RunAll(Check,sandbox);PortalComposerTests.RunAll(Check,sandbox);PortalPermissionTests.RunAll(Check,sandbox);PortalAttachmentTests.RunAll(Check,sandbox);
+            RelayMcpBootstrapTests.RunAll(Check,sandbox);
+            SwitcherUpdateTests.RunAll(Check,sandbox);
+            SwitcherLifecycleTests.RunAll(Check,sandbox);
+            SwitcherInstallationTests.RunAll(Check,sandbox);
+            VaultConcurrencyTests.RunAll(Check,sandbox);PortalAdministrationTests.RunAll(Check,sandbox);PortalEnrollmentTests.RunAll(Check,sandbox);PortalNativeHeadlessTests.RunAll(Check,sandbox);
+            PortalPluginTests.RunAll(Check,sandbox);
+            PortalSkillTests.RunAll(Check,sandbox);PortalConversationManagementTests.RunAll(Check,sandbox);PortalManagementHttpTests.RunAll(Check,sandbox);
             ProductTests.RunAll(Check,sandbox);
             ConsoleTests.RunAll(Check,sandbox);
             RemoteTests.RunAll(Check,sandbox);

@@ -23,6 +23,7 @@ namespace Creezio.Switcher
         public string Sandbox {get;set;} public string ApprovalPolicy {get;set;} public string Title {get;set;}
         public string State {get;set;} public string PromptHash {get;set;} public string WirePromptHash {get;set;} public string UpdatedUtc {get;set;} public string RuntimeId {get;set;} public string ClientUserMessageId {get;set;}
         public bool InterruptSent {get;set;}
+        public string PermissionProfile {get;set;}
     }
     public sealed class HeadlessRuntimeState
     {
@@ -76,18 +77,18 @@ namespace Creezio.Switcher
         internal static HeadlessThreadReceipt RequireOwned(RelayStore store,RelayChannel channel,string thread)
         {
             var receipt=store.ReadRecord<HeadlessThreadReceipt>(ReceiptName(thread));
-            if(receipt.ThreadId!=thread||receipt.ChannelId!=channel.Id||receipt.AccountKey!=channel.AccountKey||!RelayStore.SamePath(receipt.Home??"",channel.Home)||!RelayStore.SamePath(receipt.Workspace??"",channel.Workspace)||receipt.Sandbox!=channel.HeadlessSandbox||receipt.ApprovalPolicy!=channel.HeadlessApprovalPolicy)throw new InvalidOperationException("Cette conversation n'a pas été créée par ce moteur pour ce compte et ce dossier. Aucun envoi effectué.");
+            if(receipt.ThreadId!=thread||receipt.ChannelId!=channel.Id||receipt.AccountKey!=channel.AccountKey||!RelayStore.SamePath(receipt.Home??"",channel.Home)||!RelayStore.SamePath(receipt.Workspace??"",channel.Workspace)||receipt.Sandbox!=channel.HeadlessSandbox||receipt.ApprovalPolicy!=channel.HeadlessApprovalPolicy||(receipt.PermissionProfile!=null&&!RelayPermissions.IsExplicitProfile(receipt.PermissionProfile)))throw new InvalidOperationException("Cette conversation n'a pas été créée par ce moteur pour ce compte et ce dossier. Aucun envoi effectué.");
             return receipt;
         }
         private void Save(HeadlessThreadReceipt receipt){receipt.UpdatedUtc=DateTime.UtcNow.ToString("o");store.WriteRecord(ReceiptName(receipt.ThreadId),receipt);}
         public void Verify(RelayChannel channel){Validate(store,channel);}
         public void VerifySend(RelayChannel channel,string thread)
         {
-            Verify(channel);if(channel.RequireFullAccess&&Permissions(channel,thread)!="full-access")throw new InvalidOperationException("Ce canal exige Accès complet. Choisissez explicitement les permissions correspondantes dans les réglages de l'instance avant une nouvelle mission.");
+            Verify(channel);var prior=String.IsNullOrEmpty(thread)?null:RequireOwned(store,channel,thread);if(channel.RequireFullAccess&&Permissions(channel,thread)!="full-access"&&(prior==null||!RelayPermissions.IsExplicitProfile(prior.PermissionProfile)))throw new InvalidOperationException("Ce canal exige Accès complet. Choisissez explicitement les permissions correspondantes dans les réglages de l'instance avant une nouvelle mission.");
             if(!String.IsNullOrEmpty(thread))RequireOwned(store,channel,thread);
         }
         public string Permissions(RelayChannel channel,string thread)
-        {Validate(store,channel);if(!String.IsNullOrEmpty(thread))RequireOwned(store,channel,thread);return channel.HeadlessSandbox=="danger-full-access"&&channel.HeadlessApprovalPolicy=="never"?"full-access":channel.HeadlessSandbox+" / "+channel.HeadlessApprovalPolicy;}
+        {Validate(store,channel);if(!String.IsNullOrEmpty(thread)){var receipt=RequireOwned(store,channel,thread);if(RelayPermissions.IsExplicitProfile(receipt.PermissionProfile))return receipt.PermissionProfile;}return channel.HeadlessSandbox=="danger-full-access"&&channel.HeadlessApprovalPolicy=="never"?"full-access":channel.HeadlessSandbox+" / "+channel.HeadlessApprovalPolicy;}
         private Runtime Connection(RelayChannel channel,CancellationToken token)
         {
             string key=store.Root+"|"+channel.AccountKey;
@@ -149,8 +150,12 @@ namespace Creezio.Switcher
         }
         private static string Sandbox(object result)
         {string kind=Json.Str(Json.Get(Json.Get(result,"sandbox"),"type"));switch(kind){case "workspaceWrite":return "workspace-write";case "readOnly":return "read-only";case "dangerFullAccess":return "danger-full-access";default:return kind;}}
-        private static void VerifyContext(RelayChannel channel,object result)
-        {if(Json.Str(Json.Get(result,"approvalPolicy"))!=channel.HeadlessApprovalPolicy||Sandbox(result)!=channel.HeadlessSandbox||!RelayStore.SamePath(Json.Str(Json.Get(result,"cwd")),channel.Workspace))throw new InvalidOperationException("Codex n'a pas confirmé les permissions ou le dossier demandés. Aucun mandat transmis.");}
+        private static string ProfileSandbox(string profile,string fallback)
+        {return profile=="full-access"?"danger-full-access":profile=="read-only"?"read-only":profile=="workspace-write"?"workspace-write":fallback;}
+        private static string ProfileApproval(string profile,string fallback)
+        {return profile=="full-access"?"never":RelayPermissions.IsExplicitProfile(profile)?"on-request":fallback;}
+        private static void VerifyContext(RelayChannel channel,object result,string profile=null)
+        {if((RelayPermissions.IsExplicitProfile(profile)?!RelayPermissions.MatchesProfile(result,profile):Json.Str(Json.Get(result,"approvalPolicy"))!=channel.HeadlessApprovalPolicy||Sandbox(result)!=channel.HeadlessSandbox)||!RelayStore.SamePath(Json.Str(Json.Get(result,"cwd")),channel.Workspace))throw new InvalidOperationException("Codex n'a pas confirmé les permissions ou le dossier demandés. Aucun mandat transmis.");}
         private async Task<object> Read(RelayChannel channel,Runtime runtime,HeadlessThreadReceipt receipt,object args,CancellationToken token)
         {
             var read=await runtime.Rpc.Call("thread/read",new{threadId=receipt.ThreadId,includeTurns=true},token).ConfigureAwait(false);
@@ -174,14 +179,15 @@ namespace Creezio.Switcher
         }
         public async Task<object> Call(RelayChannel channel,string tool,object arguments,CancellationToken token)
         {
-            Verify(channel);var args=Json.Read<object>(Json.Write(arguments));
+            Verify(channel);var args=Json.Read<object>(Json.Write(arguments));object composerValue=Json.Get(args,"creezioComposer");var composer=composerValue==null?null:Json.Read<PortalResolvedComposer>(Json.Write(composerValue));string explicitProfile=composer==null?null:composer.PermissionProfile;
+            if(RelayPermissions.IsExplicitProfile(explicitProfile)&&(composer.AccountKey!=channel.AccountKey||composer.InstanceId!=channel.InstanceId||!RelayStore.SamePath(composer.Home,channel.Home)))throw new InvalidOperationException("Les permissions demandees ne sont pas liees a ce compte et ce profil.");
             if(tool=="list_threads")return Shape(new{threads=Directory.GetFiles(store.Root,"headless-thread-*.dpapi").Select(path=>store.ReadRecord<HeadlessThreadReceipt>(Path.GetFileName(path))).Where(value=>value.ChannelId==channel.Id&&value.AccountKey==channel.AccountKey).Select(value=>new{threadId=value.ThreadId,title=value.Title}).ToArray(),pinnedThreads=new object[0]});
             if(!new[]{"create_thread","send_message_to_thread","read_thread","interrupt_thread"}.Contains(tool))throw new InvalidOperationException("Cette opération exige l'interface Codex ou n'est pas disponible sur le moteur autonome.");
             string thread=Json.Str(Json.Get(args,"threadId"));HeadlessThreadReceipt receipt=tool=="create_thread"?null:RequireOwned(store,channel,thread);
             if(tool=="read_thread"){
                 var owner=store.ReadRecord<HeadlessRuntimeState>(RuntimeName(channel.AccountKey));using(var current=Process.GetCurrentProcess())if(owner.Running&&owner.WorkerPid!=current.Id)return await HeadlessSourceBroker.Read(store,channel,thread,token).ConfigureAwait(false);
             }
-            if(tool=="create_thread"||tool=="send_message_to_thread")VerifySend(channel,tool=="create_thread"?null:thread);
+            if(tool=="create_thread"||tool=="send_message_to_thread"){if(!RelayPermissions.IsExplicitProfile(explicitProfile))VerifySend(channel,tool=="create_thread"?null:thread);else if(receipt!=null)RequireOwned(store,channel,thread);}
             var runtime=Connection(channel,token);bool entered=false;
             try{
                 await runtime.Gate.WaitAsync(token).ConfigureAwait(false);entered=true;
@@ -194,18 +200,23 @@ namespace Creezio.Switcher
                     return Shape(new{requested=true,threadId=receipt.ThreadId,turnId=receipt.TurnId});
                 }
                 if(tool=="create_thread"){
-                    var start=new Dictionary<string,object>{{"cwd",channel.Workspace},{"sandbox",channel.HeadlessSandbox},{"approvalPolicy",channel.HeadlessApprovalPolicy},{"historyMode","legacy"},{"ephemeral",false}};string model=Json.Str(Json.Get(args,"model"));if(model.Length>0)start["model"]=model;
-                    var created=await runtime.Rpc.Call("thread/start",start,token).ConfigureAwait(false);VerifyContext(channel,created);thread=Json.Str(Json.Get(Json.Get(created,"thread"),"id"));ReceiptName(thread);
-                    receipt=new HeadlessThreadReceipt{ThreadId=thread,ChannelId=channel.Id,AccountKey=channel.AccountKey,Home=channel.Home,Workspace=channel.Workspace,Sandbox=channel.HeadlessSandbox,ApprovalPolicy=channel.HeadlessApprovalPolicy,Title=Json.Str(Json.Get(args,"title")),State="created",RuntimeId=runtime.Id};Save(receipt);runtime.Loaded.Add(thread);
+                    var start=new Dictionary<string,object>{{"cwd",channel.Workspace},{"sandbox",ProfileSandbox(explicitProfile,channel.HeadlessSandbox)},{"approvalPolicy",ProfileApproval(explicitProfile,channel.HeadlessApprovalPolicy)},{"historyMode","legacy"},{"ephemeral",false}};string model=Json.Str(Json.Get(args,"model"));if(model.Length>0)start["model"]=model;
+                    var created=await runtime.Rpc.Call("thread/start",start,token).ConfigureAwait(false);VerifyContext(channel,created,explicitProfile);thread=Json.Str(Json.Get(Json.Get(created,"thread"),"id"));ReceiptName(thread);
+                    receipt=new HeadlessThreadReceipt{ThreadId=thread,ChannelId=channel.Id,AccountKey=channel.AccountKey,Home=channel.Home,Workspace=channel.Workspace,Sandbox=channel.HeadlessSandbox,ApprovalPolicy=channel.HeadlessApprovalPolicy,PermissionProfile=RelayPermissions.IsExplicitProfile(explicitProfile)?explicitProfile:null,Title=Json.Str(Json.Get(args,"title")),State="created",RuntimeId=runtime.Id};Save(receipt);runtime.Loaded.Add(thread);
                 }else{
                     if(new[]{"sending","running","uncertain"}.Contains(receipt.State))throw new InvalidOperationException("Le mandat est déjà envoyé ou son résultat reste à vérifier. Aucun renvoi automatique.");
-                    if(!runtime.Loaded.Contains(thread)){var resumed=await runtime.Rpc.Call("thread/resume",new{threadId=thread,cwd=channel.Workspace,sandbox=channel.HeadlessSandbox,approvalPolicy=channel.HeadlessApprovalPolicy,excludeTurns=true},token).ConfigureAwait(false);VerifyContext(channel,resumed);if(Json.Str(Json.Get(Json.Get(resumed,"thread"),"id"))!=thread)throw new InvalidOperationException("La reprise n'a pas confirmé sa conversation.");runtime.Loaded.Add(thread);}
+                    if(!runtime.Loaded.Contains(thread)){string effective=RelayPermissions.IsExplicitProfile(explicitProfile)?explicitProfile:receipt.PermissionProfile;var resumed=await runtime.Rpc.Call("thread/resume",new{threadId=thread,cwd=channel.Workspace,sandbox=ProfileSandbox(effective,channel.HeadlessSandbox),approvalPolicy=ProfileApproval(effective,channel.HeadlessApprovalPolicy),excludeTurns=true},token).ConfigureAwait(false);VerifyContext(channel,resumed,effective);if(Json.Str(Json.Get(Json.Get(resumed,"thread"),"id"))!=thread)throw new InvalidOperationException("La reprise n'a pas confirmé sa conversation.");runtime.Loaded.Add(thread);}
                 }
-                VerifySend(channel,receipt.ThreadId);string prompt=Json.Str(Json.Get(args,"prompt"));if(String.IsNullOrWhiteSpace(prompt))throw new InvalidOperationException("Mandat vide.");
+                if(RelayPermissions.IsExplicitProfile(explicitProfile)){var settings=RelayPermissions.NativeProfile(explicitProfile,channel.Workspace);settings["threadId"]=thread;await runtime.Rpc.Call("thread/settings/update",settings,token).ConfigureAwait(false);receipt.PermissionProfile=explicitProfile;Save(receipt);}else VerifySend(channel,receipt.ThreadId);string prompt=Json.Str(Json.Get(args,"prompt"));if(String.IsNullOrWhiteSpace(prompt))throw new InvalidOperationException("Mandat vide.");
                 var integration=RelayIntegration.Status(store,channel.Home);bool integrationCurrent=integration.Healthy&&!String.IsNullOrEmpty(integration.InstalledVersion)&&integration.InstalledVersion.StartsWith(RelayWorker.Version+"+codex.",StringComparison.Ordinal);string integrationNote=integrationCurrent?"Si tu utilises report_result, un outil partagé ou une sous-délégation et que l'outil MCP bind_headless_chat est disponible, appelle-le d'abord avec threadId="+thread+", puis utilise la session retournée.":"L'intégration MCP du relais n'a pas pu être vérifiée pour cette version. Ne l'installe pas toi-même : rapporte ce blocage si tu en as besoin et rends ton résultat final dans ce chat ; il sera récupéré. Diagnostic : "+HeadlessApprovals.SafeSummary(integration.Status??"non vérifiée");
                 string wirePrompt=prompt+"\n\n[CREEZIO_HEADLESS_CHAT:"+thread+"]\nContexte technique du relais pour CE chat créé par Account Switcher. "+integrationNote+" Aucune commande shell de connexion ni élévation n'est nécessaire. Cet identifiant seul ne donne aucun droit ; le relais vérifie le moteur, le compte et le chat natif. Ne copie pas une session d'un autre chat.";
                 receipt.State="sending";receipt.RuntimeId=runtime.Id;receipt.TurnId=null;receipt.ClientUserMessageId=Guid.NewGuid().ToString("N");receipt.PromptHash=RemotePeers.Hash(prompt);receipt.WirePromptHash=RemotePeers.Hash(wirePrompt);receipt.InterruptSent=false;Save(receipt);lock(RuntimeSync)runtime.Active.Add(thread);
-                try{var started=await runtime.Rpc.Call("turn/start",new{threadId=thread,input=new[]{new{type="text",text=wirePrompt}},approvalPolicy=channel.HeadlessApprovalPolicy,clientUserMessageId=receipt.ClientUserMessageId},token).ConfigureAwait(false);receipt.TurnId=Json.Str(Json.Get(Json.Get(started,"turn"),"id"));if(String.IsNullOrEmpty(receipt.TurnId))throw new InvalidOperationException("Le service n'a pas confirmé le tour.");receipt.State="running";Save(receipt);Verify(channel);return Shape(new{threadId=thread,turnId=receipt.TurnId});}
+                var turnArgs=new Dictionary<string,object>{{"threadId",thread},{"input",new[]{new{type="text",text=wirePrompt}}},{"approvalPolicy",ProfileApproval(receipt.PermissionProfile,channel.HeadlessApprovalPolicy)},{"clientUserMessageId",receipt.ClientUserMessageId}};
+                string turnModel=Json.Str(Json.Get(args,"model")),effort=Json.Str(Json.Get(args,"thinking"));
+                if(turnModel.Length>0)turnArgs["model"]=turnModel;
+                if(effort.Length>0)turnArgs["effort"]=effort;
+                if(composer!=null){var input=new List<object>{new{type="text",text=wirePrompt}};input.AddRange(composer.InputItems??new object[0]);turnArgs["input"]=input.ToArray();var mode=PortalComposer.Collaboration(composer,turnModel,effort);if(mode!=null)turnArgs["collaborationMode"]=mode;foreach(var setting in RelayPermissions.NativeProfile(explicitProfile,channel.Workspace))turnArgs[setting.Key]=setting.Value;}
+                try{var started=await runtime.Rpc.Call("turn/start",turnArgs,token).ConfigureAwait(false);receipt.TurnId=Json.Str(Json.Get(Json.Get(started,"turn"),"id"));if(String.IsNullOrEmpty(receipt.TurnId))throw new InvalidOperationException("Le service n'a pas confirmé le tour.");receipt.State="running";Save(receipt);Verify(channel);return Shape(new{threadId=thread,turnId=receipt.TurnId});}
                 catch{receipt.State="uncertain";Save(receipt);throw;}
             }catch(HeadlessRpcException error){Invalidate(store,channel);var lost=new HeadlessRuntimeLostException(error);var state=store.ReadRecord<HeadlessRuntimeState>(RuntimeName(channel.AccountKey));if(state.RuntimeId==runtime.Id){state.Diagnostic=Program.SafeError(lost);store.WriteRecord(RuntimeName(channel.AccountKey),state);}throw lost;}
             catch(ObjectDisposedException){Invalidate(store,channel);throw new HeadlessRuntimeLostException();}

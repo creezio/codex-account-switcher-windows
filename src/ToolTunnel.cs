@@ -62,6 +62,10 @@ namespace Creezio.Switcher
         public object Result {get;set;}
         public bool HasResult {get;set;}
         public bool SensitiveResult {get;set;}
+        public string ArchiveHash {get;set;}
+        public long ArchiveBytes {get;set;}
+        public string ContractStatus {get;set;}
+        public string ContractReason {get;set;}
     }
     internal sealed class TunnelOwner
     {
@@ -115,12 +119,119 @@ namespace Creezio.Switcher
             // The immutable DPAPI snapshot is the authorization contract. .NET 10 and
             // Framework escape JSON strings differently, so a saved serializer hash
             // cannot be compared to a live hash produced by the other runtime.
-            return saved!=null&&live!=null&&Signature(saved)==Signature(live);
+            return ContractDifference(saved,live,null)==null;
+        }
+        private static bool Presentation(string key){return new[]{"description","title","$comment","examples"}.Contains(key);}
+        private static string ContractPath(string value){return WebhookChats.Safe(value,180);}
+        // Documentation is not a permission. Provider identity, risk hints and
+        // executable constraints stay fixed. New optional inputs without defaults
+        // may coexist, but the immutable old grant does not authorize their use.
+        internal static string ContractDifference(TunnelTool saved,TunnelTool live,object arguments)
+        {
+            if(saved==null||live==null)return "outil absent du catalogue du compte proprietaire";
+            if(saved.Server!=live.Server||saved.Name!=live.Name||String.IsNullOrEmpty(saved.Name))return "identite de l'outil ou serveur modifie";
+            if(saved.ConnectorId!=live.ConnectorId)return "connecteur proprietaire modifie";
+            if(saved.Server=="codex_apps"&&String.IsNullOrWhiteSpace(saved.ConnectorId)&&Signature(saved)!=Signature(live))return "identite du connecteur absente : compatibilite automatique non verifiable";
+            if(saved.ReadOnly!=live.ReadOnly)return "niveau lecture/ecriture modifie";
+            var oldAnnotations=Json.Obj(Json.Read<object>(Json.Write(saved.Annotations))).Where(p=>p.Key!="title"&&p.Key!="description").ToDictionary(p=>p.Key,p=>p.Value);
+            var newAnnotations=Json.Obj(Json.Read<object>(Json.Write(live.Annotations))).Where(p=>p.Key!="title"&&p.Key!="description").ToDictionary(p=>p.Key,p=>p.Value);
+            if(Canonical(oldAnnotations)!=Canonical(newAnnotations))return "annotations de risque modifiees";
+            return SchemaDifference(Json.Read<object>(Json.Write(saved.Schema)),Json.Read<object>(Json.Write(live.Schema)),"arguments",arguments==null?null:Json.Read<object>(Json.Write(arguments)),0);
+        }
+        private static string[] SchemaNames(object value)
+        {var rows=value as IEnumerable;if(rows==null||value is string||value is IDictionary)return value==null?new string[0]:null;var names=rows.Cast<object>().Select(v=>v as string).ToArray();return names.Any(n=>n==null)||names.Distinct(StringComparer.Ordinal).Count()!=names.Length?null:names.OrderBy(n=>n,StringComparer.Ordinal).ToArray();}
+        private static bool HasDefault(object value,int depth)
+        {if(depth>32)return true;var obj=value as IDictionary<string,object>;if(obj!=null)return obj.ContainsKey("default")||obj.Values.Any(v=>HasDefault(v,depth+1));var rows=value as IEnumerable;return rows!=null&&!(value is string)&&rows.Cast<object>().Any(v=>HasDefault(v,depth+1));}
+        private static string SchemaDifference(object saved,object live,string path,object arguments,int depth)
+        {
+            if(depth>32)return "schema trop imbrique pour une compatibilite automatique";
+            if(Canonical(saved)==Canonical(live))return null;
+            var before=saved as IDictionary<string,object>;var after=live as IDictionary<string,object>;
+            if(before!=null&&after!=null){
+                foreach(string key in before.Keys.Union(after.Keys).OrderBy(k=>k,StringComparer.Ordinal)){
+                    if(Presentation(key))continue;object a,b;before.TryGetValue(key,out a);after.TryGetValue(key,out b);
+                    if(key=="required"){var left=SchemaNames(a);var right=SchemaNames(b);if(left==null||right==null||!left.SequenceEqual(right))return "parametres obligatoires modifies a "+ContractPath(path);continue;}
+                    if(key=="enum"){var left=a as IEnumerable;var right=b as IEnumerable;if(left==null||right==null||a is string||b is string||a is IDictionary||b is IDictionary||!left.Cast<object>().Select(Canonical).OrderBy(v=>v,StringComparer.Ordinal).SequenceEqual(right.Cast<object>().Select(Canonical).OrderBy(v=>v,StringComparer.Ordinal)))return "valeurs enumerees modifiees a "+ContractPath(path);continue;}
+                    if(key=="properties"){
+                        if(before.ContainsKey(key)&&!(a is IDictionary<string,object>)||after.ContainsKey(key)&&!(b is IDictionary<string,object>))return "proprietes du schema invalides a "+ContractPath(path);
+                        var oldProperties=Json.Obj(a);var newProperties=Json.Obj(b);var required=SchemaNames(Json.Get(live,"required"));if(required==null)return "liste de parametres obligatoires invalide";
+                        foreach(string name in oldProperties.Keys.Union(newProperties.Keys).OrderBy(k=>k,StringComparer.Ordinal)){
+                            object oldProperty,newProperty;if(!newProperties.TryGetValue(name,out newProperty))return "parametre supprime : "+ContractPath(path+"."+name);
+                            if(!oldProperties.TryGetValue(name,out oldProperty)){
+                                if(!(newProperty is IDictionary<string,object>)&&!(newProperty is bool))return "definition de parametre invalide : "+ContractPath(path+"."+name);
+                                if(path.IndexOf("/$defs/",StringComparison.Ordinal)>=0||path.IndexOf("/definitions/",StringComparison.Ordinal)>=0)return "definition referencee modifiee : "+ContractPath(path+"."+name);
+                                if(required.Contains(name)||HasDefault(newProperty,depth+1))return "nouveau parametre obligatoire ou avec valeur par defaut : "+ContractPath(path+"."+name);
+                                if(Json.Obj(arguments).ContainsKey(name))return "nouveau parametre non autorise par le partage existant : "+ContractPath(path+"."+name);
+                                continue;
+                            }
+                            string changed=SchemaDifference(oldProperty,newProperty,path+"."+name,Json.Get(arguments,name),depth+1);if(changed!=null)return changed;
+                        }continue;
+                    }
+                    // Definition keys are user-defined names, not documentation.
+                    if(key=="$defs"||key=="definitions"){
+                        if(before.ContainsKey(key)&&!(a is IDictionary<string,object>)||after.ContainsKey(key)&&!(b is IDictionary<string,object>))return "definitions du schema invalides";
+                        var oldDefinitions=Json.Obj(a);var newDefinitions=Json.Obj(b);if(!oldDefinitions.Keys.OrderBy(k=>k,StringComparer.Ordinal).SequenceEqual(newDefinitions.Keys.OrderBy(k=>k,StringComparer.Ordinal)))return "definitions de schema modifiees";
+                        foreach(string name in oldDefinitions.Keys){string changed=SchemaDifference(oldDefinitions[name],newDefinitions[name],path+"/"+key+"/"+name,null,depth+1);if(changed!=null)return changed;}continue;
+                    }
+                    if(key=="items"){
+                        string changed=SchemaDifference(a,b,path+"[]",null,depth+1);if(changed!=null)return changed;
+                        var values=arguments as IEnumerable;if(values!=null&&!(arguments is string)&&!(arguments is IDictionary))foreach(var value in values){changed=SchemaDifference(a,b,path+"[]",value,depth+1);if(changed!=null)return changed;}continue;
+                    }
+                    var oldRows=a as IEnumerable;var newRows=b as IEnumerable;
+                    if(new[]{"anyOf","oneOf","allOf","prefixItems"}.Contains(key)&&oldRows!=null&&newRows!=null&&!(a is string)&&!(b is string)&&!(a is IDictionary)&&!(b is IDictionary)){
+                        var left=oldRows.Cast<object>().ToArray();var right=newRows.Cast<object>().ToArray();if(left.Length!=right.Length)return "structure de schema modifiee a "+ContractPath(path+"."+key);
+                        for(int i=0;i<left.Length;i++){string changed=SchemaDifference(left[i],right[i],path+"."+key+"["+i+"]",arguments,depth+1);if(changed!=null)return changed;}continue;
+                    }
+                    // Only known schema positions contain schema annotations.
+                    // const/default/unknown keywords are literal data: a property
+                    // named description inside such a value is executable data.
+                    if(new[]{"additionalProperties","additionalItems","contains","propertyNames","not","if","then","else","unevaluatedProperties","unevaluatedItems"}.Contains(key)){
+                        string difference=SchemaDifference(a,b,path+"."+key,arguments,depth+1);if(difference!=null)return difference;
+                    }else if(Canonical(a)!=Canonical(b))return "contrainte de schema modifiee a "+ContractPath(path+"."+key);
+                }return null;
+            }
+            return "contrainte de schema modifiee a "+ContractPath(path);
+        }
+        private static void CheckArgumentSurface(object schema,object arguments,string path)
+        {
+            if(Json.Str(Json.Get(schema,"type"))=="object"&&arguments is IDictionary<string,object>){
+                var values=Json.Obj(arguments);var properties=Json.Obj(Json.Get(schema,"properties"));var required=SchemaNames(Json.Get(schema,"required"));if(required==null)throw new InvalidOperationException("Schema de parametres obligatoires invalide.");
+                foreach(string name in required)if(!values.ContainsKey(name))throw new InvalidOperationException("Parametre autorise manquant : "+ContractPath(path+"."+name));
+                foreach(var pair in values){object property;if(properties.TryGetValue(pair.Key,out property))CheckArgumentSurface(property,pair.Value,path+"."+pair.Key);else if(Object.Equals(Json.Get(schema,"additionalProperties"),false))throw new InvalidOperationException("Parametre absent du contrat autorise : "+ContractPath(path+"."+pair.Key));}
+            }
+            var rows=arguments as IEnumerable;if(rows!=null&&!(arguments is string)&&!(arguments is IDictionary))foreach(var row in rows)CheckArgumentSurface(Json.Get(schema,"items"),row,path+"[]");
         }
         internal static string Limitation(TunnelTool tool)
         {
-            if(tool.Server=="codex_apps"&&(tool.Name=="sites.save_site_version"||tool.Name=="sites.save_version_and_deploy_private"))return "Publication d'une nouvelle version Sites indisponible : le transport direct ne transfère pas l'archive. Utilisez la publication native dans Codex.";
+            if(IsSitesSave(tool))return SupportsSitesRemoteBuild(tool)?"Archive Sites .tar.gz transférée avec le compte propriétaire ; Accès complet du chat appelant requis. Le repli de construction distante accepte seulement project_id et commit_sha, sans champ archive, lorsque le packaging local ne peut réellement pas aboutir. Préservez la preuve de cet échec et le SHA poussé exact ; ne simulez pas un échec pour omettre l'archive.":"Cette définition Sites ne confirme pas le contrat de publication pris en charge ; aucun fichier local n'est transféré.";
             return "";
+        }
+        private static bool IsSitesSave(TunnelTool tool)
+        {return tool!=null&&(tool.Name=="sites.save_site_version"||tool.Name=="sites.save_version_and_deploy_private");}
+        internal static bool SupportsSitesRemoteBuild(TunnelTool tool)
+        {
+            if(tool.Server!="codex_apps"||tool.ReadOnly||Object.Equals(Json.Get(tool.Annotations,"readOnlyHint"),true)||Json.Str(Json.Get(tool.Schema,"type"))!="object")return false;
+            var properties=Json.Obj(Json.Get(tool.Schema,"properties"));object project,commit,archive;
+            if(!properties.TryGetValue("project_id",out project)||Json.Str(Json.Get(project,"type"))!="string"||!properties.TryGetValue("commit_sha",out commit)||Json.Str(Json.Get(commit,"type"))!="string"||!properties.TryGetValue("archive",out archive)||Json.Str(Json.Get(archive,"type"))!="string")return false;
+            var requiredValue=Json.Get(tool.Schema,"required");var required=requiredValue as IEnumerable;
+            if(required==null||requiredValue is string||requiredValue is IDictionary)return false;
+            var names=required.Cast<object>().Select(value=>value as string).ToArray();
+            if(names.Length!=2||names.Any(String.IsNullOrEmpty)||names.Distinct(StringComparer.Ordinal).Count()!=2||!names.Contains("project_id")||!names.Contains("commit_sha"))return false;
+            // These native contract words describe the supported capability,
+            // not permission to invent a packaging failure or widen a grant.
+            string description=(tool.Description??"")+"\n"+Json.Str(Json.Get(archive,"description"));
+            return description.IndexOf("omit it only when local packaging cannot complete",StringComparison.OrdinalIgnoreCase)>=0&&description.IndexOf("remote build fallback",StringComparison.OrdinalIgnoreCase)>=0;
+        }
+        private static void CheckSitesTransport(TunnelTool tool,object args)
+        {
+            if(!IsSitesSave(tool))return;
+            if(!SupportsSitesRemoteBuild(tool))throw new InvalidOperationException("Le contrat autorisé de cet outil ne confirme pas un repli Sites sans archive. Aucun appel envoyé.");
+            var values=args as IDictionary<string,object>;
+            // Null, an empty string, a remote URL or a made-up file reference
+            // must not turn an explicitly supplied archive into an omission.
+            if(values==null||values.ContainsKey("archive"))throw new InvalidOperationException("Le tunnel ne transfère aucune archive locale. Le repli documenté exige l'absence complète du champ archive, jamais une valeur nulle ou un chemin.");
+            object project,commit;
+            if(values.Count!=2||!values.TryGetValue("project_id",out project)||!(project is string)||String.IsNullOrWhiteSpace((string)project)||!values.TryGetValue("commit_sha",out commit)||!(commit is string)||!System.Text.RegularExpressions.Regex.IsMatch((string)commit,"^[0-9a-f]{40}$"))throw new InvalidOperationException("Le repli Sites exige seulement le project_id autorisé et le SHA complet exact du commit poussé. Aucun appel envoyé.");
         }
         internal static void CheckTransport(object schema,object args)
         {
@@ -190,7 +301,7 @@ namespace Creezio.Switcher
             return Grants().Where(g=>CanUse(g,session)).Select(g=>new{id=g.Id,name=g.Name,instance=g.Instance,instanceName=CurrentName(g),resourceField=g.ResourceField,resourceValue=g.ResourceValue,resourceValues=g.ResourceValues,resourceLabels=g.ResourceLabels,tools=g.Tools.Select(t=>new{server=t.Server,name=t.Name,group=t.Group,readOnly=t.ReadOnly,limitation=Limitation(t)}).ToArray()}).ToArray();
         }
         public object Describe(RelaySession session,string grantId,string server,string name)
-        {var g=Authorize(session,grantId);var tool=g.Tools.Single(t=>t.Server==server&&t.Name==name);return new{instance=g.Instance,instanceName=CurrentName(g),resourceField=g.ResourceField,resourceValue=g.ResourceValue,resourceValues=g.ResourceValues,resourceLabels=g.ResourceLabels,limitation=Limitation(tool),fileTransfer="Native local-file uploads are unavailable; credentials are returned once and redacted from storage.",tool=tool};}
+        {var g=Authorize(session,grantId);var tool=g.Tools.Single(t=>t.Server==server&&t.Name==name);return new{instance=g.Instance,instanceName=CurrentName(g),resourceField=g.ResourceField,resourceValue=g.ResourceValue,resourceValues=g.ResourceValues,resourceLabels=g.ResourceLabels,limitation=Limitation(tool),fileTransfer="Declared Sites .tar.gz archives use the owner's authenticated upload, with full access required in the source chat. Other native file uploads are unavailable; credentials are returned once and redacted from storage.",tool=tool};}
         private string Record(string id){RelayStore.MessageId(id);return "tool-call-"+id+".dpapi";}
         private void Persist(TunnelCall call)
         {
@@ -228,27 +339,43 @@ namespace Creezio.Switcher
                 var existing=store.ReadRecord<TunnelCall>(Record(id));
                 if(existing.Id!=null){SameCaller(existing,session);if(existing.Fingerprint!=hash)throw new InvalidOperationException("Cet identifiant a déjà été utilisé avec d'autres arguments.");return existing;}
                 var call=new TunnelCall{Id=id,Grant=grant.Id,GrantName=grant.Name,Instance=grant.Instance,Revision=grant.Revision,SourceThread=session.Thread,SourceHome=session.Home,SourceAccount=session.Account,Fingerprint=hash,Tool=server+"/"+name,State="preparing",Created=DateTime.UtcNow.ToString("o")};Persist(call);
-                bool sent=false;
+                bool sent=false;SitesArchive archive=null;
                 try{
-                    string limitation=Limitation(chosen);if(limitation.Length>0)throw new InvalidOperationException(limitation);CheckTransport(chosen.Schema,args);
+                    CheckArgumentSurface(chosen.Schema,args,"arguments");
+                    if(SitesArchive.Supplied(chosen,args))archive=SitesArchive.Open(chosen,args,session);
+                    else {CheckSitesTransport(chosen,args);CheckTransport(chosen.Schema,args);}
                     var pinned=new TunnelOwner{Id=grant.Instance,Home=grant.Home,Account=grant.Account};var owner=resolveOwner(grant.Instance);CheckOwner(pinned,owner);
                     // Serializes direct calls to one account, including calls from different chats/processes.
                     using(store.Lease("tool-owner-"+Hash(owner.Account).Substring(0,32)))
                     using(var connection=connect(owner)){
                         var inventory=await connection.Inventory(token).ConfigureAwait(false);var live=inventory.SingleOrDefault(t=>t.Server==server&&t.Name==name);
-                        if(!SameContract(chosen,live))throw new InvalidOperationException("La définition de cet outil a changé depuis l'autorisation. Rouvrez ses accès dans le switcher et enregistrez-les à nouveau.");
+                        string difference=ContractDifference(chosen,live,args);call.ContractStatus=difference!=null?"breaking":Signature(chosen)==Signature(live)?"unchanged":"compatible";call.ContractReason=difference??(call.ContractStatus=="compatible"?"Documentation ou parametres optionnels compatibles ; droits et schema autorise conserves.":null);
+                        if(difference!=null)throw new InvalidOperationException("Le contrat de cet outil necessite une nouvelle autorisation : "+difference+". Aucun appel envoye. Actualisez uniquement ce partage si vous acceptez cette modification.");
+                        // No parameter introduced by a provider update is accepted
+                        // implicitly, even when that provider allows unknown keys.
+                        CheckArgumentSurface(live.Schema,args,"arguments");
+                        if(archive==null){CheckSitesTransport(live,args);CheckTransport(live.Schema,args);}
                         var current=Authorize(session,grantId);if(current.Revision!=grant.Revision)throw new InvalidOperationException("Le partage a été modifié ou révoqué avant l'envoi.");
+                        var fileConnection=connection as IToolTunnelArchiveConnection;
+                        if(archive!=null&&fileConnection==null)throw new InvalidOperationException("Ce moteur ne prend pas en charge le transfert natif d’archive Sites. Aucun appel envoyé.");
+                        if(archive!=null){call.ArchiveHash=archive.Hash;call.ArchiveBytes=archive.Bytes;}
                         CheckOwner(pinned,resolveOwner(owner.Id));token.ThrowIfCancellationRequested();call.State="executing";Persist(call);sent=true;
-                        var result=await connection.Invoke(server,name,args,token).ConfigureAwait(false);CheckOwner(pinned,resolveOwner(owner.Id));
+                        Action validateBeforeSave=delegate{
+                            var latest=Authorize(session,grantId);if(latest.Revision!=grant.Revision)throw new InvalidOperationException("Le partage a été modifié ou révoqué pendant le transfert. Aucune sauvegarde envoyée.");
+                            CheckOwner(pinned,resolveOwner(owner.Id));
+                            if(RelayPermissions.Read(session.Home,session.Thread)!="full-access")throw new RelayPermissionException("L’Accès complet du chat source n’est plus confirmé. Aucune sauvegarde envoyée.");
+                        };
+                        var result=archive==null?await connection.Invoke(server,name,args,token).ConfigureAwait(false):await fileConnection.InvokeArchive(server,name,args,validateBeforeSave,token).ConfigureAwait(false);CheckOwner(pinned,resolveOwner(owner.Id));
                         if(Encoding.UTF8.GetByteCount(Json.Write(result))>3000000)throw new IOException("Résultat trop volumineux ; vérifier l'opération chez le propriétaire.");
                         call.Result=result;call.State=Object.Equals(Json.Get(result,"isError"),true)||Json.Get(Json.Get(result,"structuredContent"),"error")!=null?"tool_error":"completed";Persist(call);
                     }
                 }catch(Exception e){call.State=sent?"uncertain":"blocked";call.Error=e is TunnelInteractionException?e.Message:sent?"La réponse n'a pas pu être confirmée. Vérifiez la ressource avant toute nouvelle opération. Aucun nouvel envoi automatique. "+(e is InvalidOperationException||e is IOException?e.Message:e.GetType().Name):Program.SafeError(e);Persist(call);}
+                finally{if(archive!=null)archive.Dispose();}
                 return call;
             }
         }
         public static object Summary(TunnelCall c)
-        {return new{id=c.Id,grant=c.Grant,name=c.GrantName,tool=c.Tool,state=c.State,error=c.Error,created=c.Created,updated=c.Updated,resultAvailable=c.HasResult||c.Result!=null,sensitiveResult=c.SensitiveResult,note=c.State=="executing"||c.State=="uncertain"?"Do not repeat this operation. Inspect the provider resource; an interrupted process may have completed it.":c.SensitiveResult?"Sensitive values are returned only with the first response and are redacted from storage. Never display or persist credentials.":null};}
+        {return new{id=c.Id,grant=c.Grant,name=c.GrantName,tool=c.Tool,state=c.State,error=c.Error,created=c.Created,updated=c.Updated,resultAvailable=c.HasResult||c.Result!=null,sensitiveResult=c.SensitiveResult,archiveHash=c.ArchiveHash,archiveBytes=c.ArchiveBytes,contractStatus=c.ContractStatus,contractReason=c.ContractReason,note=c.State=="executing"||c.State=="uncertain"?"Do not repeat this operation. Inspect the provider resource; an interrupted process may have completed it.":c.SensitiveResult?"Sensitive values are returned only with the first response and are redacted from storage. Never display or persist credentials.":null};}
         public static object Reply(TunnelCall c)
         {return c.SensitiveResult&&c.Result!=null?(object)new{call=Summary(c),ephemeralResult=c.Result}:Summary(c);}
         public object Result(RelaySession session,string id,int offset,int length)

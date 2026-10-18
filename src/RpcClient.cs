@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -15,26 +16,45 @@ namespace Creezio.Switcher
         private ProcessJob job;
         private readonly ConcurrentDictionary<int, TaskCompletionSource<object>> pending = new ConcurrentDictionary<int, TaskCompletionSource<object>>();
         private readonly TaskCompletionSource<object> login = new TaskCompletionSource<object>();
+        private readonly ConcurrentDictionary<string,TaskCompletionSource<object>> correlatedLogins=new ConcurrentDictionary<string,TaskCompletionSource<object>>();
+        private readonly ConcurrentDictionary<string,object> completedLogins=new ConcurrentDictionary<string,object>();
         private readonly object writeLock = new object();
         private int sequence;
         private bool disposed;
         public readonly string Home;
         private readonly string scratchRoot;
         private readonly OwnedTemporary temporary;
-        public RpcClient(string executable, string root)
+        private readonly IDisposable profileLease;
+        internal int ProcessId{get{try{return process==null?0:process.Id;}catch(InvalidOperationException){return 0;}}}
+        internal long ProcessStartedTicks{get{try{return process==null?0:process.StartTime.ToUniversalTime().Ticks;}catch(InvalidOperationException){return 0;}}}
+        public RpcClient(string executable, string root):this(executable,root,null){}
+        internal static RpcClient OpenEnrollment(string executable,string root,string home)
         {
-            scratchRoot = Path.Combine(root, "runtime");
-            SafeFiles.PrivateDirectory(scratchRoot);
-            Home = Path.Combine(scratchRoot, Guid.NewGuid().ToString("N"));
+            home=Path.GetFullPath(home);string folder=Path.GetDirectoryName(home),id=Path.GetFileName(folder);
+            if(!InstanceRules.ValidId(id)||!RelayStore.SamePath(home,InstancePaths.Home(root,id))||File.Exists(Path.Combine(home,"auth.json")))throw new InvalidOperationException("La connexion nécessite un nouveau profil d'instance réservé.");
+            return new RpcClient(executable,root,home);
+        }
+        internal static ProcessStartInfo EnrollmentStartInfo(string executable,string home)
+        {
+            // This fresh profile only authenticates. Plugin discovery can clone
+            // marketplaces during initialize, even without a model turn. Keep
+            // those features off for this process, never in the saved profile.
+            var start=HeadlessProcessWire.StartInfo(executable,home);
+            string[] disabled={"plugins","remote_plugin","apps","skill_mcp_dependency_install","skill_search"};
+            start.Arguments=String.Join(" ",disabled.Select(feature=>"-c "+RelayWorker.Quote("features."+feature+"=false")))+" -c "+RelayWorker.Quote("features.skip_host_skill_discovery=true")+" "+start.Arguments;
+            return start;
+        }
+        private RpcClient(string executable, string root,string reservedHome)
+        {
+            scratchRoot=reservedHome==null?Path.Combine(root,"runtime"):null;
+            if(scratchRoot!=null)SafeFiles.PrivateDirectory(scratchRoot);
+            Home=reservedHome??Path.Combine(scratchRoot,Guid.NewGuid().ToString("N"));
             SafeFiles.PrivateDirectory(Home);
-            SafeFiles.AtomicWrite(Path.Combine(Home, "config.toml"), Encoding.UTF8.GetBytes("cli_auth_credentials_store = \"file\"\n[analytics]\nenabled = false\n"));
-            var start = new ProcessStartInfo(executable, "app-server --listen stdio://") { UseShellExecute=false, CreateNoWindow=true, RedirectStandardInput=true, RedirectStandardOutput=true, RedirectStandardError=true, WorkingDirectory=Home, StandardOutputEncoding=Encoding.UTF8, StandardErrorEncoding=Encoding.UTF8 };
-            start.EnvironmentVariables["CODEX_HOME"] = Home;
-            start.EnvironmentVariables["CODEX_SQLITE_HOME"] = Home;
-            // Never inherit an alternative authentication identity from the host process.
-            foreach (string key in new[] {"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_IDENTITY_TOKEN", "OPENAI_IDENTITY_TOKEN_FILE", "OPENAI_IDENTITY_PROVIDER_ID", "OPENAI_ORGANIZATION", "CHATGPT_BASE_URL", "CODEX_CHATGPT_BASE_URL"}) start.EnvironmentVariables.Remove(key);
+            if(reservedHome==null)SafeFiles.AtomicWrite(Path.Combine(Home,"config.toml"),Encoding.UTF8.GetBytes("cli_auth_credentials_store = \"file\"\n[analytics]\nenabled = false\n"));
+            var start=reservedHome==null?HeadlessProcessWire.StartInfo(executable,Home):EnrollmentStartInfo(executable,Home);
             try
             {
+                if(reservedHome!=null)profileLease=HeadlessProcessWire.AcquireProfileLease(Home,CancellationToken.None);
                 temporary=new OwnedTemporary(root);temporary.Apply(start);
                 process = new Process { StartInfo=start, EnableRaisingEvents=true };
                 process.OutputDataReceived += OnOutput;
@@ -84,6 +104,14 @@ namespace Creezio.Switcher
                 }
             }
         }
+        internal async Task<object> WaitLoginResult(string expectedLoginId,CancellationToken token)
+        {
+            Guid parsed;if(!Guid.TryParse(expectedLoginId,out parsed))throw new InvalidOperationException("Identifiant de connexion natif invalide.");
+            var completion=correlatedLogins.GetOrAdd(expectedLoginId,key=>new TaskCompletionSource<object>());object previous;
+            if(completedLogins.TryGetValue(expectedLoginId,out previous))completion.TrySetResult(previous);
+            try{using(token.Register(()=>completion.TrySetCanceled()))return await completion.Task.ConfigureAwait(false);}
+            finally{TaskCompletionSource<object> ignored;correlatedLogins.TryRemove(expectedLoginId,out ignored);}
+        }
         private void OnOutput(object sender, DataReceivedEventArgs args)
         {
             if (String.IsNullOrWhiteSpace(args.Data)) return;
@@ -93,7 +121,10 @@ namespace Creezio.Switcher
                 if (Json.Get(message,"method") != null)
                 {
                     string method=Json.Str(Json.Get(message,"method"));
-                    if (method=="account/login/completed") login.TrySetResult(Json.Get(message,"params"));
+                    if(method=="account/login/completed"){
+                        var value=Json.Get(message,"params");login.TrySetResult(value);string nativeId=Json.Str(Json.Get(value,"loginId"));Guid parsed;
+                        if(Guid.TryParse(nativeId,out parsed)){if(completedLogins.Count<8)completedLogins.TryAdd(nativeId,value);TaskCompletionSource<object> waiting;if(correlatedLogins.TryGetValue(nativeId,out waiting))waiting.TrySetResult(value);}
+                    }
                     if (Json.Get(message,"id") != null) Send(new { id=Json.Get(message,"id"), error=new { code=-32000, message="Reconnect this account in the switcher." } });
                     return;
                 }
@@ -105,7 +136,7 @@ namespace Creezio.Switcher
             }
             catch { /* Unexpected protocol messages are never rendered or logged. */ }
         }
-        private void FailPending(Exception error) { foreach (var pair in pending) pair.Value.TrySetException(error); login.TrySetException(error); }
+        private void FailPending(Exception error) { foreach (var pair in pending) pair.Value.TrySetException(error); login.TrySetException(error);foreach(var pair in correlatedLogins)pair.Value.TrySetException(error); }
         public void Dispose()
         {
             if (disposed) return;
@@ -120,7 +151,8 @@ namespace Creezio.Switcher
             }
             FailPending(new ObjectDisposedException("RpcClient"));
             if(temporary!=null)temporary.Dispose();
-            try { SafeFiles.DeleteOwnedTree(scratchRoot, Home); } catch { /* Restricted runtime directory retained if Windows still holds a handle. */ }
+            if(profileLease!=null)profileLease.Dispose();
+            if(scratchRoot!=null)try { SafeFiles.DeleteOwnedTree(scratchRoot, Home); } catch { /* Restricted runtime directory retained if Windows still holds a handle. */ }
         }
     }
 }

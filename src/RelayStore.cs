@@ -39,6 +39,14 @@ namespace Creezio.Switcher
     }
     public sealed class RelayMessage
     {
+        public PortalMessageOptions ComposerOptions {get;set;}
+        public PortalResolvedComposer ResolvedComposer {get;set;}
+        public string NativeComposerWorkspace {get;set;}
+        public string WebhookJobId {get;set;}
+        public string WebhookRouteName {get;set;}
+        public string RequestedModel {get;set;}
+        public string RequestedReasoningEffort {get;set;}
+        public string RequestedPermission {get;set;}
         public bool OperatorOrigin {get;set;}
         public string RequestedThreadId {get;set;}
         public string TargetBinding {get;set;}
@@ -145,11 +153,13 @@ namespace Creezio.Switcher
             return new FileStream(path,FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
         }
         private T Read<T>(string path) where T:new()
+        {return ReadFile<T>(path,false,false);}
+        internal static T ReadFile<T>(string path,bool registry,bool required,Func<string,Stream> open=null,Action<int> delay=null) where T:new()
         {
-            if(!File.Exists(path))return new T();SafeFiles.RejectLinks(path);
             byte[] encrypted;
-            FileStream opened=null;
-            for(int attempt=0;opened==null;attempt++)try{opened=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete);}catch(IOException e){int code=e.HResult&65535;if(attempt>=5||!new[]{2,32,33,1175}.Contains(code))throw;System.Threading.Thread.Sleep(20*(attempt+1));}
+            // Most optional receipts have never existed. Only the shared
+            // registry needs the bounded absence stabilization window.
+            Stream opened=AtomicFiles.OpenRead(path,!required,registry,open,delay);if(opened==null)return new T();
             using(var stream=opened)using(var output=new MemoryStream()){
                 if(stream.Length>4194304)throw new IOException("Relay record too large.");stream.CopyTo(output);encrypted=output.ToArray();
             }
@@ -167,9 +177,17 @@ namespace Creezio.Switcher
                 catch(IOException e){int code=e.HResult&65535;if(attempt>=4||!new[]{32,33,1175}.Contains(code)||File.Exists(path+".switcher-tmp"))throw;System.Threading.Thread.Sleep(25*(1<<attempt));}
             }finally{Array.Clear(clear,0,clear.Length);}
         }
-        public List<RelayChannel> Channels(){return Read<List<RelayChannel>>(Path.Combine(Root,"channels.dpapi"));}
+        private List<RelayChannel> ReadChannels(bool required)
+        {
+            List<RelayChannel> channels;
+            try{channels=ReadFile<List<RelayChannel>>(Path.Combine(Root,"channels.dpapi"),true,required);}
+            catch(FileNotFoundException error){throw new InvalidOperationException("Le registre des canaux est indisponible. Actualisez puis verifiez la connexion ; aucun nouvel envoi effectue.",error);}
+            catch(DirectoryNotFoundException error){throw new InvalidOperationException("Le registre des canaux est indisponible. Actualisez puis verifiez la connexion ; aucun nouvel envoi effectue.",error);}
+            if(channels==null)throw new InvalidOperationException("Le registre des canaux est invalide. Aucun envoi effectue.");return channels;
+        }
+        public List<RelayChannel> Channels(){return ReadChannels(false);}
         public RelayChannel Channel(string id)
-        {ChannelId(id);var channel=Channels().SingleOrDefault(c=>c.Id==id);if(channel==null)throw new InvalidOperationException("Canal introuvable. Connectez-le depuis une conversation Codex.");return channel;}
+        {ChannelId(id);var channel=ReadChannels(true).SingleOrDefault(c=>c.Id==id);if(channel==null)throw new InvalidOperationException("Canal introuvable. Connectez-le depuis une conversation Codex.");return channel;}
         public void Register(RelayChannel channel)
         {
             ChannelId(channel.Id);channel.Workspace=WorkspacePath(channel.Workspace);
@@ -180,9 +198,22 @@ namespace Creezio.Switcher
                 list.RemoveAll(c=>c.Id==channel.Id);list.Add(channel);Write(Path.Combine(Root,"channels.dpapi"),list);
             }
         }
+        internal bool RefreshDesktopEndpoint(RelayChannel expected,string pipe,int pid,long started,string diagnostic)
+        {
+            if(expected==null||!expected.Enabled||AgentProviders.Kind(expected)!="codex")return false;
+            if(pipe!=null&&(!NamedInstances.AppPipeName(pipe)||pid<=0||started<=0))throw new InvalidOperationException("Point de connexion Codex invalide.");
+            using(Lease("registry")){
+                var channels=ReadChannels(true);var current=channels.SingleOrDefault(c=>c.Id==expected.Id);
+                // Compare the complete saved generation. A user's disable, rename,
+                // permission edit or another reconnect wins over this stale probe.
+                if(current==null||Json.Write(current)!=Json.Write(expected))return false;
+                if(pipe!=null){current.PipePath=pipe;current.ServerPid=pid;current.ServerStartTicks=started;current.ConnectedUtc=DateTime.UtcNow.ToString("o");}
+                current.Diagnostic=diagnostic;Write(Path.Combine(Root,"channels.dpapi"),channels);return true;
+            }
+        }
         public void SetEnabled(string id,bool enabled)
         {
-            using(Lease("registry")) {var list=Channels();var c=list.Single(x=>x.Id==id);c.Enabled=enabled;Write(Path.Combine(Root,"channels.dpapi"),list);}
+            using(Lease("registry")) {var list=ReadChannels(true);var c=list.Single(x=>x.Id==id);c.Enabled=enabled;Write(Path.Combine(Root,"channels.dpapi"),list);}
         }
         public RelayMessage Message(string id)
         {MessageId(id);string path=Path.Combine(Root,"jobs-v4",id+".dpapi");if(!File.Exists(path))path=Path.Combine(Root,"jobs-v3",id+".dpapi");if(!File.Exists(path))path=Path.Combine(Root,"jobs",id+".dpapi");if(!File.Exists(path))path=Path.Combine(Root,"messages",id+".dpapi");if(!File.Exists(path))throw new InvalidOperationException("Demande introuvable.");return Read<RelayMessage>(path);}

@@ -106,7 +106,9 @@ namespace Creezio.Switcher
         {return g.Instance==instance&&g.CatalogClient==client&&String.IsNullOrEmpty(g.CatalogPlugin);}
         internal string Revision(string instance,string client)
         {return ToolTunnel.Hash(Json.Read<object>(Json.Write(tunnel.Grants().Where(g=>Managed(g,instance,client)).OrderBy(g=>g.Id).ToArray())));}
-        internal static string Mode(TunnelGrant g){return g.Tools.Any(t=>!t.ReadOnly)?"edit":"read";}
+        internal static bool SitePublishingTool(TunnelTool tool)
+        {return tool.Server=="codex_apps"&&new[]{"sites.create_source_repository_write_credential","sites.save_site_version","sites.save_version_and_deploy_private","sites.deploy_site_version","sites.deploy_private_site_version"}.Contains(tool.Name);}
+        internal static string Mode(TunnelGrant g){return g.Tools.Any(t=>!t.ReadOnly&&SitePublishingTool(t))?"publish":g.Tools.Any(t=>!t.ReadOnly)?"edit":"read";}
         internal Dictionary<string,string> Selections(InstanceInventory inventory,string client)
         {
             var selected=new Dictionary<string,string>();
@@ -116,10 +118,13 @@ namespace Creezio.Switcher
         }
         internal static bool Compatible(TunnelTool tool,InstanceResource resource,string mode)
         {
-            if(PluginKey(tool)!=resource.Plugin||ToolTunnel.Limitation(tool).Length>0||!Json.Obj(Json.Get(tool.Schema,"properties")).ContainsKey(resource.Field))return false;
+            if(PluginKey(tool)!=resource.Plugin||ToolTunnel.Limitation(tool).Length>0&&!ToolTunnel.SupportsSitesRemoteBuild(tool)||!Json.Obj(Json.Get(tool.Schema,"properties")).ContainsKey(resource.Field))return false;
             if(tool.ReadOnly)return true;
-            // Basic "modify" never includes deleting, changing access, credentials or deployment.
-            return mode=="edit"&&resource.CanModify&&new[]{"chatgpt_space.edit_page","sites.update_site_metadata"}.Contains(tool.Name)&&tool.Server=="codex_apps";
+            // Existing edit grants keep their metadata-only meaning. Publishing
+            // is a separate explicit selection, pinned to this Site project_id.
+            if(!resource.CanModify||tool.Server!="codex_apps")return false;
+            if((mode=="edit"||mode=="publish")&&new[]{"chatgpt_space.edit_page","sites.update_site_metadata"}.Contains(tool.Name))return true;
+            return mode=="publish"&&resource.Kind=="Site"&&resource.Field=="project_id"&&SitePublishingTool(tool);
         }
         internal async Task Save(InstanceInventory inventory,string client,string clientHome,string clientAccount,Dictionary<string,string> selected,string expected,CancellationToken token)
         {
@@ -130,11 +135,11 @@ namespace Creezio.Switcher
                 using(var connection=tunnel.Connection(owner)){
                     var tools=await connection.Inventory(token).ConfigureAwait(false);
                     var resources=selected.Select(p=>new{Resource=inventory.Resources.SingleOrDefault(r=>r.Key==p.Key),Mode=p.Value}).ToArray();
-                    if(resources.Any(x=>x.Resource==null||x.Resource.NativeEditor||!new[]{"read","edit"}.Contains(x.Mode)||(x.Mode=="edit"&&!x.Resource.CanModify)))throw new InvalidOperationException("Une ressource ou un droit sélectionné n'est plus disponible. Actualisez le catalogue.");
+                    if(resources.Any(x=>x.Resource==null||x.Resource.NativeEditor||!new[]{"read","edit","publish"}.Contains(x.Mode)||(x.Mode!="read"&&!x.Resource.CanModify)||(x.Mode=="publish"&&(x.Resource.Kind!="Site"||x.Resource.Field!="project_id"))))throw new InvalidOperationException("Une ressource ou un droit sélectionné n'est plus disponible. Actualisez le catalogue.");
                     foreach(var group in resources.GroupBy(x=>x.Resource.Plugin+"/"+x.Resource.Field+"/"+x.Mode)){
                         var item=group.First();var allowed=tools.Where(t=>Compatible(t,item.Resource,item.Mode)).ToList();
-                        if(allowed.Count==0||(item.Mode=="edit"&&!allowed.Any(t=>!t.ReadOnly)))throw new InvalidOperationException("Les outils correspondant à ces accès ne sont plus disponibles.");
-                        var grant=new TunnelGrant{Id=Guid.NewGuid().ToString("N"),Name=(item.Resource.Kind+" · "+(item.Mode=="edit"?"lecture et modification":"lecture")+" via "+owner.Name),Instance=owner.Id,CatalogClient=client,Enabled=true,Sources=new Dictionary<string,string>{{clientHome,clientAccount}},Tools=allowed,ResourceField=item.Resource.Field,ResourceValues=group.Select(x=>x.Resource.Value).ToList()};
+                        if(allowed.Count==0||(item.Mode!="read"&&!allowed.Any(t=>!t.ReadOnly))||(item.Mode=="publish"&&!allowed.Any(t=>!t.ReadOnly&&SitePublishingTool(t))))throw new InvalidOperationException("Les outils correspondant à ces accès ne sont plus disponibles.");
+                        var grant=new TunnelGrant{Id=Guid.NewGuid().ToString("N"),Name=(item.Resource.Kind+" · "+(item.Mode=="publish"?"lecture, modification et publication":item.Mode=="edit"?"lecture et modification":"lecture")+" via "+owner.Name),Instance=owner.Id,CatalogClient=client,Enabled=true,Sources=new Dictionary<string,string>{{clientHome,clientAccount}},Tools=allowed,ResourceField=item.Resource.Field,ResourceValues=group.Select(x=>x.Resource.Value).ToList()};
                         grant.ResourceLabels=group.ToDictionary(x=>x.Resource.Value,x=>x.Resource.Title);
                         tunnel.PrepareGrant(grant);replacements.Add(grant);
                     }

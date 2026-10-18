@@ -19,17 +19,19 @@ namespace Creezio.Switcher
     { public TunnelInteractionException():base("Le connecteur demande une interaction native. Aucune approbation n'a été accordée par le tunnel. Effectuez cette opération dans Codex."){} }
 
     // A short-lived official app-server client. Never starts a model turn or resumes a user's chat.
-    internal sealed class ToolTunnelRpc : IToolTunnelConnection
+    internal sealed class ToolTunnelRpc : IToolTunnelConnection,IToolTunnelArchiveConnection
     {
         private readonly IHeadlessRpc client;
         private readonly HeadlessProcesses tracking;
         private string thread;
         private readonly string home;
+        private readonly string accountKey;
         internal ToolTunnelRpc(string executable,string profile,string accountKey=null,RelayStore store=null)
         {
             home=Path.GetFullPath(profile);SafeFiles.RejectLinks(home);
-            client=new HeadlessRpc(executable,home,accountKey??AuthIdentity.Parse(SafeFiles.ReadText(Path.Combine(home,"auth.json"))).Key);
-            try{tracking=new HeadlessProcesses(store,client,home,accountKey);}catch{client.Dispose();throw;}
+            this.accountKey=accountKey??AuthIdentity.Parse(SafeFiles.ReadText(Path.Combine(home,"auth.json"))).Key;
+            client=new HeadlessRpc(executable,home,this.accountKey);
+            try{tracking=new HeadlessProcesses(store,client,home,this.accountKey);}catch{client.Dispose();throw;}
         }
         internal ToolTunnelRpc(IHeadlessRpc connection,string profile){client=connection;home=Path.GetFullPath(profile);}
         private async Task<object> Rpc(string method,object args,CancellationToken token)
@@ -69,6 +71,19 @@ namespace Creezio.Switcher
         }
         public async Task<object> Invoke(string server,string tool,object arguments,CancellationToken token)
         {await Ready(token).ConfigureAwait(false);return await Rpc("mcpServer/tool/call",new{threadId=thread,server=server,tool=tool,arguments=arguments},token).ConfigureAwait(false);}
+        public async Task<object> InvokeArchive(string server,string tool,object arguments,Action validateBeforeSave,CancellationToken token)
+        {
+            // Only ToolTunnel's validated Sites archive path reaches here. The
+            // actual provider receives the same file reference as native Codex.
+            if(server!="codex_apps"||(tool!="sites.save_site_version"&&tool!="sites.save_version_and_deploy_private"))throw new InvalidOperationException("Outil de transfert non pris en charge.");
+            await Ready(token).ConfigureAwait(false);
+            using(var upload=NativeFileUpload.Create(()=>HeadlessRpc.ReadProfile(home,accountKey),accountKey)){
+                var reference=await upload.Upload(Json.Str(Json.Get(arguments,"archive")),token).ConfigureAwait(false);
+                var rewritten=new Dictionary<string,object>(Json.Obj(arguments));rewritten["archive"]=reference;
+                validateBeforeSave();
+                return await Invoke(server,tool,rewritten,token).ConfigureAwait(false);
+            }
+        }
         public void Dispose(){try{client.Dispose();}finally{if(tracking!=null)tracking.Dispose();}}
     }
 }

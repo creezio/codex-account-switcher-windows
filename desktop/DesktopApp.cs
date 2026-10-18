@@ -13,6 +13,10 @@ namespace Creezio.Switcher.Desktop
         [STAThread]
         public static int Main(string[] args)
         {
+            if(args.Length==2&&args[0]=="--webhook-worker")return WebhookWorker.Run(args[1]);
+            if(args.Length==2&&args[0]=="--conversation-schedule-worker")return PortalScheduleWorker.Run(args[1]);
+            if(args.Length==2&&args[0]=="--chat-watch-worker")return ChatWatchWorker.Run(args[1]);
+            if(args.Length==2&&args[0]=="--cloud-queue-worker")return CloudQueueWorker.Run(args[1]);
             if(args.Length==2&&args[0]=="--cloud-worker")return CloudJobWorker.Run(args[1]);
             if (args.Length == 2 && args[0] == "--instance-host")
                 return InstanceHost.Run(args[1]);
@@ -31,8 +35,11 @@ namespace Creezio.Switcher.Desktop
             SetProcessDpiAwarenessContext(new IntPtr(-4));
             var app = new DesktopApp();
             app.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/CodexAccountSwitcher;component/Theme.xaml", UriKind.Relative) });
+            if(args.Length==2&&args[0]=="--webhook-ui-test")return DesktopTests.RunWebhookUi(app,Path.GetFullPath(args[1]));
             if (args.Length == 2 && args[0] == "--ui-test")
                 return DesktopTests.Run(app, Path.GetFullPath(args[1]));
+            if (args.Length == 2 && args[0] == "--monitoring-ui-test")
+                return DesktopTests.RunMonitoringUi(app, Path.GetFullPath(args[1]));
             if(args.Length==1&&args[0]=="--interventions"){
                 var root=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Creezio","CodexAccountSwitcher");
                 return app.Run(new HeadlessInterventionsWindow(new DesktopContext(root),null){WindowStartupLocation=WindowStartupLocation.CenterScreen});
@@ -44,13 +51,14 @@ namespace Creezio.Switcher.Desktop
             {
                 if (!first)
                 {
-                    SingleWindow.ActivateExisting();
+                    if(!args.Contains("--startup"))SingleWindow.ActivateExisting();
                     return 0;
                 }
                 try
                 {
                     var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Creezio", "CodexAccountSwitcher");
-                    return app.Run(new ShellWindow(new DesktopContext(root){InitialPage=args.Length==1&&args[0]=="--performances"?"Performances":args.Length==1&&args[0]=="--storage"?"Stockage":"Accueil"}));
+                    string pending=args.Length>=2&&args[0]=="--update-pending"?args[1]:null;
+                    return app.Run(new ShellWindow(new DesktopContext(root){ShowSurveillancesOnLoad=args.Length==1&&args[0]=="--surveillances",InitialPage=args.Length==1&&args[0]=="--performances"?"Performances":args.Length==1&&args[0]=="--storage"?"Stockage":args.Length==1&&args[0]=="--delegations"?"Délégations":args.Length==1&&args[0]=="--surveillances"?"Tâches":"Accueil"},args.Contains("--startup"),pending));
                 }
                 catch (Exception e) { MessageBox.Show(Program.SafeError(e), "Démarrage du switcher", MessageBoxButton.OK, MessageBoxImage.Error); return 1; }
             }

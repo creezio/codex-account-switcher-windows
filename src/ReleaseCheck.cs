@@ -9,11 +9,10 @@ namespace Creezio.Switcher
     internal static class ReleaseCheck
     {
         public const string Page="https://github.com/creezio/codex-account-switcher-windows/releases";
-        #if NETCOREAPP
-        private const string InstalledVersion="0.8.0-beta.1";
-#else
-        private const string InstalledVersion=RelayWorker.Version;
-#endif
+        private static readonly string InstalledVersion = System.Reflection.Assembly.GetExecutingAssembly()
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+            .Select(a => a.InformationalVersion).FirstOrDefault() ?? RelayWorker.Version;
         public static async Task<string> Read()
         {
 #if NETCOREAPP

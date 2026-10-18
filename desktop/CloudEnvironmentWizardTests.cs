@@ -38,10 +38,12 @@ namespace Creezio.Switcher.Desktop
             }
             var late = new TaskCompletionSource<CloudGitHubRepository[]>(); bool cancelled = false; int loads = 0, sends = 0;
             CloudEnvironmentWizardIntent created = null; var release = new TaskCompletionSource<bool>();
-            var create = new CloudEnvironmentWizard(shell, accounts, (account, token) => { loads++; if (account.Id == "owner") { token.Register(() => cancelled = true); return late.Task; } return Task.FromResult(catalog); }, async (intent, token) => { sends++; created = intent; await release.Task.WaitAsync(token); }, CancellationToken.None) { Opacity = 0, ShowInTaskbar = false, Width = 680, Height = 580 };
+            assert(new CloudEnvironmentPreferences().NewEnvironmentNetwork == "disabled" && CloudEnvironmentPreferences.Index("inconnu") == 0, "la préférence locale absente ou inconnue n’élargit pas le réseau des autres utilisateurs");
+            var create = new CloudEnvironmentWizard(shell, accounts, (account, token) => { loads++; if (account.Id == "owner") { token.Register(() => cancelled = true); return late.Task; } return Task.FromResult(catalog); }, async (intent, token) => { sends++; created = intent; await release.Task.WaitAsync(token); }, CancellationToken.None, defaultNetwork: "unrestricted") { Opacity = 0, ShowInTaskbar = false, Width = 680, Height = 580 };
             try
             {
                 create.Show(); assert(create.Step == 0 && !create.NextButton.IsEnabled, "assistant environnement demande d’abord le compte sans dépôt implicite");
+                assert(create.Network.SelectedIndex == 2 && Convert.ToString(create.Network.SelectedItem) == "Internet : toutes les adresses", "création préremplit explicitement toutes les destinations depuis la préférence de cet utilisateur");
                 create.Account.SelectedIndex = 0; await Until(() => loads == 1); create.Account.SelectedIndex = 1; await Until(() => loads == 2 && !create.Loading);
                 assert(cancelled && create.Account.IsEnabled && create.RepositoryRows.Count == 35 && create.RepositoryRows.All(row => !row.Selected) && !create.NextButton.IsEnabled, "sélection du compte charge automatiquement ses dépôts et annule le compte précédent sans choisir de dépôt");
                 late.SetException(new InvalidOperationException("Ancienne erreur à ignorer")); await Task.Delay(30);
@@ -57,6 +59,8 @@ namespace Creezio.Switcher.Desktop
                 Click(create.BackButton); Click(create.NextButton); assert(loads == 2 && create.RepositoryRows.Count(row => row.Selected) == 2, "retour compte puis dépôts conserve les choix sans recharger le compte inchangé");
                 Click(create.NextButton); assert(create.Step == 2, "choix de plusieurs dépôts mène aux réglages");
                 Click(create.NextButton); assert(create.Step == 2 && !create.IntentLocked && create.ErrorText.Text.Contains("nom"), "nom vide expliqué avant tout gel d’intention");
+                create.EnvironmentName.Text = "Environnement partagé de recette"; create.Network.SelectedIndex = -1; Click(create.NextButton);
+                assert(create.Step == 2 && !create.IntentLocked && create.ErrorText.Text.Contains("Internet") && sends == 0, "règle Internet absente refusée avant envoi au lieu de choisir silencieusement une permission"); create.Network.SelectedIndex = 2;
                 create.EnvironmentName.Text = "Environnement partagé de recette"; create.Directory.Text = "relatif"; Click(create.NextButton);
                 assert(create.Step == 2 && !create.IntentLocked && create.ErrorText.Text.Contains("absolu"), "dossier relatif refusé avant mutation");
                 create.Directory.Text = "/workspace/laboratoire"; create.Network.SelectedIndex = 1; create.UpdateLayout(); assert(FooterFits(create), "réglages 680×580 garde toute la navigation dans le contenu réel"); await Snapshot(create, "Cloud-environment-wizard-settings.png"); Click(create.NextButton);
@@ -67,6 +71,7 @@ namespace Creezio.Switcher.Desktop
                 Click(create.BackButton); Click(create.BackButton); assert(create.Step == 2 && create.Install.Text.Contains("unittest") && create.Directory.Text == "/workspace/laboratoire", "retour aux réglages préserve commandes, instructions et dossier");
                 Click(create.NextButton); Click(create.NextButton); await Until(() => create.NextButton.IsEnabled); Click(create.NextButton); await Until(() => sends == 1); Click(create.NextButton);
                 assert(sends == 1 && create.IntentLocked && create.Submitting && !create.BackButton.IsEnabled && created.Account.Id == "worker" && created.Account.AccountKey == "account-worker" && created.Create.ShareSettings == "private" && !created.Create.StartOnboarding && created.Create.Repositories.Count == 2 && created.Create.Cwd == "/workspace/laboratoire", "envoi unique conserve compte, périmètre multi dépôts, mode privé et préparation explicite");
+                assert(created.Create.NetworkPolicy.Type == "restricted" && created.Create.NetworkPolicy.Presets.Single() == "package_managers" && created.Create.NetworkPolicy.EgressHosts.Count == 0, "un choix explicite dans l’assistant remplace le défaut Internet par les seuls gestionnaires de paquets");
                 create.Close(); assert(create.IsVisible, "fermeture bloquée pendant un enregistrement en cours"); release.SetResult(true); await Until(() => create.Saved);
             }
             finally { release.TrySetResult(true); create.ConfirmDiscard = () => true; if (create.IsVisible) create.Close(); late.TrySetResult(new CloudGitHubRepository[0]); }
@@ -97,7 +102,7 @@ namespace Creezio.Switcher.Desktop
 
             var original = new CloudConfiguration { Id = "configuration-existing", Name = "Environnement existant", VersionId = "version-exact", VersionRevision = 4, IsOwner = true, Repositories = new List<CloudRepository> { new CloudRepository { RepositoryId = "repo-2", Ref = "refs/tags/v1.7", Depth = 7 }, new CloudRepository { RepositoryId = "hidden-repo", Ref = "aabbcc001122334455", Depth = 19 } }, NetworkPolicy = new CloudNetworkPolicy { Type = "restricted", Presets = new List<string>(), EgressHosts = new List<string> { "github.com", "private.example.com" } }, Cwd = null, InstallScript = "ancienne installation", StartSkill = "anciennes instructions" };
             CloudEnvironmentWizardIntent changed = null; int modifications = 0;
-            var edit = new CloudEnvironmentWizard(shell, new[] { accounts[0] }, (account, token) => Task.FromResult(catalog), (intent, token) => { modifications++; changed = intent; throw new CloudBackendException("forbidden", "Refus fictif du service", 403); }, CancellationToken.None, "owner", original) { Opacity = 0, ShowInTaskbar = false, Width = 680, Height = 580 };
+            var edit = new CloudEnvironmentWizard(shell, new[] { accounts[0] }, (account, token) => Task.FromResult(catalog), (intent, token) => { modifications++; changed = intent; throw new CloudBackendException("forbidden", "Refus fictif du service", 403); }, CancellationToken.None, "owner", original, "unrestricted") { Opacity = 0, ShowInTaskbar = false, Width = 680, Height = 580 };
             try
             {
                 edit.Show(); await Until(() => !edit.Loading); assert(edit.Step == 1 && !edit.Account.IsEnabled && edit.RepositoryRows.Count(row => row.Selected) == 2 && edit.RepositoryRows.Single(row => row.Id == "hidden-repo").Missing && edit.Status.Text.Contains("conservés"), "édition verrouille le propriétaire et conserve un dépôt absent du catalogue");

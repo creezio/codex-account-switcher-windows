@@ -71,7 +71,7 @@ namespace Creezio.Switcher.Desktop
                 RenameButton().RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));await done.Task;
                 await Until(()=>instances.List.Items.Cast<ItemRow>().Any(r=>r.Id==owner.Id&&r.Title==value.Trim()));shell.UpdateLayout();
             }
-            var before=await context.Read(a=>new{Home=a.Instances.Home(a.Data.Instances.Single(i=>i.Id==owner.Id)),Account=a.Data.Instances.Single(i=>i.Id==owner.Id).AccountKey});
+            var before=await context.Read(a=>new{Home=a.Instances.Home(a.Data.Instances.Single(i=>i.Id==owner.Id)),Account=a.Data.Instances.Single(i=>i.Id==owner.Id).AccountKey,Auth=a.Data.Profiles.Single(p=>p.Key==owner.AccountKey).AuthJson});
             await RenameTo("  Atelier renommé  ",true);
             var renamed=new AccountService(context.Root);var saved=renamed.Data.Instances.Single(i=>i.Id==owner.Id);
             assert(saved.Name=="Atelier renommé"&&saved.AccountKey==before.Account&&renamed.Instances.Home(saved)==before.Home,"renommage persistant conserve le compte et le dossier");
@@ -101,7 +101,25 @@ namespace Creezio.Switcher.Desktop
             assert(Descendants(instances).OfType<TextBlock>().Any(t=>t.Text.StartsWith("Dernière vérification :")&&t.Text.Contains(RelayWorker.Version)),"succès avec heure et version persistées");
             VerifyButton().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>calls==2);await Until(()=>Result().Text.StartsWith("Vérification réussie")&&VerifyButton().IsEnabled);
             assert(calls==2,"nouveau clic confirmé même lorsque l’intégration est déjà saine");
+            assert(Result().Text.Contains("installation sur disque")&&Result().Text.Contains("Chargement dans Codex non confirmé"),"installation saine seule ne prétend pas confirmer le chargement du relais");
+            // Opening Codex is mocked in this fixture, so prepare only its fictional profile authentication for receipt validation.
+            SafeFiles.AtomicWrite(Path.Combine(before.Home,"auth.json"),System.Text.Encoding.UTF8.GetBytes(before.Auth));
+            var runtimeState=RelayIntegration.Status(context.Store,before.Home);runtimeState.BootstrapConfigured=true;
+            context.Store.WriteRecord("integration-"+RelayIntegration.HomeKey(before.Home)+".dpapi",runtimeState);await instances.Refresh();shell.UpdateLayout();
+            assert(Descendants(instances).OfType<TextBlock>().Any(t=>t.Text=="Chargement du relais en attente de confirmation")&&!Result().Text.Contains("Relais actif confirmé"),"lanceur installé sur une instance fictive fermée attend son prochain démarrage sans faux reçu");
+            // Entirely fictitious receipt in the isolated UI fixture. No native Codex process is started or claimed.
+            var qaRuntimeProcess=System.Diagnostics.Process.GetCurrentProcess();var qaRuntimeStarted=qaRuntimeProcess.StartTime.ToUniversalTime().Ticks;
+            string runtimeRecord="mcp-bootstrap-"+RelayIntegration.HomeKey(before.Home)+"-"+qaRuntimeProcess.Id+"-"+qaRuntimeStarted+".dpapi";
+            var receipt=new RelayMcpBootstrapRuntime{Home=before.Home,AccountKey=before.Account,Origin="desktop",BootstrapPid=qaRuntimeProcess.Id,BootstrapStarted=qaRuntimeStarted,DesktopPid=qaRuntimeProcess.Id,DesktopStarted=qaRuntimeStarted,ChildPid=qaRuntimeProcess.Id,ChildStarted=qaRuntimeStarted,State="pending",Version=RelayWorker.Version,UpdatedUtc=DateTime.UtcNow.ToString("o")};
+            context.Store.WriteRecord(runtimeRecord,receipt);await instances.Refresh();shell.UpdateLayout();
+            assert(Descendants(instances).OfType<TextBlock>().Any(t=>t.Text=="Chargement du relais en attente de confirmation")&&Result().Text.Contains(IntegrationEditor.RuntimeDetail(RelayIntegration.Status(context.Store,before.Home))),"état runtime actualisé sans modifier le résultat de l’installation ni perdre le brouillon");
+            receipt.State="confirmed";receipt.UpdatedUtc=DateTime.UtcNow.ToString("o");context.Store.WriteRecord(runtimeRecord,receipt);await instances.Refresh();shell.UpdateLayout();
+            assert(Descendants(instances).OfType<TextBlock>().Any(t=>t.Text=="Relais actif confirmé pour les connexions gérées")&&Descendants(instances).OfType<TextBlock>().Any(t=>t.Text.Contains("1 connexion gérée · version active "+RelayWorker.Version))&&Result().Text.Contains(IntegrationEditor.RuntimeDetail(RelayIntegration.Status(context.Store,before.Home))),"confirmation limitée aux connexions gérées avec version active et limite des anciens MCP visible");
+            receipt.State="error";receipt.Message="Erreur de chargement fictive QA";receipt.UpdatedUtc=DateTime.UtcNow.ToString("o");context.Store.WriteRecord(runtimeRecord,receipt);await instances.Refresh();shell.UpdateLayout();
+            assert(Result().Text.Contains("Chargement du relais à vérifier")&&Result().Text.Contains("Erreur de chargement fictive QA")&&!Result().Text.Contains("Relais actif confirmé"),"un échec runtime et sa raison remplacent le succès antérieur dans le retour visible");
+            assert(IntegrationEditor.RuntimeLabel(new RelayIntegrationState{Healthy=true,RuntimeStatus="reload-required"})=="Premier rechargement dans Codex nécessaire"&&IntegrationEditor.RuntimeDetail(new RelayIntegrationState{Healthy=true}).Contains("connexion Codex déjà ouverte peut encore utiliser l’ancienne version"),"ancien MCP direct et installation sur disque ne sont pas présentés comme reconnectés");
             Capture(shell,Path.Combine(root,"Instance-verification.png"));
+            File.Delete(Path.Combine(context.Store.Root,runtimeRecord));qaRuntimeProcess.Dispose();
 
             context.VerifyIntegrationFixture=(home,settings)=>{settings.CodexExecutable=Path.Combine(root,"codex-inexistant.exe");return IntegrationMaintenance.Check(context.Store,home,settings,true,true,System.Threading.CancellationToken.None);};
             VerifyButton().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Until(()=>Result().Text.StartsWith("Intégration à corriger")&&VerifyButton().IsEnabled);
@@ -255,6 +273,10 @@ namespace Creezio.Switcher.Desktop
                     await CloudAcceptance(context,shell,instances,toolOwner,root,assert);
                     await CloudEnvironmentWizardAcceptance(shell,root,assert);
                     await CloudJobsAcceptance(context,shell,toolOwner,toolClient,root,assert);
+                    CloudMissionPresentationAcceptance(assert);
+                    InstanceResourcePublishAcceptance(assert);
+                    await CloudTimelineAcceptance(context,shell,toolOwner,root,assert);
+                    await CloudPreparedQueueTests(context,shell,root,assert);
                     await HeadlessUiAcceptance(context,shell,toolOwner,root,assert);
                     resources.ConfirmDiscard=()=>false;shell.Navigate("Accueil");assert(shell.CurrentPage=="Instances","navigation protège les changements de partage");
                     instances.ShowTab(0);shell.UpdateLayout();Capture(shell,Path.Combine(root,"Instance-compte.png"));instances.ShowTab(1);shell.UpdateLayout();
@@ -265,6 +287,9 @@ namespace Creezio.Switcher.Desktop
                     var saveResources=Descendants(resources).OfType<Button>().Single(b=>Object.Equals(b.Content,"Enregistrer les accès"));var savePosition=saveResources.TranslatePoint(new Point(),shell);
                     assert(savePosition.Y>=0&&savePosition.Y+saveResources.ActualHeight<=shell.ActualHeight,"enregistrement des accès accessible en petite fenêtre");Capture(shell,Path.Combine(root,"Instance-ressources-compact.png"));shell.Width=width;shell.Height=height;
                     resources.ConfirmDiscard=()=>true;shell.Navigate("Accueil");assert(shell.CurrentPage=="Accueil"&&!resources.Dirty,"abandon confirmé restaure les autorisations précédentes");
+                    await InstanceDiagnosticsAcceptance(context,shell,instances,toolOwner,toolClient,assert);
+                    await DelegationStartupAcceptance(shell,root,assert);
+                    shell.Navigate("Accueil");
                     await instances.Open(toolOwner.Id,false);instances.ShowTab(0);shell.UpdateLayout();
                     var pendingCheck=new TaskCompletionSource<bool>();var startedCheck=new TaskCompletionSource<bool>();
                     context.VerifyIntegrationFixture=async(home,settings)=>{startedCheck.SetResult(true);await pendingCheck.Task;context.Store.WriteRecord("integration-"+RelayIntegration.HomeKey(home)+".dpapi",new RelayIntegrationState{Home=home,Healthy=true,Status="Intégration installée et vérifiée",Updated=DateTime.UtcNow.ToString("o")});};
@@ -359,10 +384,42 @@ namespace Creezio.Switcher.Desktop
                     held.SetResult(true);
                     await mutation;
                     await shell.Pages["Agents"].Refresh();
+                    CloudMissionPreferences.Save(context.Store, new CloudTaskExecutionOptions());
                     shell.Navigate("Paramètres");
                     var preferences = (PreferencesPage)shell.Pages["Paramètres"];
                     await preferences.Refresh();
                     shell.UpdateLayout();
+                    await Until(() => Descendants(preferences).OfType<TextBox>().Any(field => System.Windows.Automation.AutomationProperties.GetName(field) == "Modèle des missions Cloud"));
+                    TextBox MissionModel() => Descendants(preferences).OfType<TextBox>().Single(field => System.Windows.Automation.AutomationProperties.GetName(field) == "Modèle des missions Cloud");
+                    ComboBox MissionReasoning() => Descendants(preferences).OfType<ComboBox>().Single(field => System.Windows.Automation.AutomationProperties.GetName(field) == "Niveau de raisonnement des missions Cloud");
+                    ComboBox MissionPermission() => Descendants(preferences).OfType<ComboBox>().Single(field => System.Windows.Automation.AutomationProperties.GetName(field) == "Permissions des missions Cloud");
+                    var savePreferences = Descendants(preferences).OfType<Button>().Single(button => Object.Equals(button.Content, "Enregistrer les réglages"));
+                    async Task SavePreferences() { savePreferences.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); await Until(() => savePreferences.IsEnabled); }
+                    assert(MissionModel().Text == "" && MissionReasoning().SelectedIndex == 0 && MissionPermission().SelectedIndex == 0, "réglages Cloud sans préférence explicite conservent le modèle, le raisonnement et les permissions natifs");
+                    var savedNetwork = context.Store.ReadRecord<CloudEnvironmentPreferences>(CloudEnvironmentPreferences.Record).NewEnvironmentNetwork;
+                    MissionModel().Text = "gpt-6.1-sol"; MissionReasoning().SelectedItem = "Ultra"; MissionPermission().SelectedItem = "Accès complet";
+                    var advancedPreferences = Descendants(preferences).OfType<Expander>().Single(section => Object.Equals(section.Header, "Chemins avancés"));
+                    advancedPreferences.IsExpanded = true; shell.UpdateLayout();
+                    Descendants(preferences).OfType<TextBox>().Single(field => System.Windows.Automation.AutomationProperties.GetName(field) == "Exécutable Codex CLI").Text = Environment.ProcessPath;
+                    advancedPreferences.IsExpanded = false; shell.UpdateLayout();
+                    await SavePreferences(); var savedMission = CloudMissionPreferences.Read(context.Store);
+                    preferences.ConfirmDiscard = () => false;
+                    assert(savedMission.Model == "gpt-6.1-sol" && savedMission.ReasoningEffort == "ultra" && savedMission.PermissionProfile == ":danger-full-access" && preferences.CanLeave(), "réglages Cloud enregistrent le choix explicite de cet utilisateur et remettent le formulaire à jour");
+                    assert(context.Store.ReadRecord<CloudEnvironmentPreferences>(CloudEnvironmentPreferences.Record).NewEnvironmentNetwork == savedNetwork, "enregistrer les missions Cloud préserve la préférence Internet des environnements");
+                    MissionModel().Text = "modèle invalide"; await SavePreferences();
+                    assert(CloudMissionPreferences.Read(context.Store).Model == "gpt-6.1-sol" && Descendants(preferences).OfType<TextBlock>().Any(text => text.Text.Contains("modèle Cloud invalide")), "modèle mal formé expliqué sans enregistrer ni remplacer la préférence valide");
+                    assert(!preferences.CanLeave(), "abandon refusé conserve le brouillon des réglages de mission Cloud");
+                    preferences.ConfirmDiscard = () => true; shell.Navigate("Comptes");
+                    CloudMissionPreferences.Save(context.Store, new CloudTaskExecutionOptions { Model = "custom-sol", ReasoningEffort = "high", PermissionProfile = ":private-workspace" });
+                    shell.Navigate("Paramètres"); await preferences.Refresh(); shell.UpdateLayout();
+                    await Until(() => Descendants(preferences).OfType<TextBox>().Any(field => System.Windows.Automation.AutomationProperties.GetName(field) == "Modèle des missions Cloud" && field.Text == "custom-sol"));
+                    assert(MissionModel().Text == "custom-sol" && Object.Equals(MissionReasoning().SelectedItem, "Élevé") && Object.Equals(MissionPermission().SelectedItem, "Profil personnalisé : :private-workspace"), "réouverture restitue un modèle et un profil natif personnalisés sans les remplacer par Accès complet");
+                    await SavePreferences();
+                    assert(CloudMissionPreferences.Read(context.Store).PermissionProfile == ":private-workspace", "enregistrement conserve exactement un profil de permissions personnalisé existant");
+                    MissionModel().Text = ""; MissionReasoning().SelectedIndex = 0; MissionPermission().SelectedIndex = 0; await SavePreferences();
+                    var inheritedMission = CloudMissionPreferences.Read(context.Store);
+                    assert(inheritedMission.Model == null && inheritedMission.ReasoningEffort == null && inheritedMission.PermissionProfile == null, "retour aux choix natifs efface les trois préférences explicites sans élargir les permissions");
+                    await CloudCapacityAcceptance(context, preferences, SavePreferences, assert);
                     var theme = Descendants(preferences).OfType<ComboBox>().Single(c => System.Windows.Automation.AutomationProperties.GetName(c) == "Thème");
                     theme.SelectedItem = "Sombre";
                     preferences.ConfirmDiscard = () => false;
@@ -489,6 +546,8 @@ namespace Creezio.Switcher.Desktop
                     await AccountLoginUi(shell,root,assert);
                     await ThreadCopyUi(shell,root,assert);
                     await TransfersUi(shell,root,assert);
+                    await ApplicationUpdatesAcceptance(root,assert);
+                    await ManagementUiAcceptance.RunAll(context,shell,assert);
                     report.Add(passed + " tests UI réussis");
                     File.WriteAllLines(Path.Combine(root, "results.txt"), report);
                     shell.ExitForTest();
@@ -526,13 +585,13 @@ namespace Creezio.Switcher.Desktop
             var saved=new AccountService(context.Root);var created=saved.Data.Instances.Single(i=>i.Name=="Nouvelle instance existante");
             assert(created.AccountKey==existing.Key&&created.AccountLocked,"création lie durablement le compte choisi");
             int logins=0;
-            await Run("Certivan de recette",0,async form=>{
+            await Run("AtelierQA de recette",0,async form=>{
                 await Click(form);assert(form.Saved,"création avec une connexion asynchrone : "+Error(form));
             },async token=>{logins++;await Task.Delay(20,token);return FakeAuth(21);});
-            saved=new AccountService(context.Root);var fresh=saved.Data.Instances.Single(i=>i.Name=="Certivan de recette");
+            saved=new AccountService(context.Root);var fresh=saved.Data.Instances.Single(i=>i.Name=="AtelierQA de recette");
             assert(logins==1&&fresh.AccountLocked&&fresh.AccountKey==AuthIdentity.Parse(FakeAuth(21)).Key,"nouveau compte importé et associé à la bonne instance");
             int count=saved.Data.Instances.Count;
-            await Run("  CERTIVAN DE RECETTE  ",0,async form=>{
+            await Run("  ATELIERQA DE RECETTE  ",0,async form=>{
                 await Click(form);assert(!form.Saved&&Error(form).Contains("nom existe déjà"),"nom déjà utilisé expliqué avant la connexion");
             },token=>{logins++;throw new Exception("Connexion indésirable");});
             assert(logins==1&&new AccountService(context.Root).Data.Instances.Count==count,"doublon ne lance ni connexion ni création");

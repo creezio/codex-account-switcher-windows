@@ -19,6 +19,13 @@ namespace Creezio.Switcher
         public string Updated {get;set;}
         public bool Healthy {get;set;}
         public string InstalledVersion {get;set;}
+        public bool BootstrapConfigured {get;set;}
+        public string RuntimeStatus {get;set;}
+        public string RuntimeVersion {get;set;}
+        public string DesiredVersion {get;set;}
+        public string RuntimeUpdatedUtc {get;set;}
+        public string RuntimeMessage {get;set;}
+        public int BootstrapConnections {get;set;}
     }
     internal static class RelayIntegration
     {
@@ -44,7 +51,8 @@ namespace Creezio.Switcher
             else foreach(var row in RelayEngine.Rows(value))foreach(var child in Objects(row))yield return child;
         }
         internal static object FindPlugin(object value){return Objects(value).FirstOrDefault(o=>Json.Str(Json.Get(o,"name"))==Name||Json.Str(Json.Get(o,"id"))==Name+"@"+Market);}
-        public static RelayIntegrationState Status(RelayStore store,string home){return store.ReadRecord<RelayIntegrationState>("integration-"+HomeKey(home)+".dpapi");}
+        public static RelayIntegrationState Status(RelayStore store,string home){return Status(store,home,DesktopRuntime.SameProcess);}
+        internal static RelayIntegrationState Status(RelayStore store,string home,Func<int,long,bool> inspectProcess){var state=store.ReadRecord<RelayIntegrationState>("integration-"+HomeKey(home)+".dpapi");try{RelayMcpBootstrap.Describe(store,home,state,inspectProcess);}catch(IOException){state.RuntimeStatus="unknown";}catch(InvalidOperationException){state.RuntimeStatus="unknown";}return state;}
         internal static bool FilesMatch(string source,string plugin,string exe,string home,string root,string version)
         {
             try{
@@ -57,7 +65,7 @@ namespace Creezio.Switcher
                 var manifest=Json.Read<object>(SafeFiles.ReadText(Path.Combine(plugin,".codex-plugin","plugin.json")));
                 var connection=Json.Read<object>(SafeFiles.ReadText(Path.Combine(plugin,"connection.json")));
                 var mcp=Json.Get(Json.Get(Json.Read<object>(SafeFiles.ReadText(Path.Combine(plugin,".mcp.json"))),"mcpServers"),Name);
-                return Json.Str(Json.Get(manifest,"version"))==version&&Json.Str(Json.Get(connection,"Executable"))==exe&&RelayStore.SamePath(Json.Str(Json.Get(connection,"Home")),home)&&RelayStore.SamePath(Json.Str(Json.Get(connection,"Root")),root)&&Json.Str(Json.Get(mcp,"command"))==exe&&RelayEngine.Rows(Json.Get(mcp,"args")).Select(Json.Str).SequenceEqual(new[]{"--mcp",root,home});
+                string stable=Path.Combine(Path.GetDirectoryName(root),"integrations",HomeKey(home),"bootstrap","CreezioRelay.exe");return Json.Str(Json.Get(manifest,"version"))==version&&Json.Str(Json.Get(connection,"Executable"))==exe&&RelayStore.SamePath(Json.Str(Json.Get(connection,"Home")),home)&&RelayStore.SamePath(Json.Str(Json.Get(connection,"Root")),root)&&Json.Str(Json.Get(mcp,"command"))==stable&&RelayEngine.Rows(Json.Get(mcp,"args")).Select(Json.Str).SequenceEqual(new[]{"--relay-mcp-bootstrap",root,home});
             }catch(IOException){return false;}catch(ArgumentException){return false;}catch(InvalidOperationException){return false;}
         }
         public static async Task<RelayIntegrationState> Install(RelayStore store,string home,string codex,bool explicitInstall,CancellationToken token)
@@ -72,12 +80,14 @@ namespace Creezio.Switcher
             string fingerprint;using(var sha=SHA256.Create())fingerprint=BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(fingerprintInput.ToString()))).Replace("-","").ToLowerInvariant().Substring(0,24);
             string version=old.InstalledVersion??(RelayWorker.Version+"+codex."+fingerprint);
             using(store.Lease("install-"+key)){
+                string bootstrap=null;
                 if(!String.IsNullOrEmpty(old.Fingerprint)){
                     object listing=await Cli(codex,home,"plugin list --marketplace "+Market+" --json",token),entry=FindPlugin(listing);
                     if(!explicitInstall&&entry!=null&&Object.Equals(Json.Get(entry,"enabled"),false)){old.Status="Intégration désactivée dans Codex · utilisez Réparer pour la réactiver";old.Healthy=false;old.Updated=DateTime.UtcNow.ToString("o");store.WriteRecord("integration-"+key+".dpapi",old);return old;}
-                    string cache=Path.Combine(home,"plugins","cache",Market,Name,version);
-                    if(old.Fingerprint==fingerprint&&entry!=null&&Object.Equals(Json.Get(entry,"enabled"),true)&&Json.Str(Json.Get(entry,"version"))==version&&FilesMatch(source,plugin,exe,home,store.Root,version)&&FilesMatch(source,cache,exe,home,store.Root,version)){old.Status="Intégration installée et vérifiée";old.Healthy=true;old.Updated=DateTime.UtcNow.ToString("o");store.WriteRecord("integration-"+key+".dpapi",old);return old;}
+                    bootstrap=RelayMcpBootstrap.Prepare(store,home,exe);string cache=Path.Combine(home,"plugins","cache",Market,Name,version);
+                    if(old.Fingerprint==fingerprint&&entry!=null&&Object.Equals(Json.Get(entry,"enabled"),true)&&Json.Str(Json.Get(entry,"version"))==version&&FilesMatch(source,plugin,exe,home,store.Root,version)&&FilesMatch(source,cache,exe,home,store.Root,version)){old.Status="Intégration installée et vérifiée sur disque";old.BootstrapConfigured=true;old.Healthy=true;old.Updated=DateTime.UtcNow.ToString("o");store.WriteRecord("integration-"+key+".dpapi",old);return old;}
                 }
+                if(bootstrap==null)bootstrap=RelayMcpBootstrap.Prepare(store,home,exe);
                 // A new cache version repairs corrupted files without editing a cache in use by a chat.
                 version=RelayWorker.Version+"+codex."+fingerprint+"."+Guid.NewGuid().ToString("N").Substring(0,8);
                 SafeFiles.PrivateDirectory(basePath);Directory.CreateDirectory(plugin);
@@ -85,7 +95,7 @@ namespace Creezio.Switcher
                     SafeFiles.RejectLinks(file);string relative=file.Substring(source.Length).TrimStart('\\','/');string destination=Path.Combine(plugin,relative);SafeFiles.RejectLinks(destination);Directory.CreateDirectory(Path.GetDirectoryName(destination));SafeFiles.AtomicWrite(destination,File.ReadAllBytes(file));
                 }
                 SafeFiles.AtomicWrite(Path.Combine(plugin,"connection.json"),Encoding.UTF8.GetBytes(Json.Write(new{Executable=exe,Root=store.Root,Home=home})));
-                var mcp=new{mcpServers=new Dictionary<string,object>{{Name,new{command=exe,args=new[]{"--mcp",store.Root,home}}}}};
+                var mcp=new{mcpServers=new Dictionary<string,object>{{Name,new{command=bootstrap,args=new[]{"--relay-mcp-bootstrap",store.Root,home}}}}};
                 SafeFiles.AtomicWrite(Path.Combine(plugin,".mcp.json"),Encoding.UTF8.GetBytes(Json.Write(mcp)));
                 var manifest=Json.Obj(Json.Read<object>(SafeFiles.ReadText(Path.Combine(plugin,".codex-plugin","plugin.json"))));manifest["version"]=version;
                 SafeFiles.AtomicWrite(Path.Combine(plugin,".codex-plugin","plugin.json"),Encoding.UTF8.GetBytes(Json.Write(manifest)));
@@ -96,7 +106,7 @@ namespace Creezio.Switcher
                 object verified=await Cli(codex,home,"plugin list --marketplace "+Market+" --json",token);
                 if(FindPlugin(verified)==null||Object.Equals(Json.Get(FindPlugin(verified),"enabled"),false))throw new InvalidOperationException("Installation non confirmée par Codex.");
                 if(Json.Str(Json.Get(FindPlugin(verified),"version"))!=version||!FilesMatch(source,Path.Combine(home,"plugins","cache",Market,Name,version),exe,home,store.Root,version))throw new InvalidOperationException("Les fichiers installés ne correspondent pas au plugin attendu. Vérification à reprendre.");
-                var state=new RelayIntegrationState{Home=home,Fingerprint=fingerprint,InstalledVersion=version,Marketplace=marketplace,Status="Intégration mise à jour · ouvrez un nouveau chat pour la charger",Healthy=true,Updated=DateTime.UtcNow.ToString("o")};store.WriteRecord("integration-"+key+".dpapi",state);return state;
+                var state=new RelayIntegrationState{Home=home,Fingerprint=fingerprint,InstalledVersion=version,Marketplace=marketplace,Status="Relais mis a jour sur disque ; premier chargement du bootstrap requis dans Codex",BootstrapConfigured=true,Healthy=true,Updated=DateTime.UtcNow.ToString("o")};store.WriteRecord("integration-"+key+".dpapi",state);return state;
             }
         }
         public static async Task<object> Inventory(string codex,string home,CancellationToken token)

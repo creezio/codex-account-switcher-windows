@@ -13,6 +13,12 @@ namespace Creezio.Switcher
     internal static class InstanceHost
     {
         [DllImport("user32.dll",CharSet=CharSet.Unicode)] private static extern bool SetWindowText(IntPtr window,string text);
+        internal static string AppPipeFromLog(string text)
+        {
+            if(String.IsNullOrEmpty(text)||!text.Contains("dynamic_app_tools_listening"))return null;
+            var name=Regex.Match(text,@"(?<![a-zA-Z0-9_/.-])codex-(?:browser-use|app-tools)-[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}(?![a-zA-Z0-9_\\/.-])");
+            return name.Success?"\\\\.\\pipe\\"+name.Value:null;
+        }
         private sealed class Health
         {
             public volatile bool Mounted, BootstrapFailed, NetworkWarning;
@@ -24,8 +30,8 @@ namespace Creezio.Switcher
                 if(text.Contains("Desktop bootstrap failed")) BootstrapFailed=true;
                 if(text.Contains("Desktop network policy does not allow")) NetworkWarning=true;
                 if(text.Contains("dynamic_app_tools_listening")) {
-                    var name=Regex.Match(text,"codex-browser-use-[a-fA-F0-9-]{36}");
-                    if(name.Success) AppToolsPipe="\\\\.\\pipe\\"+name.Value;
+                    string pipe=AppPipeFromLog(text);
+                    if(pipe!=null) AppToolsPipe=pipe;
                 }
                 // Raw Codex output is discarded; it may contain private account details.
             }

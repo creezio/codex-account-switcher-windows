@@ -15,12 +15,14 @@ namespace Creezio.Switcher.Desktop
         private readonly ComboBox filter;
         private readonly Button previous, next;
         private readonly Button interventions;
+        private readonly Button surveillances;
         public JobsPage(DesktopContext c, ShellWindow s) : base(c, s, "Tâches", "Suivez les demandes, leurs résultats et les interventions nécessaires.")
         {
             Command("Envoyer un message", async delegate { await DirectComposer.Open(Context, Shell, null); await Refresh(); }, true);
             Command("Déléguer depuis un agent", async delegate { await JobComposer.Open(Context, Shell, null); await Refresh(); });
-            Command("Missions Cloud", delegate {new CloudJobsWindow(Context,Shell).ShowDialog();return Task.CompletedTask;});
+            Command("Missions Cloud", delegate {Shell.Navigate("Délégations");return Task.CompletedTask;});
             interventions=Command("Interventions",delegate{new HeadlessInterventionsWindow(Context,Shell).ShowDialog();return Refresh();});
+            surveillances=Command("Surveillances",delegate{Shell.ShowChatWatches();return Task.CompletedTask;});
             filter = new ComboBox { ItemsSource = new[] { "Toutes", "À traiter", "En cours", "Terminées" }, SelectedIndex = 0, Width = 150, Margin = new Thickness(0, 0, 8, 6) };
             Commands.Children.Add(filter);
             filter.SelectionChanged += async delegate { try { page = 0; await Refresh(); } catch (Exception e) { Error(e); } };
@@ -61,6 +63,8 @@ namespace Creezio.Switcher.Desktop
             previous.IsEnabled = page > 0;
             next.IsEnabled = hasNext;
             int pending=await Context.Read(a=>new HeadlessApprovals(Context.Store).Pending().Length);interventions.Content=pending==0?"Interventions":"Interventions ("+pending+")";
+            int watchAlerts=await Task.Run(()=>new ChatWatches(Context.Store).List().Count(ChatWatchesWindow.NeedsAttention));
+            surveillances.Content=watchAlerts==0?"Surveillances":"Surveillances ("+watchAlerts+")";
             if(generation!=request)return;
             Rows(rows.Take(50).Select(m => new ItemRow { Id = m.Id, Revision = m.UpdatedUtc, Title = m.Title, Summary = (m.OperatorOrigin ? "Moi" : m.SourceChannelId) + " → " + m.TargetChannelId, State = ProductUx.JobState(m) + " · " + RelayForm.State(m.ReturnState), Value = m }), false);
             Notice.Text = "Page " + (page + 1) + " · " + RelayDispatch.Caption(Context.Store);

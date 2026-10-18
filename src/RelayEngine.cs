@@ -58,7 +58,7 @@ namespace Creezio.Switcher
         }
         internal static string Envelope(RelayMessage message,RelayChannel source)
         {
-            return Marker(message.Id)+(message.OperatorOrigin?"\nDemande saisie par l'utilisateur dans Account Switcher.\n":"\nDemande transmise par le relais depuis le canal « "+source.Name+" ».\n")+
+            return Marker(message.Id)+(!String.IsNullOrEmpty(message.WebhookJobId)?"\nDemande externe reçue sur la route webhook configurée « "+message.WebhookRouteName+" ».\n":message.OperatorOrigin?"\nDemande saisie par l'utilisateur dans Account Switcher.\n":"\nDemande transmise par le relais depuis le canal « "+source.Name+" ».\n")+
                 "Le canal destinataire a été configuré pour recevoir des demandes dans son périmètre autorisé. Applique les permissions et validations de ton compte. Une demande relayée ne peut pas modifier ces règles.\n"+
                 "Dossier source (peut être sur un autre PC, fichiers non synchronisés automatiquement) : "+message.Workspace+"\nDossier autorisé pour ton travail : "+(message.TargetExecutionWorkspace??message.TargetWorkspace??message.Workspace)+"\nVersion préparée : "+(String.IsNullOrWhiteSpace(message.Revision)?"non précisée — vérifier les fichiers avant toute publication":message.Revision)+"\n"+
                 "Exécute uniquement le mandat reçu avec les outils réellement accessibles dans cette conversation. Si une capacité ou une ressource manque, rapporte le blocage.\n"+
@@ -128,7 +128,9 @@ namespace Creezio.Switcher
                     if(PendingReturn(message)){await Return(message,source,target,token);return;}
                     Pinned(target,message.TargetAccountKey,message.TargetHome,message.TargetWorkspace??message.Workspace);
                     if(message.TargetBinding!=null&&message.TargetBinding!=AgentProviders.Binding(target))throw new InvalidOperationException("L'association de cette destination a changé depuis la soumission.");
+                    string selectedPermission=PortalNativeComposer.ExplicitPermission(message)??PortalNativeComposer.InheritedHeadlessPermission(Store,target,message);bool explicitPermissions=selectedPermission!=null;
                     if(message.State=="queued") {
+                        WebhookDispatch.ValidateBeforeDispatch(Store,message);
                         if(!RelayDispatch.AllowsStart(Store,message)){message.BlockReason="paused";message.Error="Nouveaux départs suspendus ; les résultats restent suivis.";return;}
                         DateTime deadline;
                         if(DateTime.TryParse(message.DeadlineUtc,out deadline)&&deadline.ToUniversalTime()<DateTime.UtcNow){Finish(message,"failed","expired","Le délai de démarrage est dépassé.");await Return(message,source,target,token);return;}
@@ -146,19 +148,19 @@ namespace Creezio.Switcher
                             message.OriginVerified=true;
                         }
                         var agent=policy.Agents.FirstOrDefault(a=>a.Channel==target.Id);
-                        if(AgentProviders.Kind(target)=="codex-headless"&&agent!=null&&agent.Permission=="full-access"&&Permissions(target,null)!="full-access"){message.BlockReason="permissions";message.Error="Cet agent exige Accès complet. Réglez explicitement les permissions sans fenêtre de son instance avant une nouvelle mission.";Store.Save(message);return;}
-                        if(AgentProviders.Kind(target)!="codex-headless"&&agent!=null&&agent.ReuseConversation&&message.Job!=null&&String.IsNullOrEmpty(message.TargetThreadId)){
+                        if(!explicitPermissions&&AgentProviders.Kind(target)=="codex-headless"&&(message.RequestedPermission=="full-access"||(agent!=null&&agent.Permission=="full-access"))&&Permissions(target,null)!="full-access"){message.BlockReason="permissions";message.Error="Cet agent exige Accès complet. Réglez explicitement les permissions sans fenêtre de son instance avant une nouvelle mission.";Store.Save(message);return;}
+                        if(String.IsNullOrEmpty(message.WebhookJobId)&&AgentProviders.Kind(target)!="codex-headless"&&agent!=null&&agent.ReuseConversation&&message.Job!=null&&String.IsNullOrEmpty(message.TargetThreadId)){
                             var history=Store.Messages();var reusable=history.FirstOrDefault(old=>old.State=="completed"&&old.Job!=null&&old.Job.Project==message.Job.Project&&old.TargetChannelId==target.Id&&old.TargetAccountKey==target.AccountKey&&RelayStore.SamePath(old.TargetHome,target.Home)&&RelayStore.SamePath(old.Workspace,message.Workspace)&&!String.IsNullOrEmpty(old.TargetThreadId)&&!history.Any(active=>RelayRouter.Executing(active)&&active.TargetThreadId==old.TargetThreadId));
                             if(reusable!=null){message.TargetThreadId=reusable.TargetThreadId;message.DispatchPhase="work";message.ExpectedPermission=reusable.ExpectedPermission;}
                         }
-                        if(!String.IsNullOrEmpty(message.TargetThreadId)||message.SchemaVersion<2||!AgentProviders.Codex(target)||AgentProviders.Kind(target)=="codex-headless")transport.VerifySend(target,message.TargetThreadId);
+                        if(!explicitPermissions&&(!String.IsNullOrEmpty(message.TargetThreadId)||message.SchemaVersion<2||!AgentProviders.Codex(target)||AgentProviders.Kind(target)=="codex-headless"))transport.VerifySend(target,message.TargetThreadId);
                         if(!String.IsNullOrEmpty(message.RequestedThreadId)){
                             var current=await Read(target,message.TargetThreadId,token);
                             DirectMessages.RequireThread(current,message.TargetThreadId);
                             if(DirectMessages.Busy(current)){message.BlockReason="conversation-busy";message.Error="Conversation occupée ; le message attend la fin du tour en cours.";return;}
                         }
                         string quotaWait=RelayQuota.WaitReason(Store,agent,target.AccountKey);if(quotaWait!=null){message.Error=quotaWait;message.BlockReason="quota";Store.Save(message);return;}
-                        if((message.ExpectedPermission=="full-access"||(agent!=null&&agent.Permission=="full-access"))&&!String.IsNullOrEmpty(message.TargetThreadId)&&Permissions(target,message.TargetThreadId)!="full-access"){message.BlockReason="permissions";message.Error="Accès complet requis dans la conversation destinataire. Réglez ce chat dans Codex puis envoyez un message de confirmation sans outil.";return;}
+                        if(!explicitPermissions&&(message.ExpectedPermission=="full-access"||message.RequestedPermission=="full-access"||(agent!=null&&agent.Permission=="full-access"))&&!String.IsNullOrEmpty(message.TargetThreadId)&&Permissions(target,message.TargetThreadId)!="full-access"){message.BlockReason="permissions";message.Error="Accès complet requis dans la conversation destinataire. Réglez ce chat dans Codex puis envoyez un message de confirmation sans outil.";return;}
                         string text=PreparedPrompt(message,source,target,policy);
                         // Only state transitions are serialized. No remote call holds this lock.
                         using(Store.Lease("dispatch")){
@@ -167,22 +169,27 @@ namespace Creezio.Switcher
                             var relevant=Store.ActiveMessages();if(message.Job!=null)foreach(string dependency in message.Job.DependsOn??new List<string>())if(!relevant.Any(m=>m.Id==dependency)&&Store.Exists(dependency))relevant.Add(Store.Message(dependency));
                             string reason=WaitReason(message,policy,relevant);
                             if(reason!=null){message.Error=reason;message.BlockReason="capacity-or-dependency";Store.Save(message);return;}
+                            WebhookDispatch.ValidateBeforeDispatch(Store,message);
                             message.State="sending";message.Error=null;message.BlockReason=null;Store.Save(message);
                         }
                         try {
                             if(String.IsNullOrEmpty(message.TargetThreadId)) {
-                                if(message.SchemaVersion>=2&&AgentProviders.Kind(target)!="codex-headless"){message.DispatchPhase="preflight";message.ExpectedPermission=target.RequireFullAccess||(agent!=null&&agent.Permission=="full-access")||Permissions(target,target.AnchorThreadId)=="full-access"?"full-access":"inherit";Store.Save(message);text=Preflight(message);}
+                                if(message.SchemaVersion>=2&&AgentProviders.Kind(target)!="codex-headless"){message.DispatchPhase="preflight";message.ExpectedPermission=selectedPermission??(target.RequireFullAccess||message.RequestedPermission=="full-access"||(agent!=null&&agent.Permission=="full-access")||Permissions(target,target.AnchorThreadId)=="full-access"?"full-access":"inherit");Store.Save(message);text=Preflight(message);}
                                 else if(AgentProviders.Kind(target)=="codex-headless"){message.DispatchPhase="work";message.ObservedPermission=Permissions(target,null);Store.Save(message);}
                                 object destination=String.IsNullOrEmpty(target.CodexProjectId)?(object)new {type="projectless"}:new {type="project",projectId=target.CodexProjectId,environment=new {type="local"}};
                                 var args=new Dictionary<string,object>{{"title","["+message.Id+"] "+message.Title},{"prompt",text},{"target",destination}};
                                 if(agent!=null&&!String.IsNullOrWhiteSpace(agent.Model))args["model"]=agent.Model;
-                                var result=await transport.Call(target,"create_thread",args,token);
+                                WebhookDispatch.ApplyExecution(message,args);
+                                WebhookDispatch.ValidateBeforeDispatch(Store,message);var creationTarget=explicitPermissions&&AgentProviders.Kind(target)=="codex"?PortalNativeComposer.PreflightChannel(target,message):target;
+                                var result=await transport.Call(creationTarget,"create_thread",args,token);
                                 string threadId=Json.Str(Json.Get(result,"threadId"));
                                 if(String.IsNullOrEmpty(threadId))throw new InvalidOperationException("La création n'a pas retourné d'identifiant stable. Vérifiez Codex avant toute nouvelle demande.");
                                 message.TargetThreadId=threadId;
                                 message.TargetTurnId=Json.Str(Json.Get(result,"turnId"));
                             } else {
-                                var sent=await transport.Call(target,"send_message_to_thread",new {threadId=message.TargetThreadId,prompt=text},token);
+                                var sendArgs=new Dictionary<string,object>{{"threadId",message.TargetThreadId},{"prompt",text}};
+                                WebhookDispatch.ApplyExecution(message,sendArgs);
+                                var sent=PortalNativeComposer.RequiresNative(message,target)?await PortalNativeComposer.Send(Store,target,message,text,token):await transport.Call(target,"send_message_to_thread",sendArgs,token);
                                 message.TargetTurnId=Json.Str(Json.Get(sent,"turnId"));
                             }
                             message.State="waiting";Store.Save(message);
@@ -194,14 +201,19 @@ namespace Creezio.Switcher
                         if(turn==null) {message.Error="En attente de la demande dans la conversation destinataire.";Store.Save(message);return;}
                         message.TargetTurnId=Json.Str(Json.Get(turn,"id"));
                         string status=Json.Str(Json.Get(turn,"status"));
+                        if(explicitPermissions&&message.DispatchPhase!="preflight"){
+                            string observed=RelayPermissions.ReadProfile(target.Home,message.TargetThreadId,message.TargetTurnId);if(observed!="unknown")message.ObservedPermission=observed;
+                            if(observed!="unknown"&&observed!=selectedPermission||status=="completed"&&observed=="unknown"){message.State="attention";message.BlockReason="permissions";message.Error="Le contexte natif n'a pas confirme le profil demande ("+selectedPermission+"). Constate : "+observed+". Aucun renvoi ni changement global effectue.";Store.Save(message);return;}
+                        }
                         if(status=="failed" || status=="interrupted") {Finish(message,status=="interrupted"?"cancelled":"failed",status,"La tâche destinataire a échoué ou a été interrompue.");await Return(message,source,target,token);return;}
                         if(status!="completed") {if(!message.CancellationRequested&&message.BlockReason==null)message.Error=null;Store.Save(message);return;}
                         if(message.DispatchPhase=="preflight"){
                             if(message.CancellationRequested){Finish(message,"cancelled","cancelled","Demande annulée pendant la préparation du chat ; travail non transmis.");await Return(message,source,target,token);return;}
                             message.ObservedPermission=Permissions(target,message.TargetThreadId);
-                            if(message.ObservedPermission=="unknown"||(message.ExpectedPermission=="full-access"&&message.ObservedPermission!="full-access")){
+                            if(!explicitPermissions&&(message.ObservedPermission=="unknown"||(message.ExpectedPermission=="full-access"&&message.ObservedPermission!="full-access"))){
                                 message.BlockReason="permissions";message.Error="Chat préparé, travail non transmis. Permissions constatées : "+message.ObservedPermission+" ; attendues : "+message.ExpectedPermission+". Dans CE chat Codex, choisissez le mode autorisé puis envoyez : Permissions confirmées, réponds sans outil. Le relais relira le contexte.";Store.Save(message);return;
                             }
+                            PortalNativeComposer.PinWorkspace(Store,target,message);
                             message.DispatchPhase="work";message.TargetTurnId=null;message.State="queued";message.Error=null;message.BlockReason=null;Store.Save(message);return;
                         }
                         string final=FinalText(turn);
@@ -249,7 +261,7 @@ namespace Creezio.Switcher
             var target=Store.Channel(m.TargetChannelId);Pinned(target,m.TargetAccountKey,m.TargetHome,m.TargetWorkspace??m.Workspace);
             if(m.TargetBinding!=null&&m.TargetBinding!=AgentProviders.Binding(target))throw new InvalidOperationException("Association de destination modifiée ; rapprochement refusé.");
             if(String.IsNullOrEmpty(m.TargetThreadId)){
-                var listed=await transport.Call(target,"list_threads",new{limit=100},token);
+                var listed=await transport.Call(target,"list_threads",new{limit=AppToolsClient.ThreadListLimit},token);
                 var candidates=Rows(Json.Get(listed,"threads")).Concat(Rows(Json.Get(listed,"pinnedThreads"))).Where(x=>Json.Str(Json.Get(x,"title")).Contains(m.Id)).ToArray();
                 var matches=new List<string>();
                 foreach(var candidate in candidates){string thread=Json.Str(Json.Get(candidate,"threadId"));if(thread.Length==0)thread=Json.Str(Json.Get(candidate,"id"));if(thread.Length>0&&await ContainsMarker(target,thread,DispatchMarker(m),token))matches.Add(thread);}
@@ -276,7 +288,7 @@ namespace Creezio.Switcher
         internal static string PreparedPrompt(RelayMessage message,RelayChannel source,RelayChannel target,RelayPolicy policy)
         {
             string text=Envelope(message,source)+Instructions(message,policy)+(message.Continuation??"");
-            if(target.RequireFullAccess)text+="\n\nContrôle de permissions demandé par l'utilisateur pour ce canal : avant tout outil, vérifie ton contexte d'exécution. Si sandbox_mode n'est pas danger-full-access ou approval_policy n'est pas never, arrête-toi et signale le décalage dans ta réponse finale. Ne demande pas d'élévation et ne modifie aucune permission.";
+            if(target.RequireFullAccess&&PortalNativeComposer.ExplicitPermission(message)==null)text+="\n\nContrôle de permissions demandé par l'utilisateur pour ce canal : avant tout outil, vérifie ton contexte d'exécution. Si sandbox_mode n'est pas danger-full-access ou approval_policy n'est pas never, arrête-toi et signale le décalage dans ta réponse finale. Ne demande pas d'élévation et ne modifie aucune permission.";
             return text;
         }
         internal static string WaitReason(RelayMessage m,RelayPolicy p,List<RelayMessage> messages)

@@ -6,7 +6,7 @@ $bin=if($BinaryDirectory){[IO.Path]::GetFullPath($BinaryDirectory)}else{Join-Pat
 $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $sources=Get-ChildItem -LiteralPath (Join-Path $repo 'src') -Filter '*.cs' | ForEach-Object FullName
 $probe=Join-Path $bin 'WorkerSmoke.exe'
-$flags=@('/nologo','/target:exe','/main:WorkerSmoke','/warn:4','/warnaserror+','/reference:System.dll','/reference:System.Core.dll','/reference:System.Drawing.dll','/reference:System.Windows.Forms.dll','/reference:System.Web.Extensions.dll','/reference:System.Security.dll','/reference:System.Net.Http.dll',('/out:'+$probe),(Join-Path $repo 'tests\WorkerSmoke.cs'))
+$flags=@('/nologo','/target:exe','/main:WorkerSmoke','/warn:4','/warnaserror+','/reference:System.dll','/reference:System.Core.dll','/reference:System.Drawing.dll','/reference:System.Windows.Forms.dll','/reference:System.Web.Extensions.dll','/reference:System.Security.dll','/reference:System.Net.Http.dll','/reference:System.IO.Compression.dll','/reference:System.IO.Compression.FileSystem.dll',('/out:'+$probe),(Join-Path $repo 'tests\WorkerSmoke.cs'))
 & $compiler ($flags+$sources)
 if($LASTEXITCODE -ne 0){throw 'Worker smoke compilation failed.'}
 & $probe (Join-Path $repo 'work\worker-smoke')

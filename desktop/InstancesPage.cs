@@ -27,8 +27,9 @@ namespace Creezio.Switcher.Desktop
         private readonly Dictionary<string,string> operations=new Dictionary<string,string>();
         internal Func<string,string,bool> ConfirmLifecycle;
         private readonly TextBlock verification=Ui.Text("",13);
+        private readonly TextBlock diagnostic=Ui.Text("",13);
         private readonly Dictionary<string,Verification> verifications=new Dictionary<string,Verification>();
-        private sealed class Verification { public bool Busy; public string Message; }
+        private sealed class Verification { public bool Busy,HasResult; public string Message; }
         private bool archived,changing;
         private int tab;
         private string selected;
@@ -40,7 +41,7 @@ namespace Creezio.Switcher.Desktop
         private InstanceResourcesView resources;
         private CloudEnvironmentPanel cloud;
         private sealed class Info
-        {public DesktopInstance Instance;public Profile Account;public InstanceState State;public RelayIntegrationState Integration;public string Active;}
+        {public DesktopInstance Instance;public Profile Account;public InstanceState State;public RelayIntegrationState Integration;public string Active,DiagnosticWarning;}
         internal InstancesPage(DesktopContext context,ShellWindow shell):base(context,shell,"Instances","Un compte, ses ressources et ses accès, réunis dans chaque espace Codex.")
         {
             Header.Visibility=Visibility.Collapsed;
@@ -70,6 +71,7 @@ namespace Creezio.Switcher.Desktop
             more=Ui.Button("⋯",()=>{ActionsMenu.PlacementTarget=more;ActionsMenu.Placement=PlacementMode.Bottom;ActionsMenu.IsOpen=true;});more.ContextMenu=ActionsMenu;more.Padding=new Thickness(12,7,12,7);more.Margin=new Thickness(0);more.ToolTip="Actions de l’instance";AutomationProperties.SetName(more,"Actions de l’instance");
             ConfirmLifecycle=(text,title)=>Ui.Confirm(Shell,text,title);
             verification.Visibility=Visibility.Collapsed;System.Windows.Automation.AutomationProperties.SetName(verification,"Résultat de la vérification");System.Windows.Automation.AutomationProperties.SetLiveSetting(verification,System.Windows.Automation.AutomationLiveSetting.Polite);header.Children.Add(verification);
+            diagnostic.Visibility=Visibility.Collapsed;AutomationProperties.SetName(diagnostic,"Diagnostic de l’instance");AutomationProperties.SetLiveSetting(diagnostic,AutomationLiveSetting.Polite);header.Children.Add(diagnostic);
             var tabLine=new Border{BorderThickness=new Thickness(0,0,0,1),Child=tabs,Margin=new Thickness(0,0,0,16)};tabLine.SetResourceReference(Border.BorderBrushProperty,"LineBrush");header.Children.Add(tabLine);DockPanel.SetDock(header,Dock.Top);right.Children.Add(header);right.Children.Add(detail);
             System.Windows.Automation.AutomationProperties.SetName(compactChoice,"Instance sélectionnée");
             SizeChanged+=delegate{bool compact=ActualWidth<850;left.Visibility=compact?Visibility.Collapsed:Visibility.Visible;split.ColumnDefinitions[0].Width=new GridLength(compact?0:235);split.ColumnDefinitions[1].Width=new GridLength(compact?0:20);compactBar.Visibility=compact?Visibility.Visible:Visibility.Collapsed;compactChoice.Visibility=compact?Visibility.Visible:Visibility.Collapsed;};
@@ -81,17 +83,31 @@ namespace Creezio.Switcher.Desktop
         }
         public override async Task Refresh()
         {
-            var data=await Context.Read(a=>a.Data.Instances.Where(i=>archived||!i.Archived).Select(i=>{
-                var state=Context.InstanceState(a,i);var profile=a.Data.Profiles.FirstOrDefault(p=>p.Key==i.AccountKey);var info=new Info{Instance=i,Account=profile,State=state,Active=Context.Fixture?i.AccountKey:a.Instances.ActiveKey(i),Integration=RelayIntegration.Status(Context.Store,a.Instances.Home(i))};
-                return new ItemRow{Id=i.Id,Title=i.Name,Summary=profile?.Email??"Compte à connecter",State=i.Archived?"Archivée":i.AccountKey!=null&&info.Active!=i.AccountKey?"À reconnecter":state.Caption,Value=info};}).ToArray());
+            var data=await Context.Read(a=>a.Data.Instances.Where(i=>archived||!i.Archived).Select(i=>ReadRow(a,i)).ToArray());
             bool dirty=resources?.Dirty==true;
             // Metadata can change while access edits are pending; only an identity change would destroy that draft.
             if(dirty&&!data.Any(r=>r.Id==selected&&Identity(r)==identity))return;
             var rows=data.Where(r=>(r.Title+" "+r.Summary).IndexOf(search.Text,StringComparison.CurrentCultureIgnoreCase)>=0||(dirty&&r.Id==selected)).ToArray();
             string fingerprint=Json.Write(rows.Select(r=>new{r.Id,r.Title,r.Summary,r.State}));
             if(fingerprint!=listStamp){listStamp=fingerprint;changing=true;List.ItemsSource=rows;List.SelectedItem=rows.FirstOrDefault(r=>r.Id==selected)??rows.FirstOrDefault();compactChoice.ItemsSource=rows;compactChoice.SelectedItem=List.SelectedItem;changing=false;}
-            if(List.SelectedItem is ItemRow chosen)await Select(rows.First(r=>r.Id==chosen.Id));else if(selected!=null){resources?.Dispose();resources=null;cloud?.Dispose();cloud=null;selected=null;identity=null;current=null;heading.Text="Aucune instance";accountLine.Text="Créez une instance ou modifiez votre recherche.";detail.Content=null;rename.IsEnabled=false;copyThread.IsEnabled=false;UpdateVerification();RenderLifecycle();}
+            if(List.SelectedItem is ItemRow chosen)await Select(rows.First(r=>r.Id==chosen.Id));else if(selected!=null){resources?.Dispose();resources=null;cloud?.Dispose();cloud=null;selected=null;identity=null;current=null;heading.Text="Aucune instance";accountLine.Text="Créez une instance ou modifiez votre recherche.";detail.Content=null;rename.IsEnabled=false;copyThread.IsEnabled=false;UpdateVerification();UpdateDiagnostic();RenderLifecycle();}
         }
+        private ItemRow ReadRow(AccountService accounts,DesktopInstance instance)
+        {
+            var state=Context.InstanceState(accounts,instance);var profile=accounts.Data.Profiles.FirstOrDefault(p=>p.Key==instance.AccountKey);
+            var info=new Info{Instance=instance,Account=profile,State=state,Active=Context.Fixture?instance.AccountKey:accounts.Instances.ActiveKey(instance)};
+            try{info.Integration=Context.InstanceIntegration(accounts,instance);}
+            catch(System.ComponentModel.Win32Exception){UnavailableDiagnostic(info);}
+            catch(System.UnauthorizedAccessException){UnavailableDiagnostic(info);}
+            string caption=instance.Archived?"Archivée":instance.AccountKey!=null&&info.Active!=instance.AccountKey?"À reconnecter":state.Caption;
+            return new ItemRow{Id=instance.Id,Title=instance.Name,Summary=profile?.Email??"Compte à connecter",State=caption+(info.DiagnosticWarning==null?"":" · Diagnostic à vérifier"),Value=info};
+        }
+        private static void UnavailableDiagnostic(Info info)
+        {
+            info.DiagnosticWarning="Diagnostic du relais à vérifier : Windows a refusé une inspection de cette instance. Son compte et ses données sont conservés. Le chargement du relais n’est pas confirmé.";
+            info.Integration=new RelayIntegrationState{Status="Diagnostic du relais indisponible",RuntimeStatus="unknown",RuntimeMessage=info.DiagnosticWarning};
+        }
+        private void UpdateDiagnostic(){diagnostic.Text=current?.DiagnosticWarning??"";diagnostic.Visibility=String.IsNullOrEmpty(diagnostic.Text)?Visibility.Collapsed:Visibility.Visible;}
         private static string Identity(ItemRow row){var info=(Info)row.Value;return row.Id+"/"+info.Instance.AccountKey+"/"+info.Instance.Archived;}
         private async Task Select(ItemRow row)
         {
@@ -99,7 +115,7 @@ namespace Creezio.Switcher.Desktop
             bool changed=identity!=stamp;identity=stamp;heading.Text=row.Title;accountLine.Text=(current.Account?.Email??"Compte à connecter")+" · "+(current.Account?.Plan??"Connexion requise")+" · "+row.State;
             if(changed){Notice.Text="";resources?.Dispose();resources=null;cloud?.Dispose();cloud=null;selected=row.Id;if(current.Instance.AccountKey!=null&&!current.Instance.Archived)resources=new InstanceResourcesView(Context,Shell,current.Instance);ShowTab(tab);}
             else if(tab==0)RenderAccount();
-            resources?.UpdateOwnerName(current.Instance.Name);cloud?.UpdateOwnerName(current.Instance.Name,current.Account?.Email);UpdateVerification();RenderLifecycle();
+            resources?.UpdateOwnerName(current.Instance.Name);cloud?.UpdateOwnerName(current.Instance.Name,current.Account?.Email);UpdateVerification();UpdateDiagnostic();RenderLifecycle();
             if(resources!=null)await resources.Discover();
         }
         private void RenderLifecycle()
@@ -157,18 +173,20 @@ namespace Creezio.Switcher.Desktop
         private void UpdateVerification()
         {
             var result=selected!=null&&verifications.TryGetValue(selected,out var value)?value:null;
-            verification.Text=result?.Message??"";verification.Visibility=result==null?Visibility.Collapsed:Visibility.Visible;
+            verification.Text=result?.Message??"";
+            if(result!=null&&!result.Busy&&result.HasResult&&current?.Instance.Id==selected)verification.Text+=" · "+IntegrationEditor.RuntimeLabel(current.Integration)+". "+IntegrationEditor.RuntimeDetail(current.Integration);
+            verification.Visibility=result==null?Visibility.Collapsed:Visibility.Visible;
         }
         private async Task Verify(Info info)
         {
             string id=info.Instance.Id;
             if(verifications.TryGetValue(id,out var previous)&&previous.Busy)return;
-            var result=new Verification{Busy=true,Message="Vérification en cours… Contrôle et réparation du plugin et des skills. Cela peut prendre quelques minutes."};
+            var result=new Verification{Busy=true,Message="Vérification en cours… Contrôle de l’installation du relais Switcher et de ses skills. Le chargement dans Codex sera indiqué séparément."};
             verifications[id]=result;UpdateVerification();if(tab==0)RenderAccount();
             try {
                 var state=await Context.VerifyIntegration(id);
                 string time=DateTime.Now.ToString("HH:mm:ss");
-                result.Message=(state.Healthy?"Vérification réussie":"Intégration à corriger")+" · "+time+" · "+(state.Status??"Aucun résultat fourni.");
+                result.HasResult=true;result.Message=(state.Healthy?"Vérification réussie · installation sur disque":"Intégration à corriger")+" · "+time+(!state.Healthy?" · "+(state.Status??"Aucun résultat fourni."):"");
                 await Refresh();
             } catch(Exception e){result.Message="Échec de la vérification · "+DateTime.Now.ToString("HH:mm:ss")+" · "+Program.SafeError(e);}
             finally {result.Busy=false;UpdateVerification();if(current?.Instance.Id==id&&tab==0)RenderAccount();}
@@ -199,7 +217,7 @@ namespace Creezio.Switcher.Desktop
         private void RenderAccount()
         {
             bool verifying=verifications.TryGetValue(current.Instance.Id,out var check)&&check.Busy;
-            string stamp=Json.Write(new{current.Instance.Id,current.Instance.Name,current.Instance.Archived,current.Instance.AccountKey,current.Instance.HeadlessEnabled,current.Instance.HeadlessSandbox,current.Instance.HeadlessApprovalPolicy,current.Active,current.State.Running,current.State.Phase,current.State.Message,current.Integration.Status,current.Integration.Healthy,current.Integration.Updated,current.Integration.InstalledVersion,verifying,quota=current.Account?.Quotas,fresh=current.Account?.IsFresh});
+            string stamp=Json.Write(new{current.Instance.Id,current.Instance.Name,current.Instance.Archived,current.Instance.AccountKey,current.Instance.HeadlessEnabled,current.Instance.HeadlessSandbox,current.Instance.HeadlessApprovalPolicy,current.Active,current.State.Running,current.State.Phase,current.State.Message,current.Integration.Status,current.Integration.Healthy,current.Integration.Updated,current.Integration.InstalledVersion,current.Integration.BootstrapConfigured,current.Integration.RuntimeStatus,current.Integration.RuntimeVersion,current.Integration.DesiredVersion,current.Integration.RuntimeUpdatedUtc,current.Integration.RuntimeMessage,current.Integration.BootstrapConnections,verifying,quota=current.Account?.Quotas,fresh=current.Account?.IsFresh});
             if(detail.Content is ScrollViewer previous&&Object.Equals(previous.Tag,stamp))return;
             var info=current;var i=info.Instance;var body=new StackPanel();var account=new StackPanel();account.Children.Add(Ui.Text("COMPTE ASSOCIÉ",11,true));account.Children.Add(Ui.Text(info.Account?.Label??"À connecter",21));account.Children.Add(Ui.Text(info.Account?.Email??"Connectez un compte GPT pour préparer cet espace.",14,true));
             var actions=Ui.Actions(account);
@@ -214,8 +232,11 @@ namespace Creezio.Switcher.Desktop
                 if(info.Account.Quotas.Count==0)limits.Children.Add(Ui.Text("Les limites n’ont pas encore été actualisées.",13,true));
                 var limitActions=Ui.Actions(limits);limitActions.Children.Add(Ui.AsyncButton("Actualiser les limites",async()=>{await UsageCoordinator.Refresh(Context.Store,info.Account.Key,false,CancellationToken.None);await Refresh();},Error));limitActions.Children.Add(Ui.AsyncButton("Réinitialisations",()=>UsageEditor.Open(Context,Shell,info.Account.Key),Error));body.Children.Add(Ui.Card(limits));
             }
-            var integration=new StackPanel();integration.Children.Add(Ui.Text("Intégration & ressources",18));integration.Children.Add(Ui.Text(info.Integration.Status??"Préparation à venir",13,true));
-            if(DateTime.TryParse(info.Integration.Updated,out var updated))integration.Children.Add(Ui.Text("Dernière vérification : "+updated.ToLocalTime().ToString("dd/MM à HH:mm:ss")+(String.IsNullOrEmpty(info.Integration.InstalledVersion)?"":" · v"+info.Integration.InstalledVersion),12,true));
+            var integration=new StackPanel();integration.Children.Add(Ui.Text("Relais Switcher",18));integration.Children.Add(Ui.Text(IntegrationEditor.InstallationLabel(info.Integration),13,true));
+            integration.Children.Add(Ui.Text(IntegrationEditor.RuntimeLabel(info.Integration),14));integration.Children.Add(Ui.Text(IntegrationEditor.RuntimeDetail(info.Integration),12,true));
+            var runtimeEvidence=IntegrationEditor.RuntimeEvidence(info.Integration);if(!String.IsNullOrEmpty(runtimeEvidence))integration.Children.Add(Ui.Text(runtimeEvidence,12,true));
+            if(DateTime.TryParse(info.Integration.Updated,out var updated))integration.Children.Add(Ui.Text("Dernière vérification : "+updated.ToLocalTime().ToString("dd/MM à HH:mm:ss")+" · installation sur disque"+(String.IsNullOrEmpty(info.Integration.InstalledVersion)?"":" · v"+info.Integration.InstalledVersion),12,true));
+            if(DateTime.TryParse(info.Integration.RuntimeUpdatedUtc,out var runtimeUpdated))integration.Children.Add(Ui.Text("Chargement contrôlé : "+runtimeUpdated.ToLocalTime().ToString("dd/MM à HH:mm:ss"),12,true));
             var links=Ui.Actions(integration);links.Children.Add(Ui.Button("Voir les ressources",()=>ShowTab(1),true));
             var verify=Ui.AsyncButton(verifying?"Vérification en cours…":"Vérifier l’intégration",()=>Verify(info),Error);System.Windows.Automation.AutomationProperties.SetName(verify,"Vérifier l’intégration");verify.IsEnabled=!verifying&&!i.Archived;links.Children.Add(verify);body.Children.Add(Ui.Card(integration));
             body.Children.Add(Ui.Text("Dans Codex : « Délègue cette mission à "+i.Name+" » ou « Utilise les ressources de "+i.Name+" ».",14,true));

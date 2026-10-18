@@ -29,13 +29,13 @@ namespace Creezio.Switcher
         public async Task<ConversationChoice[]> Conversations(string channelId,CancellationToken token)
         {
             var channel=store.Channel(channelId);await Task.Run(()=>transport.Verify(channel),token);
-            var listed=await transport.Call(channel,"list_threads",new{limit=100},token);
+            var listed=await transport.Call(channel,"list_threads",new{limit=AppToolsClient.ThreadListLimit},token);
             return RelayEngine.Rows(Json.Get(listed,"pinnedThreads")).Concat(RelayEngine.Rows(Json.Get(listed,"threads")))
                 .Where(t=>String.IsNullOrEmpty(Json.Str(Json.Get(t,"source")))||Json.Str(Json.Get(t,"source"))=="codex")
                 .Select(t=>new ConversationChoice{Id=String.IsNullOrEmpty(Json.Str(Json.Get(t,"threadId")))?Json.Str(Json.Get(t,"id")):Json.Str(Json.Get(t,"threadId")),Title=Json.Str(Json.Get(t,"title"))})
                 .Where(t=>!String.IsNullOrEmpty(t.Id)).GroupBy(t=>t.Id).Select(g=>g.First()).ToArray();
         }
-        public async Task<RelayMessage> Submit(RelayJobSpec request,string threadId,CancellationToken token)
+        public async Task<RelayMessage> Submit(RelayJobSpec request,string threadId,CancellationToken token,Action<RelayMessage> configure=null)
         {
             if(request==null||String.IsNullOrWhiteSpace(request.To))throw new InvalidOperationException("Choisissez un destinataire pour le message utilisateur.");
             // Never mutate the caller's object or accept an agent-supplied origin flag.
@@ -61,6 +61,7 @@ namespace Creezio.Switcher
                     m.TargetWorkspace=target.Workspace;m.PolicyRevision=policy.Revision;m.ReturnMode="manual";
                     AgentProviders.Pin(m,target);
                     m.RoutingReason="Message utilisateur · destinataire explicite";m.DeadlineUtc=DateTime.UtcNow.AddHours(2).ToString("o");
+                    if(configure!=null)configure(m);
                 },true);
             }
         }

@@ -4,6 +4,7 @@ using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
+using System.Threading;
 
 namespace Creezio.Switcher
 {
@@ -64,21 +65,43 @@ namespace Creezio.Switcher
     {
         private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("Creezio.CodexAccountSwitcher.v1");
         public readonly string Root;
+        private byte[] baseline;
         public string FilePath { get { return Path.Combine(Root, "accounts.dpapi"); } }
-        public Vault(string root) { Root = Path.GetFullPath(root); SafeFiles.PrivateDirectory(Root); }
+        public Vault(string root) { Root = Path.GetFullPath(root); SafeFiles.PrivateDirectory(Root); baseline=Digest(ReadBytes()); }
+        private byte[] ReadBytes()
+        {
+            // File.Exists can report a false absence during an atomic replace.
+            // Only a vault never observed by this object may be initially absent.
+            using(var file=AtomicFiles.OpenRead(FilePath,baseline==null,true,path=>new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read|FileShare.Delete))){
+                if(file==null)return null;
+                if(file.Length>16777216)throw new IOException("Coffre trop volumineux.");var bytes=new byte[(int)file.Length];int offset=0;while(offset<bytes.Length){int read=file.Read(bytes,offset,bytes.Length-offset);if(read==0)throw new IOException("Lecture du coffre incomplete.");offset+=read;}return bytes;
+            }
+        }
+        private static byte[] Digest(byte[] bytes){if(bytes==null)return null;using(var sha=SHA256.Create())return sha.ComputeHash(bytes);}
+        private static bool Equal(byte[] first,byte[] second)
+        {if(first==null||second==null)return first==null&&second==null;if(first.Length!=second.Length)return false;int difference=0;for(int i=0;i<first.Length;i++)difference|=first[i]^second[i];return difference==0;}
+        private sealed class AtomicVaultLease : IDisposable
+        {
+            private readonly Mutex mutex;private bool held;
+            internal AtomicVaultLease(string path)
+            {
+                string key;using(var sha=SHA256.Create())key=BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(Path.GetFullPath(path).ToUpperInvariant()))).Replace("-","");mutex=new Mutex(false,"Local\\Creezio.AtomicWrite."+key);
+                try{try{held=mutex.WaitOne(TimeSpan.FromSeconds(5));}catch(AbandonedMutexException){held=true;}if(!held)throw new IOException("Une autre ecriture du coffre est en cours. Actualisez puis reessayez.");}catch{mutex.Dispose();throw;}
+            }
+            public void Dispose(){if(held){held=false;mutex.ReleaseMutex();}mutex.Dispose();}
+        }
         public VaultData Load()
         {
-            if (!File.Exists(FilePath)) return new VaultData();
-            SafeFiles.RejectLinks(FilePath);
-            if (new FileInfo(FilePath).Length > 16777216) throw new IOException("Coffre trop volumineux.");
+            var encrypted=ReadBytes();if(encrypted==null){baseline=null;return new VaultData();}
             byte[] clear = null;
             try
             {
-                clear = ProtectedData.Unprotect(File.ReadAllBytes(FilePath), Entropy, DataProtectionScope.CurrentUser);
+                clear = ProtectedData.Unprotect(encrypted, Entropy, DataProtectionScope.CurrentUser);
                 var data = Json.Read<VaultData>(Encoding.UTF8.GetString(clear));
                 if (data == null || (data.Version != 1 && data.Version != 2) || data.Profiles == null) throw new InvalidDataException();
                 foreach (var profile in data.Profiles) if (AuthIdentity.Parse(profile.AuthJson).Key != profile.Key) throw new InvalidDataException();
                 InstanceRules.Normalize(data);
+                baseline=Digest(encrypted);
                 return data;
             }
             catch { throw new InvalidOperationException("Impossible d'ouvrir le coffre. Il doit être lu par le même utilisateur Windows. Le fichier existant est conservé."); }
@@ -86,16 +109,16 @@ namespace Creezio.Switcher
         }
         public void Save(VaultData data)
         {
-            InstanceRules.Normalize(data);
-            // Keep the encrypted v1 vault once; older versions refuse the new schema.
-            if(File.Exists(FilePath) && !File.Exists(Path.Combine(Root,"accounts-before-instances.dpapi")))
-            {
-                SafeFiles.RejectLinks(FilePath);
-                SafeFiles.AtomicWrite(Path.Combine(Root,"accounts-before-instances.dpapi"),File.ReadAllBytes(FilePath));
+            using(VaultMutation.AcquireWrite(Root))using(new AtomicVaultLease(FilePath)){
+                byte[] current=ReadBytes();if(!Equal(baseline,Digest(current)))throw new InvalidOperationException("Le coffre a ete modifie depuis sa lecture. Actualisez avant toute nouvelle ecriture ; aucun compte n'a ete remplace.");
+                InstanceRules.Normalize(data);
+                // Keep the encrypted v1 vault once; never create this backup from
+                // an obsolete snapshot or reread different bytes after the CAS.
+                if(current!=null&&!File.Exists(Path.Combine(Root,"accounts-before-instances.dpapi")))SafeFiles.AtomicWrite(Path.Combine(Root,"accounts-before-instances.dpapi"),current);
+                byte[] clear=Encoding.UTF8.GetBytes(Json.Write(data));
+                try{byte[] encrypted=ProtectedData.Protect(clear,Entropy,DataProtectionScope.CurrentUser);SafeFiles.AtomicWrite(FilePath,encrypted);baseline=Digest(encrypted);}
+                finally{Array.Clear(clear,0,clear.Length);}
             }
-            byte[] clear = Encoding.UTF8.GetBytes(Json.Write(data));
-            try { SafeFiles.AtomicWrite(FilePath, ProtectedData.Protect(clear, Entropy, DataProtectionScope.CurrentUser)); }
-            finally { Array.Clear(clear, 0, clear.Length); }
         }
         public Settings LoadSettings()
         {

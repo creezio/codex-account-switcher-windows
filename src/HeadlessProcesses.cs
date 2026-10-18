@@ -36,7 +36,7 @@ namespace Creezio.Switcher
         }
         internal static ResourceRoot[] Controllers(RelayStore store)
         {
-            return new[]{"worker.dpapi","cloud-worker-v1.dpapi"}.Select(name=>store.ReadRecord<RelayWorkerState>(name)).Where(state=>{
+            return new[]{"worker.dpapi","cloud-worker-v1.dpapi",CloudQueueWorker.Record,"chat-watch-worker-v1.dpapi"}.Select(name=>store.ReadRecord<RelayWorkerState>(name)).Where(state=>{
                 try{return DesktopRuntime.SameProcess(state.Pid,state.Started);}catch(System.ComponentModel.Win32Exception){return false;}
             }).Select(state=>new ResourceRoot{Pid=state.Pid,Started=state.Started}).GroupBy(root=>root.Pid+":"+root.Started).Select(group=>group.First()).ToArray();
         }

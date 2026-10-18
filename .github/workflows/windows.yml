@@ -8,6 +8,8 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.release_identity.outputs.version }}
     env:
       DELIVERY_DIRECTORY: outputs/portable
     steps:
@@ -45,12 +47,24 @@ jobs:
       - name: Package
         shell: powershell
         run: ./scripts/package-desktop.ps1 -SkipBuild -BinaryDirectory $env:DELIVERY_DIRECTORY
+      - name: Verify updater archive and every declared file
+        shell: powershell
+        run: ./scripts/test-update-package.ps1 -BinaryDirectory $env:DELIVERY_DIRECTORY
+      - name: Verify tag matches the packaged binary version
+        id: release_identity
+        shell: powershell
+        run: |
+          $manifest=Get-Content -LiteralPath (Join-Path $env:DELIVERY_DIRECTORY 'switcher-update.json') -Raw | ConvertFrom-Json
+          $version=[string]$manifest.version
+          if($env:GITHUB_REF.StartsWith('refs/tags/') -and $env:GITHUB_REF_NAME -cne ('v'+$version)){throw 'The tag does not match the verified binary version.'}
+          [IO.File]::AppendAllText($env:GITHUB_OUTPUT,"version=$version`n",[Text.UTF8Encoding]::new($false))
       - uses: actions/upload-artifact@v4
         with:
           name: codex-account-switcher-windows
           path: |
             outputs/*.zip
             outputs/SHA256SUMS-*.txt
+            outputs/portable/switcher-update.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -60,3 +74,46 @@ jobs:
             work/desktop-validation/results.txt
             work/desktop-validation/data/compatibility-ok.txt
             work/viewer-validation/*.png
+  release:
+    needs: windows
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'creezio/codex-account-switcher-windows'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: codex-account-switcher-windows
+          path: release-assets
+      - name: Publish only the tested immutable version and verified GitHub assets
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_VERSION: ${{ needs.windows.outputs.version }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $version=$env:EXPECTED_VERSION
+          $tag=$env:GITHUB_REF_NAME
+          $manifest=Get-Content -LiteralPath 'release-assets/portable/switcher-update.json' -Raw | ConvertFrom-Json
+          if($tag -cne ('v'+$version) -or $manifest.version -cne $version){throw 'Release tag, manifest and tested binary version differ.'}
+          $zip=Join-Path (Get-Location).Path ('release-assets/CodexAccountSwitcher-'+$version+'-windows-x64.zip')
+          $sums=Join-Path (Get-Location).Path ('release-assets/SHA256SUMS-'+$version+'.txt')
+          $zipHash=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sumsHash=(Get-FileHash -LiteralPath $sums -Algorithm SHA256).Hash.ToLowerInvariant()
+          if([IO.File]::ReadAllText($sums).Trim() -cne ($zipHash+'  '+[IO.Path]::GetFileName($zip))){throw 'Release checksum differs from the tested archive.'}
+          $arguments=@('release','create',$tag,$zip,$sums,'--repo',$env:GITHUB_REPOSITORY,'--verify-tag','--draft','--title',('Switcher '+$version),'--generate-notes')
+          if((($version -split '\+',2)[0]).Contains('-')){$arguments+='--prerelease'}
+          & gh @arguments
+          if($LASTEXITCODE -ne 0){throw 'Draft creation failed. An existing published version is never overwritten.'}
+          $verified=$false
+          for($attempt=0;$attempt -lt 8;$attempt++){
+            $release=(& gh api ('repos/'+$env:GITHUB_REPOSITORY+'/releases/tags/'+$tag)) | ConvertFrom-Json
+            if($LASTEXITCODE -ne 0){throw 'Could not verify uploaded release assets.'}
+            $zipAsset=@($release.assets | Where-Object {$_.name -ceq [IO.Path]::GetFileName($zip)})
+            $sumsAsset=@($release.assets | Where-Object {$_.name -ceq [IO.Path]::GetFileName($sums)})
+            if($release.draft -eq $true -and $zipAsset.Count -eq 1 -and $sumsAsset.Count -eq 1 -and $zipAsset[0].digest -ceq ('sha256:'+$zipHash) -and $sumsAsset[0].digest -ceq ('sha256:'+$sumsHash) -and $zipAsset[0].size -eq (Get-Item -LiteralPath $zip).Length){$verified=$true;break}
+            Start-Sleep -Seconds 2
+          }
+          if(-not $verified){throw 'GitHub asset digests did not match. The release remains a draft.'}
+          & gh release edit $tag --repo $env:GITHUB_REPOSITORY --draft=false
+          if($LASTEXITCODE -ne 0){throw 'The validated draft could not be published.'}

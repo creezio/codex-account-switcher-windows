@@ -9,12 +9,17 @@ namespace Creezio.Switcher
     internal static class RelayCli
     {
         private static int Main(string[] args){
+            if(args.Length==2&&args[0]=="--webhook-worker")return WebhookWorker.Run(args[1]);
+            if(args.Length==2&&args[0]=="--conversation-schedule-worker")return PortalScheduleWorker.Run(args[1]);
+            if(args.Length==2&&args[0]=="--chat-watch-worker")return ChatWatchWorker.Run(args[1]);
+            if(args.Length==2&&args[0]=="--cloud-queue-worker")return CloudQueueWorker.Run(args[1]);
             if(args.Length==2&&args[0]=="--cloud-worker")return CloudJobWorker.Run(args[1]);
             if(args.Length==2&&args[0]=="--worker")return RelayWorker.Run(args[1]);
             if(args.Length==2&&args[0]=="--usage-worker")return UsageCoordinator.Run(args[1]);
             if(args.Length==2&&args[0]=="--remote-worker")return RemoteGateway.Run(args[1]);
             if(args.Length==3&&args[0]=="--assistance-hook")return AssistanceHooks.Run(args[1],args[2]);
-            if(args.Length==3&&args[0]=="--mcp")return RelayMcp.Run(args[1],args[2]);
+            if(args.Length==3&&args[0]=="--relay-mcp-bootstrap")return RelayMcpBootstrap.Run(args[1],args[2]);
+            if(args.Length==3&&args[0]=="--mcp"){RelayMcpBootstrap.ServerProcess=true;return RelayMcp.Run(args[1],args[2]);}
             return RelayCommand.Run();
         }
     }

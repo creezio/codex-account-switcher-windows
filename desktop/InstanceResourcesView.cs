@@ -88,6 +88,14 @@ namespace Creezio.Switcher.Desktop
             return legacyGrants.Any(g=>g.Sources.Any(s=>RelayStore.SamePath(s.Key,clientHomes[client])&&s.Value==clients[client].AccountKey)&&g.Tools.Any(t=>InstanceResources.PluginKey(t)==r.Plugin)&&(String.IsNullOrEmpty(g.ResourceField)||(g.ResourceField==r.Field&&(g.ResourceValue==r.Value||(g.ResourceValues?.Contains(r.Value)??false)))));
         }
         private bool Selectable(InstanceResource r)=>client!=null&&!busy&&!r.NativeEditor&&InstanceResources.Fresh(inventory)&&!Legacy(r);
+        internal static string[] PermissionChoices(InstanceResource resource)
+        {return !resource.CanModify?new[]{"Lecture"}:resource.Kind=="Site"&&resource.Field=="project_id"?new[]{"Lecture","Lecture et modification","Lecture, modification et publication"}:new[]{"Lecture","Lecture et modification"};}
+        internal static int PermissionIndex(InstanceResource resource,string mode)
+        {return mode=="publish"&&PermissionChoices(resource).Length==3?2:mode=="edit"&&resource.CanModify?1:0;}
+        internal static string PermissionMode(InstanceResource resource,int index)
+        {return index==2&&PermissionChoices(resource).Length==3?"publish":index==1&&resource.CanModify?"edit":"read";}
+        internal static string SitePermissionDescription(int index)
+        {return index==2?"Sauvegarder et publier les versions de ce Site. Aucun transfert d’archive locale ; repli distant uniquement si le packaging local ne peut pas aboutir.":"Modification des métadonnées uniquement. Le droit de publication doit être choisi et enregistré explicitement pour publier une version de ce Site.";}
         private void UpdateSummary()
         {
             int added=draft.Keys.Except(initial.Keys).Count(),removed=initial.Keys.Except(draft.Keys).Count(),changed=draft.Count(p=>initial.ContainsKey(p.Key)&&initial[p.Key]!=p.Value);
@@ -107,13 +115,13 @@ namespace Creezio.Switcher.Desktop
                 System.Windows.Automation.AutomationProperties.SetName(check,"Partager "+resource.Title);DockPanel.SetDock(check,Dock.Left);heading.Children.Add(check);
                 var text=new StackPanel();text.Children.Add(Ui.Text(resource.Title,16));string pluginName=inventory.Plugins.FirstOrDefault(p=>p.Key==resource.Plugin)?.Name??resource.Kind;
                 text.Children.Add(Ui.Text(resource.Kind+" · "+pluginName+" · "+resource.Access,12,true));heading.Children.Add(text);
-                var choices=new ComboBox{ItemsSource=resource.CanModify?new[]{"Lecture","Lecture et modification"}:new[]{"Lecture"},SelectedIndex=draft.TryGetValue(resource.Key,out var mode)&&mode=="edit"?1:0,IsEnabled=check.IsEnabled&&check.IsChecked==true,MaxWidth=250,HorizontalAlignment=HorizontalAlignment.Left};
-                System.Windows.Automation.AutomationProperties.SetName(choices,"Droits pour "+resource.Title);choices.Width=resource.CanModify?184:90;DockPanel.SetDock(choices,Dock.Right);heading.Children.Insert(1,choices);
-                if(resource.Kind=="Site")card.Children.Add(Ui.Text("Modification des métadonnées uniquement. La publication d’une nouvelle version reste indisponible.",12,true));
+                var permissionChoices=PermissionChoices(resource);var choices=new ComboBox{ItemsSource=permissionChoices,SelectedIndex=PermissionIndex(resource,draft.TryGetValue(resource.Key,out var mode)?mode:"read"),IsEnabled=check.IsEnabled&&check.IsChecked==true,MaxWidth=320,HorizontalAlignment=HorizontalAlignment.Left};
+                System.Windows.Automation.AutomationProperties.SetName(choices,"Droits pour "+resource.Title);choices.Width=permissionChoices.Length==3?310:resource.CanModify?184:90;DockPanel.SetDock(choices,Dock.Right);heading.Children.Insert(1,choices);
+                TextBlock siteHint=null;if(resource.Kind=="Site"){siteHint=Ui.Text(SitePermissionDescription(choices.SelectedIndex),12,true);card.Children.Add(siteHint);}
                 if(resource.NativeEditor)card.Children.Add(Ui.Text("Éditeur natif requis · cette ressource n’est pas partageable par le tunnel actuel.",12,true));
                 if(legacy){card.Children.Add(Ui.Text("Accès géré par une règle avancée existante.",12,true));card.Children.Add(Ui.Button("Voir la règle avancée",()=>shell.Navigate("Outils partagés")));}
-                check.Checked+=delegate{draft[resource.Key]=choices.SelectedIndex==1?"edit":"read";choices.IsEnabled=true;UpdateSummary();};check.Unchecked+=delegate{draft.Remove(resource.Key);choices.IsEnabled=false;UpdateSummary();};
-                choices.SelectionChanged+=delegate{if(check.IsChecked==true){draft[resource.Key]=choices.SelectedIndex==1?"edit":"read";UpdateSummary();}};
+                check.Checked+=delegate{draft[resource.Key]=PermissionMode(resource,choices.SelectedIndex);choices.IsEnabled=true;UpdateSummary();};check.Unchecked+=delegate{draft.Remove(resource.Key);choices.IsEnabled=false;UpdateSummary();};
+                choices.SelectionChanged+=delegate{if(siteHint!=null)siteHint.Text=SitePermissionDescription(choices.SelectedIndex);if(check.IsChecked==true){draft[resource.Key]=PermissionMode(resource,choices.SelectedIndex);UpdateSummary();}};
                 var resourceCard=Ui.Card(card);resourceCard.Padding=new Thickness(12);resourceCard.Margin=new Thickness(0,0,0,8);rows.Children.Add(resourceCard);
             }
             bool actionsOnly=inventory.Plugins.Any(p=>p.Key==(string)plugin.SelectedValue&&p.State=="unsupported");

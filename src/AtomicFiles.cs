@@ -11,6 +11,35 @@ namespace Creezio.Switcher
 {
     internal static class AtomicFiles
     {
+        internal static Stream OpenRead(string path,bool allowMissing,bool retryMissing=false,Func<string,Stream> open=null,Action<int> delay=null)
+        {
+            bool observed=false;
+            for(int attempt=0;;attempt++){
+                // File.Exists can transiently report false during File.Replace.
+                // Recheck links on every retry, before opening the current file.
+                try{
+                    SafeFiles.RejectLinks(path);
+                    return open==null?new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete):open(path);
+                }
+                catch(IOException error){
+                    uint status=unchecked((uint)error.HResult);int code=(int)(status&65535);bool win32=(status&0xffff0000)==0x80070000,missing=win32&&(code==2||code==3);
+                    if(missing&&allowMissing&&!retryMissing)return null;
+                    if(win32&&(code==32||code==33||code==1175))observed=true;
+                    if(missing&&allowMissing&&retryMissing){
+                        try{File.GetAttributes(path);observed=true;}catch(FileNotFoundException){}catch(DirectoryNotFoundException){}
+                    }
+                    if(attempt>=5||!win32||(code!=2&&code!=3&&code!=32&&code!=33&&code!=1175)){
+                        if(missing&&allowMissing&&!observed){
+                            // An active atomic write is not evidence that this
+                            // is a new optional file which has never existed.
+                            try{File.GetAttributes(path+".switcher-tmp");}catch(FileNotFoundException){return null;}catch(DirectoryNotFoundException){return null;}
+                        }
+                        throw;
+                    }
+                    (delay??new Action<int>(Thread.Sleep))(20*(attempt+1));
+                }
+            }
+        }
         private static readonly Regex Owner = new Regex("^([0-9a-f]{1,8})-([0-9a-f]{16})-([0-9a-f]{8})$", RegexOptions.CultureInvariant);
         private static string Prefix(string path)
         {using(var sha=SHA256.Create())return ".swt-"+BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(Path.GetFullPath(path).ToUpperInvariant())),0,4).Replace("-","").ToLowerInvariant()+"-";}

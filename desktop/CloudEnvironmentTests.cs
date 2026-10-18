@@ -103,11 +103,13 @@ namespace Creezio.Switcher.Desktop
 
                 int created = 0;
                 var operationIds = new List<string>();
+                var previousCloudPreferences = context.Store.ReadRecord<CloudEnvironmentPreferences>(CloudEnvironmentPreferences.Record);
+                context.Store.WriteRecord(CloudEnvironmentPreferences.Record, new CloudEnvironmentPreferences { NewEnvironmentNetwork = "unrestricted" });
                 cloud.CreateFixture = (request, id, token) =>
                 {
                     created++;
                     operationIds.Add(id);
-                    assert(request.Name == "Création contrôlée" && request.ShareSettings == "private" && !request.StartOnboarding && request.NetworkPolicy.Type == "disabled" && request.Repositories.Single().RepositoryId == "github/123", "formulaire Cloud n’élargit ni partage ni réseau et ne lance aucun agent");
+                    assert(request.Name == "Création contrôlée" && request.ShareSettings == "private" && !request.StartOnboarding && request.NetworkPolicy.Type == "unrestricted" && request.Repositories.Single().RepositoryId == "github/123", "formulaire Cloud transmet le réseau préféré par l’utilisateur en conservant le partage privé sans lancer d’agent");
                     names[added] = request.Name;
                     return Task.FromResult(new CloudConfiguration { Id = added, Name = request.Name });
                 };
@@ -153,11 +155,12 @@ namespace Creezio.Switcher.Desktop
                 await EnvironmentDialog("Nouvel environnement",async form=>
                 {
                     await PrepareCreation(form,"Création contrôlée");
-                    assert(form.Network.SelectedIndex==0&&!cloud.CanLeave()&&!Button("Actualiser le Cloud").IsEnabled,"assistant conserve le réseau désactivé par défaut et protège le panneau pendant la configuration");
+                    assert(form.Network.SelectedIndex==2&&form.Review.Text.Contains("Internet : toutes les adresses")&&!cloud.CanLeave()&&!Button("Actualiser le Cloud").IsEnabled,"assistant relit la préférence locale toutes destinations et la montre dans le résumé en protégeant le panneau");
                     Next(form);await Until(()=>form.Saved);
                 });
                 await Until(() => cloud.EnvironmentChoice.Items.Count == 3 && Status().Text.Contains("créé et relu"));
                 assert(created == 1 && operationIds.Single().Length == 32, "validation du formulaire envoie une seule intention identifiée avant relecture");
+                context.Store.WriteRecord(CloudEnvironmentPreferences.Record, previousCloudPreferences);
 
                 int renamed = 0;
                 cloud.RenameFixture = (id, name, operationId, token) =>

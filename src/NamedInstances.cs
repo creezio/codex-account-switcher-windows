@@ -31,7 +31,7 @@ namespace Creezio.Switcher
                 string issue=null;try{VerifyAccount(a,i);}catch(Exception e){issue=Program.SafeError(e);}
                 var state=a.Instances.Runtime.Probe(i);bool desktopOpen=state.Running;
                 bool headless=issue==null&&i.HeadlessEnabled&&!state.Running&&state.Phase!="unknown"&&File.Exists(a.Settings.CodexExecutable);
-                return (object)new{id=i.Id,name=i.Name,account=a.Data.Profiles.Where(p=>p.Key==i.AccountKey).Select(p=>p.Label).FirstOrDefault(),online=desktopOpen||headless,desktopOpen=desktopOpen,headlessAvailable=headless,executionMode=desktopOpen?"desktop":headless?"headless":"unavailable",issue=issue,integration=RelayIntegration.Status(store,a.Instances.Home(i)).Status};
+                return (object)new{id=i.Id,name=i.Name,accountKey=i.AccountKey,account=a.Data.Profiles.Where(p=>p.Key==i.AccountKey).Select(p=>p.Label).FirstOrDefault(),online=desktopOpen||headless,desktopOpen=desktopOpen,headlessAvailable=headless,executionMode=desktopOpen?"desktop":headless?"headless":"unavailable",issue=issue,integration=RelayIntegration.Status(store,a.Instances.Home(i)).Status};
             }).ToArray();
         }
         internal static async Task<RelayChannel> BindSource(RelayStore store,CancellationToken token)
@@ -62,19 +62,46 @@ namespace Creezio.Switcher
             }
         }
         internal static bool AppPipeName(string value)
-        {return System.Text.RegularExpressions.Regex.IsMatch(value??"",@"^\\\\\.\\pipe\\codex-browser-use-[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$");}
-        private static bool CachedDesktopAlive(RelayChannel channel)
-        {try{return DesktopRuntime.SameProcess(channel.ServerPid,channel.ServerStartTicks);}catch(System.ComponentModel.Win32Exception){return false;}}
-        private static string PrimaryPipe(InstanceState state)
+        {return System.Text.RegularExpressions.Regex.IsMatch(value??"",@"\A\\\\\.\\pipe\\codex-(?:browser-use|app-tools)-[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}\z");}
+        internal static string DiscoverPipe(InstanceState state,System.Collections.Generic.IEnumerable<string> paths,Func<string,int,long,bool> verify,CancellationToken token)
         {
-            if(!state.Running||state.DesktopPid<=0||state.DesktopStartTicks<=0||state.Phase=="unknown")return null;
-            foreach(string path in Directory.GetFiles(@"\\.\pipe\").Where(AppPipeName).Take(64)){
-                // Identity is checked by Windows before any RPC is sent. Managed
-                // desktops have already been excluded by LocalState.
-                try{using(var client=new AppToolsClient(path,state.DesktopPid,state.DesktopStartTicks))return path;}
+            token.ThrowIfCancellationRequested();
+            if(state==null||!state.Running||state.DesktopPid<=0||state.DesktopStartTicks<=0||state.Phase=="unknown")return null;
+            foreach(string path in paths.Where(AppPipeName).OrderBy(p=>p.IndexOf("codex-app-tools-",StringComparison.Ordinal)>=0?0:1).Take(64)){
+                token.ThrowIfCancellationRequested();
+                // The native verifier checks the Windows pipe owner PID and start
+                // time before any RPC; the same proof is required for every instance.
+                try{if(verify(path,state.DesktopPid,state.DesktopStartTicks))return path;}
                 catch(IOException){}catch(InvalidOperationException){}catch(TimeoutException){}
             }
             return null;
+        }
+        private static string DesktopPipe(InstanceState state,CancellationToken token)
+        {
+            return DiscoverPipe(state,Directory.EnumerateFiles(@"\\.\pipe\"),(path,pid,ticks)=>{
+                using(var client=new AppToolsClient(path,pid,ticks))return true;
+            },token);
+        }
+        // Discover an existing desktop endpoint only. No channel, account,
+        // permission, process or thread is created or changed by this lookup.
+        internal static AppToolsClient OpenDesktop(RelayStore store,AccountService accounts,DesktopInstance instance,CancellationToken token,out string pipe)
+        {
+            pipe=null;token.ThrowIfCancellationRequested();VerifyAccount(accounts,instance);
+            if(instance.Archived)throw new InvalidOperationException("Cette instance est archivée.");
+            string home=accounts.Instances.Home(instance);var state=accounts.Instances.Runtime.Probe(instance);
+            if(!state.Running||state.Phase=="unknown"||state.DesktopPid<=0||state.DesktopStartTicks<=0)throw new InvalidOperationException("L’instance Codex n’est pas ouverte ou son identité n’est pas vérifiable. Aucun lancement effectué.");
+            var candidates=store.Channels().Where(c=>c.Enabled&&AgentProviders.Kind(c)=="codex"&&c.AccountKey==instance.AccountKey&&RelayStore.SamePath(c.Home,home)&&c.ServerPid==state.DesktopPid&&c.ServerStartTicks==state.DesktopStartTicks).Select(c=>c.PipePath);
+            if(!instance.IsLocal&&!String.IsNullOrEmpty(state.AppToolsPipe))candidates=new[]{state.AppToolsPipe}.Concat(candidates);
+            foreach(string candidate in candidates.Where(p=>!String.IsNullOrEmpty(p)).Distinct(StringComparer.OrdinalIgnoreCase)){
+                token.ThrowIfCancellationRequested();AppToolsClient client=null;
+                try{client=new AppToolsClient(candidate,state.DesktopPid,state.DesktopStartTicks);VerifyAccount(accounts,instance);token.ThrowIfCancellationRequested();pipe=candidate;return client;}
+                catch(IOException){if(client!=null)client.Dispose();}catch(InvalidOperationException){if(client!=null)client.Dispose();}catch(TimeoutException){if(client!=null)client.Dispose();}catch{if(client!=null)client.Dispose();throw;}
+            }
+            {
+                string candidate=DesktopPipe(state,token);token.ThrowIfCancellationRequested();
+                if(candidate!=null){var client=new AppToolsClient(candidate,state.DesktopPid,state.DesktopStartTicks);try{VerifyAccount(accounts,instance);token.ThrowIfCancellationRequested();pipe=candidate;return client;}catch{client.Dispose();throw;}}
+            }
+            throw new InvalidOperationException("Le canal de cette instance Codex ouverte n’est pas encore disponible. Aucun autre moteur n’a été démarré.");
         }
         internal static async Task<RelayChannel> Connect(RelayStore store,AccountService a,DesktopInstance instance,string workspace,CancellationToken token,string preferredThread=null,bool allowHeadless=true)
         {
@@ -89,15 +116,8 @@ namespace Creezio.Switcher
                 var channel=new RelayChannel{Id=headlessId,Provider="codex-headless",Name=instance.Name,Home=home,AccountKey=instance.AccountKey,Email=a.Data.Profiles.Where(p=>p.Key==instance.AccountKey).Select(p=>p.Email).FirstOrDefault(),Executable=a.Settings.CodexExecutable,HeadlessSandbox=instance.HeadlessSandbox,HeadlessApprovalPolicy=instance.HeadlessApprovalPolicy,Workspace=workspace,Enabled=true,InstanceId=instance.Id,RequireFullAccess=previous!=null?previous.RequireFullAccess:old!=null&&old.RequireFullAccess,ConnectedUtc=DateTime.UtcNow.ToString("o")};
                 VerifyAccount(a,instance);store.Register(channel);HeadlessRelayTransport.Validate(store,channel);return channel;
             }
-            string pipe=null;int pid=0;long ticks=0;
-            if(!instance.IsLocal&&state.Running){pipe=state.AppToolsPipe;pid=state.DesktopPid;ticks=state.DesktopStartTicks;}
-            if(String.IsNullOrEmpty(pipe)&&state.Running){
-                var live=channels.FirstOrDefault(CachedDesktopAlive);
-                if(live!=null){pipe=live.PipePath;pid=live.ServerPid;ticks=live.ServerStartTicks;}
-            }
-            if(String.IsNullOrEmpty(pipe)&&instance.IsLocal){pipe=PrimaryPipe(state);pid=state.DesktopPid;ticks=state.DesktopStartTicks;}
-            if(String.IsNullOrEmpty(pipe))throw new InvalidOperationException("Ouvrez « "+instance.Name+" » dans le switcher. Pour la session habituelle, utilisez une fois le skill de délégation dans un chat de cette instance.");
-            using(var client=new AppToolsClient(pipe,pid,ticks)){
+            string pipe;
+            using(var client=OpenDesktop(store,a,instance,token,out pipe)){
                 var anchors=new[]{preferredThread}.Concat(Anchors(home)).Concat(channels.Where(c=>c.Enabled).Select(c=>c.AnchorThreadId)).Where(t=>!String.IsNullOrEmpty(t)).Distinct().Take(12);
                 string anchor=null;
                 foreach(string candidate in anchors){token.ThrowIfCancellationRequested();try{var snapshot=await client.Call(candidate,"read_thread",new{threadId=candidate,turnLimit=1,includeOutputs=false,maxOutputCharsPerItem=1000},token);DirectMessages.RequireThread(snapshot,candidate);anchor=candidate;break;}catch(InvalidOperationException){}}

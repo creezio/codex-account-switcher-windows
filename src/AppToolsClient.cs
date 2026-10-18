@@ -16,6 +16,7 @@ namespace Creezio.Switcher
     // Version-sensitive desktop adapter. Never fall back to UI clicks or an unauthenticated remote listener.
     internal sealed class AppToolsClient : IDisposable
     {
+        internal const int ThreadListLimit=50;
         [DllImport("kernel32.dll",SetLastError=true)]
         private static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe,out uint processId);
         private readonly NamedPipeClientStream pipe;
