@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,10 +11,18 @@ using Creezio.Switcher;
 
 internal static class PortalPluginTests
 {
+    [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] private static extern bool CreateSymbolicLink(string link,string target,uint flags);
     private static void Assert(bool value,string message){if(!value)throw new Exception(message);}
     private static object Normal(object value){return Json.Read<object>(Json.Write(value));}
     private static string Value(object value,string key){return Json.Str(Json.Get(Normal(value),key));}
     private static void Reject(Action call){bool failed=false;try{call();}catch(WebhookException){failed=true;}Assert(failed,"Expected scoped refusal");}
+    private static string InstalledBundle(string home)
+    {
+        string plugin=Path.Combine(home,"plugins","cache","openai-curated-remote","gmail"),release=Path.Combine(plugin,"1.0");Directory.CreateDirectory(Path.Combine(release,".codex-plugin"));
+        File.WriteAllText(Path.Combine(plugin,".codex-remote-plugin-install.json"),Json.Write(new{schema_version=1,remote_plugin_id="plugin_fixture_gmail"}));
+        File.WriteAllText(Path.Combine(release,".codex-plugin","plugin.json"),Json.Write(new{name="gmail",version="1.0",apps="./.app.json",@interface=new{displayName="Gmail"}}));
+        File.WriteAllText(Path.Combine(release,".app.json"),Json.Write(new{apps=new{gmail=new{id="connector_fixture_exact",required=true,enabled=true,callable=true,installUrl="https://chatgpt.com/apps/fabricated/connector_fixture_exact"}}}));return release;
+    }
     private sealed class Lease:IDisposable{public void Dispose(){}}
     private sealed class HistoryReader:IDisposable
     {
@@ -190,6 +199,45 @@ internal static class PortalPluginTests
                     object metadata=new{schema_version=1,fetched_at=(variant=="expired"?DateTime.UtcNow.AddHours(-2):variant=="future"?DateTime.UtcNow.AddMinutes(3):DateTime.UtcNow).ToString("o"),plugins=new[]{new{id=variant=="source"?"plugin_other":"plugin_fixture_gmail",scope=variant=="scope"?"PRIVATE":"GLOBAL",canonical_app_id="connector_fixture_exact",release=new{version=variant=="version"?"2.0":"1.0",display_name="Official Gmail with spaces",app_ids=new[]{"connector_fixture_exact"},@interface=new{short_description="A description with \"quotes\" and spaces"}}}}};SafeFiles.AtomicWrite(file,System.Text.Encoding.UTF8.GetBytes(Json.Write(metadata)));PortalPluginCli.ApplyCachedMetadata(home,raw,DateTime.UtcNow);
                     var runtime=new PortalPluginRuntime{Apps=new List<PortalPluginApp>{new PortalPluginApp{Id="connector_fixture_exact",Name="Same name is irrelevant",Enabled=true,Callable=true}}};var choice=PortalPluginService.Choices(raw,runtime,"fictional",new List<string>()).Single();Assert(choice.Callable==(variant=="valid"),"Stale private substituted source or version borrowed connected app identity");if(variant=="valid")Assert(choice.Name=="Official Gmail with spaces"&&choice.Description.Contains("\"quotes\" and spaces"),"Streaming metadata lost JSON text or whitespace");
                 }
+            }
+        });
+        check("installed release keeps its exact app association after remote cache expiry without supplying connection state or links",()=>{
+            using(var f=new Fixture(sandbox)){
+                string home=Path.Combine(f.Root,"h");InstalledBundle(home);string cache=Path.Combine(home,"cache","remote_plugin_catalog");Directory.CreateDirectory(cache);
+                File.WriteAllText(Path.Combine(cache,"0123456789abcdef.json"),Json.Write(new{schema_version=1,fetched_at=DateTime.UtcNow.AddHours(-2).ToString("o"),plugins=new[]{new{id="plugin_fixture_gmail",scope="GLOBAL",canonical_app_id="connector_fixture_exact",release=new{version="1.0",display_name="Gmail",app_ids=new[]{"connector_fixture_exact"}}}}}));
+                f.Dependencies.Catalog=(target,token)=>{var raw=Normal(new{installed=new[]{new{pluginId="gmail@openai-curated-remote",name="gmail",marketplaceName="openai-curated-remote",version="1.0",installed=true,enabled=true,source=new{source="remote",id="plugin_fixture_gmail"}}},available=new object[0]});PortalPluginCli.ApplyCachedMetadata(home,raw,DateTime.UtcNow);Assert(!RelayEngine.Rows(Json.Get(RelayEngine.Rows(Json.Get(raw,"installed")).Single(),"__creezioAppIds")).Any(),"Expired directory cache supplied an association");PortalPluginCli.ApplyInstalledMetadata(home,raw);return raw;};
+                f.Dependencies.Runtime=(target,token)=>new PortalPluginRuntime{Apps=f.Connected?new List<PortalPluginApp>{new PortalPluginApp{Id="connector_fixture_exact",Enabled=true,Callable=true}}:new List<PortalPluginApp>()};
+                int metadataReads=0;f.Dependencies.Metadata=(target,ids,token)=>{metadataReads++;Assert(ids.SequenceEqual(new[]{"connector_fixture_exact"}),"Bundle failed to identify the exact app for official metadata");return new[]{new PortalPluginApp{Id="connector_fixture_exact",Name="Official Gmail",InstallUrl="https://chatgpt.com/apps/gmail/connector_fixture_exact"}};};
+                var row=RelayEngine.Rows(Json.Get(f.Catalog(),"plugins")).Single();Assert(Object.Equals(Json.Get(row,"needsAuth"),true)&&!Object.Equals(Json.Get(row,"callable"),true)&&Value(row,"installUrl")=="https://chatgpt.com/apps/gmail/connector_fixture_exact"&&!Json.Write(row).Contains("fabricated"),"Installed bundle invented connection state or substituted an unofficial URL");
+                f.Connected=true;row=RelayEngine.Rows(Json.Get(f.Catalog(),"plugins")).Single();Assert(Object.Equals(Json.Get(row,"callable"),true)&&!Object.Equals(Json.Get(row,"needsAuth"),true)&&metadataReads==2,"Current native connection was lost when only the remote directory expired");
+                f.GuiOpen=true;row=RelayEngine.Rows(Json.Get(f.Catalog(),"plugins")).Single();Assert(!Object.Equals(Json.Get(row,"callable"),true)&&metadataReads==2,"An open GUI triggered metadata RPC or inferred a connected app from the bundle");
+            }
+        });
+        check("installed app metadata refuses mismatched releases sources names traversal and oversized files",()=>{
+            foreach(string variant in new[]{"remote","schema","version","name","source","uninstalled","row-name","row-version","row-market","traversal","absolute","bad-id","oversized","malformed"})using(var f=new Fixture(sandbox)){
+                string home=Path.Combine(f.Root,"h"),release=InstalledBundle(home),manifest=Path.Combine(release,".codex-plugin","plugin.json");
+                if(variant=="remote")File.WriteAllText(Path.Combine(Path.GetDirectoryName(release),".codex-remote-plugin-install.json"),Json.Write(new{schema_version=1,remote_plugin_id="plugin_other"}));
+                if(variant=="schema")File.WriteAllText(Path.Combine(Path.GetDirectoryName(release),".codex-remote-plugin-install.json"),Json.Write(new{schema_version="1",remote_plugin_id="plugin_fixture_gmail"}));
+                if(variant=="version"||variant=="name"||variant=="traversal"||variant=="absolute"){
+                    string outside=Path.Combine(f.Root,"outside.json");File.Copy(Path.Combine(release,".app.json"),outside);
+                    File.WriteAllText(manifest,Json.Write(new{name=variant=="name"?"other":"gmail",version=variant=="version"?"2.0":"1.0",apps=variant=="traversal"?"../outside.json":variant=="absolute"?outside:"./.app.json"}));
+                }
+                if(variant=="bad-id")File.WriteAllText(Path.Combine(release,".app.json"),Json.Write(new{apps=new{gmail=new{id="connector_fixture_exact"},other=new{id="not-an-app-id"}}}));
+                if(variant=="oversized")File.WriteAllText(Path.Combine(release,".app.json"),new string('x',65537));
+                if(variant=="malformed")File.WriteAllText(Path.Combine(release,".app.json"),"{not-json");
+                var raw=Normal(new{installed=new[]{new{pluginId="gmail@openai-curated-remote",name=variant=="row-name"?"other":"gmail",marketplaceName=variant=="row-market"?"../outside":"openai-curated-remote",version=variant=="row-version"?"../outside":"1.0",installed=variant!="uninstalled",enabled=true,source=new{source=variant=="source"?"local":"remote",id="plugin_fixture_gmail"}}},available=new object[0]});
+                PortalPluginCli.ApplyInstalledMetadata(home,raw);Assert(!RelayEngine.Rows(Json.Get(RelayEngine.Rows(Json.Get(raw,"installed")).Single(),"__creezioAppIds")).Any(),"Installed metadata escaped its identity or filesystem limits: "+variant);
+            }
+        });
+        check("installed app metadata refuses a symlink while keeping an existing fresh association authoritative",()=>{
+            using(var f=new Fixture(sandbox)){
+                string home=Path.Combine(f.Root,"h"),release=InstalledBundle(home),apps=Path.Combine(release,".app.json"),outside=Path.Combine(f.Root,"outside-apps.json");File.Copy(apps,outside);File.Delete(apps);
+                bool created=CreateSymbolicLink(apps,outside,2);if(!created&&Marshal.GetLastWin32Error()==87)created=CreateSymbolicLink(apps,outside,0);Assert(created,"Installed metadata symlink fixture unavailable");
+                try{
+                    Func<object> raw=()=>Normal(new{installed=new[]{new{pluginId="gmail@openai-curated-remote",name="gmail",marketplaceName="openai-curated-remote",version="1.0",installed=true,enabled=true,source=new{source="remote",id="plugin_fixture_gmail"}}},available=new object[0]});
+                    var catalog=raw();PortalPluginCli.ApplyInstalledMetadata(home,catalog);var row=RelayEngine.Rows(Json.Get(catalog,"installed")).Single();Assert(!RelayEngine.Rows(Json.Get(row,"__creezioAppIds")).Any(),"Installed app metadata followed an external symlink");
+                    ((Dictionary<string,object>)row)["__creezioAppIds"]=new[]{"connector_fresh_exact"};PortalPluginCli.ApplyInstalledMetadata(home,catalog);Assert(RelayEngine.Rows(Json.Get(row,"__creezioAppIds")).Select(Json.Str).SequenceEqual(new[]{"connector_fresh_exact"}),"Installed metadata replaced a fresh exact native association");
+                }finally{File.Delete(apps);}
             }
         });
         check("plugin CLI add without native appsNeedingAuth still gets an official link and persists exact association",()=>{

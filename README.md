@@ -3,7 +3,7 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.29.0-beta.5 — Ajout de plugins depuis Switcher Live avec suivi conservé après reconnexion et protection du profil Codex ouvert.** Windows 10/11 x64, interface en
+**Version 0.29.0-beta.6 — Liens de connexion des plugins installés conservés après expiration du cache du catalogue.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 Depuis le Site, un administrateur autorisé peut choisir un compte enregistré ou connecter un nouveau compte avec le lien et le code officiels OpenAI. Le compte réellement connecté est affiché avant confirmation ; le Switcher prépare ensuite son instance, son relais et ses skills sans ouvrir de fenêtre Codex. Les identifiants restent sur le PC. L’administration utilise une clé serveur distincte des clés de messages et une liste locale d’administrateurs. Voir [la configuration et le parcours](docs/WEBHOOKS.md#administration-distante-des-comptes-et-instances).

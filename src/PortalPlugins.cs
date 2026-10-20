@@ -148,7 +148,7 @@ namespace Creezio.Switcher
             }
         }
         internal static object Catalog(PortalPluginTarget target,CancellationToken token)
-        {var catalog=Run(target,null,token);ApplyCachedMetadata(target.Home,catalog,DateTime.UtcNow);return catalog;}
+        {var catalog=Run(target,null,token);ApplyCachedMetadata(target.Home,catalog,DateTime.UtcNow);ApplyInstalledMetadata(target.Home,catalog);return catalog;}
         internal static object Install(PortalPluginTarget target,string selector,CancellationToken token){return Run(target,selector,token);}
         internal static IEnumerable<PortalPluginApp> Metadata(PortalPluginTarget target,string[] ids,CancellationToken token)
         {
@@ -162,6 +162,49 @@ namespace Creezio.Switcher
                     }catch(HeadlessRpcException){}catch(OperationCanceledException){if(token.IsCancellationRequested)throw;}
                 }
             }return apps;
+        }
+        // An installed release can supply its exact app IDs even when the broad
+        // remote catalog has expired. Neither these files nor the cache supplies
+        // connection state or URLs; those still require current native responses.
+        internal static void ApplyInstalledMetadata(string home,object catalog)
+        {
+            foreach(var row in RelayEngine.Rows(Json.Get(catalog,"installed"))){
+                if(!Object.Equals(Json.Get(row,"installed"),true)||Json.Str(Json.Get(Json.Get(row,"source"),"source"))!="remote"||RelayEngine.Rows(Json.Get(row,"__creezioAppIds")).Any())continue;
+                try{
+                    string name=Json.Str(Json.Get(row,"name")),market=Json.Str(Json.Get(row,"marketplaceName")),version=Json.Str(Json.Get(row,"version")),remote=Json.Str(Json.Get(Json.Get(row,"source"),"id"));
+                    if(!PortalPluginService.ValidSelector(Json.Str(Json.Get(row,"pluginId")))||Json.Str(Json.Get(row,"pluginId"))!=name+"@"+market||!InstalledComponent(name)||!InstalledComponent(market)||!InstalledComponent(version)||remote.Length==0)continue;
+                    string plugin=Path.GetFullPath(Path.Combine(home,"plugins","cache",market,name)),release=Path.Combine(plugin,version);
+                    var marker=InstalledJson(Path.Combine(plugin,".codex-remote-plugin-install.json"));
+                    if(Json.Number(Json.Get(marker,"schema_version"))!=1||Json.Str(Json.Get(marker,"remote_plugin_id"))!=remote)continue;
+                    var manifest=InstalledJson(Path.Combine(release,".codex-plugin","plugin.json"));
+                    if(Json.Str(Json.Get(manifest,"name"))!=name||Json.Str(Json.Get(manifest,"version"))!=version)continue;
+                    string relative=Json.Str(Json.Get(manifest,"apps"));if(relative.StartsWith("./",StringComparison.Ordinal))relative=relative.Substring(2);
+                    if(relative.Length==0||relative.Length>240||Path.IsPathRooted(relative)||relative.Split('/').Any(part=>part.Length==0||part=="."||part==".."||!Regex.IsMatch(part,@"\A[A-Za-z0-9_.-]{1,80}\z")||part.EndsWith(".",StringComparison.Ordinal)||Regex.IsMatch(part,@"\A(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|\z)",RegexOptions.IgnoreCase)))continue;
+                    string appPath=Path.GetFullPath(Path.Combine(release,relative.Replace('/',Path.DirectorySeparatorChar)));
+                    if(!appPath.StartsWith(release+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))continue;
+                    var apps=Json.Obj(Json.Get(InstalledJson(appPath),"apps"));if(apps.Count==0||apps.Count>20)continue;
+                    var ids=apps.Values.Select(app=>Json.Str(Json.Get(app,"id"))).ToArray();
+                    if(ids.Any(id=>!Regex.IsMatch(id,@"\A(?:connector_|asdk_app_|app_)[A-Za-z0-9_]{1,280}\z")))continue;
+                    var mutable=row as Dictionary<string,object>;if(mutable==null)continue;
+                    mutable["__creezioAppIds"]=ids.Distinct().ToArray();mutable["__creezioDisplayName"]=PortalPluginService.Clip(Json.Get(Json.Get(manifest,"interface"),"displayName"),160);
+                }catch(IOException){}catch(UnauthorizedAccessException){}catch(ArgumentException){}catch(InvalidOperationException){}
+            }
+        }
+        private static bool InstalledComponent(string value)
+        {return Regex.IsMatch(value,@"\A[A-Za-z0-9][A-Za-z0-9._+-]{0,179}\z")&&!value.EndsWith(".",StringComparison.Ordinal)&&!Regex.IsMatch(value,@"\A(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|\z)",RegexOptions.IgnoreCase);}
+        private static object InstalledJson(string path)
+        {
+            SafeFiles.RejectLinks(path);
+            using(var stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read|FileShare.Delete)){
+                if(stream.Length==0||stream.Length>65536)throw new IOException("plugin-installed-metadata-limit");
+                var bytes=new byte[(int)stream.Length];int offset=0;while(offset<bytes.Length){int read=stream.Read(bytes,offset,bytes.Length-offset);if(read==0)throw new IOException("plugin-installed-metadata-incomplete");offset+=read;}
+                SafeFiles.RejectLinks(path);
+#if NETCOREAPP
+                try{return Json.Read<object>(new UTF8Encoding(false,true).GetString(bytes));}catch(System.Text.Json.JsonException){throw new IOException("plugin-installed-metadata-json");}
+#else
+                return Json.Read<object>(new UTF8Encoding(false,true).GetString(bytes));
+#endif
+            }
         }
         // This optional cache supplies the official source-to-app association
         // missing from CLI list. It never supplies connection state or URLs.
