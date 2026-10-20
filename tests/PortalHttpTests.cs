@@ -36,6 +36,30 @@ internal static class PortalHttpTests
         check("portal HTTP authenticates all new entry points before body",()=>{
             var f=new Fixture(root,"body-auth");foreach(string path in new[]{"/v1/hooks/private-portal/instances",f.PathFor("/chats"),f.PathFor("/attachments"),"/v1/hooks/private-portal/attachments",f.PathFor("/capabilities"),f.PathFor("/tools/"+new string('a',64)+"/widget"),f.PathFor("/tools/"+new string('a',64)+"/call")})f.HeaderReject(401,path,"wrong-secret");Assert(Webhooks.Jobs(f.Store).Length==0,"Invalid token admitted work");
         });
+        check("portal HTTP instance-list headers authorize without loading the account inventory",()=>{
+            var f=new Fixture(root,"list-header-cost");string path="/v1/hooks/private-portal/instances",head="GET "+path+" HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer "+f.Key+"\r\n\r\n";
+            WebhookHttpRequest request;
+            // A busy account vault must not duplicate inventory reads at header admission.
+            // Listing remains responsible for the full account and instance checks.
+            using(var locked=new FileStream(Path.Combine(Path.GetDirectoryName(f.Store.Root),"accounts.dpapi"),FileMode.Open,FileAccess.Read,FileShare.None))
+            using(var stream=new GuardedBody(head,"")){
+                request=WebhookHttp.ReadRequest(stream,r=>WebhookHttp.ValidateHeaders(f.Store,r));Assert(stream.BodyReads==0,"Instance list read a request body");
+                Reject(401,()=>WebhookHttp.ValidateHeaders(f.Store,f.Request("GET",path,"","wrong-secret")));
+                f.Config.Enabled=false;f.Config=Portal.SaveConfig(f.Store,f.Config);Reject(403,()=>WebhookHttp.ValidateHeaders(f.Store,request));
+                f.Config.Enabled=true;f.Config=Portal.SaveConfig(f.Store,f.Config);
+            }
+            var response=WebhookHttp.Handle(f.Store,request);var rows=RelayEngine.Rows(Json.Get(Json.Read<object>(response.Body),"instances")).ToArray();
+            Assert(response.Status==200&&rows.Length==1&&Json.Str(Json.Get(rows[0],"name"))=="Portal HTTP fixture","Instance-list handler did not perform the full inventory");
+            Assert(Webhooks.Jobs(f.Store).Length==0,"Instance-list validation created model work");
+        });
+        check("portal HTTP instance list repeats route and portal authorization at response admission",()=>{
+            var f=new Fixture(root,"list-recheck");string path="/v1/hooks/private-portal/instances";var request=f.Request("GET",path,"");
+            WebhookHttp.ValidateHeaders(f.Store,request);f.Key=Webhooks.RotateKey(f.Store,f.Route.Id);
+            Assert(WebhookHttp.Handle(f.Store,request).Status==401,"Instance list reused a revoked header credential");
+            request=f.Request("GET",path,"");WebhookHttp.ValidateHeaders(f.Store,request);f.Config.Enabled=false;f.Config=Portal.SaveConfig(f.Store,f.Config);
+            Assert(WebhookHttp.Handle(f.Store,request).Status==403,"Instance list reused a revoked portal grant");
+            Assert(Webhooks.Jobs(f.Store).Length==0,"Instance-list reauthorization created model work");
+        });
         check("portal HTTP revoked root key rejects before body and never falls back to legacy",()=>{
             var f=new Fixture(root,"revoked-key");string old=f.Key;Webhooks.RotateKey(f.Store,f.Route.Id);f.HeaderReject(401,f.PathFor("/chats"),old);Assert(WebhookHttp.Handle(f.Store,f.Request("POST",f.PathFor("/chats"),"{}",old)).Status==401,"Rotated root accepted");
         });

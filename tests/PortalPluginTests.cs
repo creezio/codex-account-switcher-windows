@@ -27,12 +27,12 @@ internal static class PortalPluginTests
         internal readonly string Route=new string('a',32),Actor=new string('b',64),Instance=new string('c',32),Root;
         internal RelayStore Store;internal PortalPluginService Service;internal PortalPluginDependencies Dependencies;
         internal string Account="fictional-account",Remote="plugin_gmail",Policy="AVAILABLE";
-        internal long Revision=1;internal bool Allowed=true,Installed,Connected,FailInstall;
-        internal int Installs,CatalogCalls,RuntimeCalls;internal Action DuringRuntime=null;
+        internal long Revision=1;internal bool Allowed=true,Installed,Connected,FailInstall,GuiOpen;
+        internal int Installs,CatalogCalls,RuntimeCalls,ScopeCount;internal Action DuringRuntime=null;
         internal int Authorizations;internal Action DuringAuthorize=null;
         internal ManualResetEventSlim Held=null;internal DateTime Clock=DateTime.UtcNow;
         internal Fixture(string sandbox){Root=Path.Combine(sandbox,"p"+Guid.NewGuid().ToString("N").Substring(0,6));Directory.CreateDirectory(Root);Store=new RelayStore(Path.Combine(Root,"r"));
-            Dependencies=new PortalPluginDependencies{Clock=()=>Clock,Resolve=(route,actor,instance)=>new PortalPluginTarget{InstanceId=instance,AccountKey=Account,AccountEmail="fictional@example.invalid",Home=Path.Combine(Root,"h"),Executable="fictional-codex.exe",GrantRevision=Revision,PolicyRevision=1,SiteOrigin="https://portal.example.invalid"},MutationLease=target=>new Lease(),Catalog=(target,token)=>{CatalogCalls++;object row=new{pluginId="gmail@openai-curated-remote",name="gmail",marketplaceName="openai-curated-remote",installed=Installed,enabled=Installed,source=new{source="remote",id=Remote},installPolicy=Policy,authPolicy="ON_INSTALL",version="test"};return new{installed=Installed?new[]{row}:new object[0],available=Installed?new object[0]:new[]{row}};},Runtime=(target,token)=>{RuntimeCalls++;if(DuringRuntime!=null)DuringRuntime();return new PortalPluginRuntime{Apps=new List<PortalPluginApp>{new PortalPluginApp{Id="gmail",Name="Gmail",InstallUrl="https://chatgpt.com/apps/gmail/gmail",Accessible=Connected,Enabled=Connected,Callable=Installed&&Connected}}};},Install=(target,selector,token)=>{Assert(selector=="gmail@openai-curated-remote","Free selector reached native command");Interlocked.Increment(ref Installs);if(Held!=null&&!Held.Wait(5000))throw new Exception("Fictional install barrier timeout");if(FailInstall)throw new IOException("fictional credential must never appear in a receipt");Installed=true;return new{appsNeedingAuth=new object[0]};}};
+            Dependencies=new PortalPluginDependencies{Clock=()=>Clock,Resolve=(route,actor,instance)=>new PortalPluginTarget{InstanceId=instance,AccountKey=Account,AccountEmail="fictional@example.invalid",Home=Path.Combine(Root,"h"),Executable="fictional-codex.exe",GrantRevision=Revision,PolicyRevision=1,SiteOrigin="https://portal.example.invalid"},ProfileScope=target=>{Interlocked.Increment(ref ScopeCount);return new PortalPluginProfileScope(GuiOpen?null:new Lease(),!GuiOpen);},Catalog=(target,token)=>{CatalogCalls++;object row=new{pluginId="gmail@openai-curated-remote",name="gmail",marketplaceName="openai-curated-remote",installed=Installed,enabled=Installed,source=new{source="remote",id=Remote},installPolicy=Policy,authPolicy="ON_INSTALL",version="test"};return new{installed=Installed?new[]{row}:new object[0],available=Installed?new object[0]:new[]{row}};},Runtime=(target,token)=>{RuntimeCalls++;if(DuringRuntime!=null)DuringRuntime();return new PortalPluginRuntime{Apps=new List<PortalPluginApp>{new PortalPluginApp{Id="gmail",Name="Gmail",InstallUrl="https://chatgpt.com/apps/gmail/gmail",Accessible=Connected,Enabled=Connected,Callable=Installed&&Connected}}};},Install=(target,selector,token)=>{Assert(selector=="gmail@openai-curated-remote","Free selector reached native command");Interlocked.Increment(ref Installs);if(Held!=null&&!Held.Wait(5000))throw new Exception("Fictional install barrier timeout");if(FailInstall)throw new IOException("fictional credential must never appear in a receipt");Installed=true;return new{appsNeedingAuth=new object[0]};}};
             Service=new PortalPluginService(Store,(route,actor)=>{Interlocked.Increment(ref Authorizations);if(DuringAuthorize!=null)DuringAuthorize();if(!Allowed||route!=Route||actor!=Actor)throw new WebhookException(403,"Fictional revoked actor");},Dependencies);
         }
         internal string UseRealResolve()
@@ -49,8 +49,82 @@ internal static class PortalPluginTests
         internal object Wait(string id){DateTime end=DateTime.UtcNow.AddSeconds(8);object value;do{value=Normal(Service.Read(Route,Actor,Instance,id));if(Value(value,"state")!="installing")return value;Thread.Sleep(5);}while(DateTime.UtcNow<end);throw new Exception("Fictional plugin operation did not finish");}
         public void Dispose(){if(Held!=null)Held.Set();Service.Dispose();}
     }
+    private static void AssertOtherThreadExcluded(string folder)
+    {var probe=Task.Run(()=>InstanceLease.Busy(folder));Assert(probe.Wait(2000)&&probe.Result,"A concurrent desktop start could acquire the inspected profile");}
+    private static void FictionalDesktop(string folder,string launch)
+    {using(var process=Process.GetCurrentProcess())File.WriteAllText(Path.Combine(folder,"state.json"),Json.Write(new InstanceState{Phase="running",Running=true,LaunchId=launch,HostPid=process.Id,HostStartTicks=process.StartTime.ToUniversalTime().Ticks,DesktopPid=process.Id,DesktopStartTicks=process.StartTime.ToUniversalTime().Ticks}));}
     internal static void RunAll(Action<string,Action> check,string sandbox)
     {
+        check("plugin GUI catalog uses only the read-only CLI and never infers connected or installable status",()=>{
+            using(var f=new Fixture(sandbox)){
+                f.GuiOpen=true;f.Connected=true;f.Dependencies.Runtime=(target,token)=>{throw new Exception("An open GUI must not start a second app-server");};f.Dependencies.Metadata=(target,ids,token)=>{throw new Exception("An open GUI must not request native metadata");};
+                var available=RelayEngine.Rows(Json.Get(f.Catalog(),"plugins")).Single();Assert(!Object.Equals(Json.Get(available,"canInstall"),true)&&!Object.Equals(Json.Get(available,"callable"),true),"GUI catalog retained native mutation admission");
+                f.Installed=true;f.Dependencies.Catalog=(target,token)=>{f.CatalogCalls++;return Normal(new{installed=new[]{new{pluginId="gmail@openai-curated-remote",name="gmail",marketplaceName="openai-curated-remote",installed=true,enabled=true,source=new{source="remote",id="plugin_connector_1p_fixture"},__creezioAppIds=new[]{"connector_fixture"},version="test",installPolicy="AVAILABLE"}},available=new object[0]});};
+                var catalog=f.Catalog();var row=RelayEngine.Rows(Json.Get(catalog,"plugins")).Single();Assert(Object.Equals(Json.Get(row,"installed"),true)&&!Object.Equals(Json.Get(row,"callable"),true)&&!Object.Equals(Json.Get(row,"canInstall"),true)&&f.CatalogCalls==2&&f.RuntimeCalls==0&&Json.Write(Json.Get(catalog,"warnings")).Contains("Fermez cette instance"),"Read-only GUI catalog lost its rows or hid the close-instance warning");
+            }
+        });
+        check("plugin GUI transition refuses a previously installable catalog before allocating a receipt",()=>{
+            using(var f=new Fixture(sandbox)){string choice=f.Choice();int reads=f.RuntimeCalls;f.GuiOpen=true;Reject(()=>f.Start(choice));Assert(f.Installs==0&&f.RuntimeCalls==reads&&Directory.GetFiles(f.Store.Root,"portal-plugin-install-*.dpapi").Length==0,"A stale closed-profile catalog allocated or started a GUI installation");}
+        });
+        check("plugin GUI launch between admission and its worker fails before any native inspection or mutation",()=>{
+            using(var f=new Fixture(sandbox)){
+                f.Dependencies.ProfileScope=target=>{int count=Interlocked.Increment(ref f.ScopeCount);return new PortalPluginProfileScope(count>=3?null:new Lease(),count<3);};
+                string id=Value(f.Start(f.Choice()),"id");Assert(Value(f.Wait(id),"state")=="failed"&&f.RuntimeCalls==1&&f.CatalogCalls==1&&f.Installs==0&&!f.Store.ReadRecord<PortalPluginOperation>("portal-plugin-install-"+id+".dpapi").NativeStarted,"A concurrent GUI launch reached native preflight or CLI add");
+            }
+        });
+        check("plugin GUI catalog cannot reconcile an uncertain installation into a confirmed connection",()=>{
+            using(var f=new Fixture(sandbox)){f.FailInstall=true;string id=Value(f.Start(f.Choice()),"id");Assert(Value(f.Wait(id),"state")=="uncertain","Fictional mutation did not reach an uncertain receipt");f.Installed=true;f.Connected=true;f.GuiOpen=true;int reads=f.RuntimeCalls;f.Catalog();Assert(Value(f.Service.Read(f.Route,f.Actor,f.Instance,id),"state")=="uncertain"&&f.RuntimeCalls==reads&&f.Installs==1,"CLI-only GUI observation falsely confirmed a native connection");}
+        });
+        check("plugin closed catalog and install keep one real instance lease across every native stage",()=>{
+            using(var f=new Fixture(sandbox)){
+                string folder=f.UseRealResolve();int scopes=0,metadata=0;f.Dependencies.ProfileScope=target=>{Interlocked.Increment(ref scopes);return PortalPluginCli.OpenProfileScope(target);};
+                var runtime=f.Dependencies.Runtime;var catalog=f.Dependencies.Catalog;var install=f.Dependencies.Install;
+                f.Dependencies.Runtime=(target,token)=>{AssertOtherThreadExcluded(folder);var result=runtime(target,token);foreach(var app in result.Apps)app.InstallUrl=null;return result;};
+                f.Dependencies.Catalog=(target,token)=>{AssertOtherThreadExcluded(folder);return catalog(target,token);};
+                f.Dependencies.Install=(target,selector,token)=>{AssertOtherThreadExcluded(folder);return install(target,selector,token);};
+                f.Dependencies.Metadata=(target,ids,token)=>{AssertOtherThreadExcluded(folder);metadata++;return new[]{new PortalPluginApp{Id="gmail",Name="Gmail",InstallUrl="https://chatgpt.com/apps/gmail/gmail"}};};
+                string choice=f.Choice();Assert(scopes==1,"A catalog acquired nested profile scopes");string id=Value(f.Start(choice),"id");var done=f.Wait(id);Assert(Value(done,"state")=="needs-auth"&&scopes==3&&metadata==1&&f.Installs==1,"Install acquired a nested scope or lost its metadata stage");
+                var released=Task.Run(()=>InstanceLease.Busy(folder));Assert(released.Wait(2000)&&!released.Result,"The completed operation retained its profile lease");
+            }
+        });
+        check("plugin receipts and exact retries stay readable during a locked install while fresh mutations and revoked scope remain refused",()=>{
+            using(var f=new Fixture(sandbox))using(var entered=new ManualResetEventSlim())using(var release=new ManualResetEventSlim()){
+                string folder=f.UseRealResolve();File.WriteAllText(Path.Combine(folder,"state.json"),Json.Write(new InstanceState{Phase="stopped",LaunchId="previous-launch"}));File.WriteAllText(Path.Combine(folder,"launch.json"),Json.Write(new InstanceLaunch{Root=f.Root,InstanceId=f.Instance,LaunchId="previous-launch"}));
+                f.Dependencies.ProfileScope=PortalPluginCli.OpenProfileScope;f.Dependencies.Install=(target,selector,token)=>{Interlocked.Increment(ref f.Installs);entered.Set();if(!release.Wait(10000))throw new Exception("Fictional install receipt barrier timed out");f.Installed=true;return new{appsNeedingAuth=new object[0]};};
+                string choice=f.Choice(),id=Value(f.Start(choice),"id");try{
+                    Assert(entered.Wait(5000),"The fictional worker did not enter its leased mutation");Thread.Sleep(1100);
+                    var observed=new DesktopRuntime(f.Root).Probe(new AccountService(f.Root).Data.Instances.Single(item=>item.Id==f.Instance));Assert(observed.Phase=="starting"&&observed.Running,"Persistent closed state did not reproduce a concurrent worker lease");int runtime=f.RuntimeCalls,catalog=f.CatalogCalls;
+                    var read=Task.Run(()=>Normal(f.Service.Read(f.Route,f.Actor,f.Instance,id)));Assert(read.Wait(2000)&&Value(read.Result,"state")=="installing","A receipt poll incorrectly required a free instance runtime");
+                    var retry=Task.Run(()=>f.Start(choice));Assert(retry.Wait(2000)&&Value(retry.Result,"id")==id&&Value(retry.Result,"state")=="installing","An exact idempotent retry did not return its durable in-flight receipt");
+                    Reject(()=>f.Start(choice,"different-mutation"));Assert(f.Installs==1&&f.RuntimeCalls==runtime&&f.CatalogCalls==catalog&&Directory.GetFiles(f.Store.Root,"portal-plugin-install-*.dpapi").Length==1,"Receipt reads started native work or a parallel mutation");
+                    var original=Portal.Config(f.Store,f.Route);foreach(string changed in new[]{"actor","grant","account","home"}){
+                        var config=Json.Read<PortalConfig>(Json.Write(original));if(changed=="actor")f.Allowed=false;else if(changed=="grant")config.Instances.Single().AuthorizationRevision++;else if(changed=="account")config.Instances.Single().AccountKey="foreign-account";else config.Instances.Single().Home=Path.Combine(f.Root,"foreign-home");f.Store.WriteRecord("portal-"+f.Route+"-v1.dpapi",config);
+                        try{Reject(()=>f.Service.Read(f.Route,f.Actor,f.Instance,id));Reject(()=>f.Start(choice));}finally{f.Allowed=true;f.Store.WriteRecord("portal-"+f.Route+"-v1.dpapi",original);}
+                    }
+                }finally{release.Set();}
+                Assert(Value(f.Wait(id),"state")=="needs-auth"&&f.Installs==1,"Receipt polling changed the single native outcome");
+            }
+        });
+        check("plugin real GUI scope pins its owner and rejects replacement after the CLI read",()=>{
+            using(var f=new Fixture(sandbox)){
+                string folder=f.UseRealResolve();FictionalDesktop(folder,"fixture-owner");f.Dependencies.ProfileScope=PortalPluginCli.OpenProfileScope;
+                f.Dependencies.Runtime=(target,token)=>{throw new Exception("GUI owner unexpectedly used a headless runtime");};f.Dependencies.Metadata=(target,ids,token)=>{throw new Exception("GUI owner unexpectedly used native metadata");};
+                var catalog=f.Dependencies.Catalog;f.Dependencies.Catalog=(target,token)=>{var result=catalog(target,token);FictionalDesktop(folder,"replacement-owner");return result;};
+                Reject(()=>f.Catalog());Assert(f.CatalogCalls==1&&f.Installs==0&&Directory.GetFiles(f.Store.Root,"portal-plugin-catalog-*.dpapi").Length==0,"A replaced GUI owner published a catalog from an earlier scope");
+            }
+        });
+        check("plugin profile revalidation rejects account and grant drift immediately after scope acquisition",()=>{
+            foreach(string changed in new[]{"account","grant","actor"})using(var f=new Fixture(sandbox)){
+                f.Dependencies.ProfileScope=target=>{if(changed=="account")f.Account="replacement-account";else if(changed=="grant")f.Revision++;else f.Allowed=false;return new PortalPluginProfileScope(new Lease(),true);};
+                Reject(()=>f.Catalog());Assert(f.CatalogCalls==0&&f.RuntimeCalls==0&&f.Installs==0,"Scope acquisition concealed an authorization or account change");
+            }
+        });
+        check("plugin owned profile lease never bypasses a proven launch or corrupt state during inspection",()=>{
+            foreach(string changed in new[]{"launch","unknown"})using(var f=new Fixture(sandbox)){
+                string folder=f.UseRealResolve();f.Dependencies.ProfileScope=PortalPluginCli.OpenProfileScope;f.DuringRuntime=()=>{if(changed=="launch")FictionalDesktop(folder,"unexpected-launch");else File.WriteAllText(Path.Combine(folder,"state.json"),"fictional corrupt state");};
+                Reject(()=>f.Catalog());Assert(f.RuntimeCalls==1&&f.CatalogCalls==0&&f.Installs==0,"An owned mutex bypassed actual launch evidence or an unknown state");
+            }
+        });
         check("plugin resolve waits for a brief concurrent headless history lease and then revalidates the real closed profile",()=>{
             using(var f=new Fixture(sandbox)){string folder=f.UseRealResolve();using(var reader=new HistoryReader(folder))using(var retried=new ManualResetEventSlim()){
                 var snapshot=new DesktopRuntime(f.Root).Probe(new AccountService(f.Root).Data.Instances.Single(instance=>instance.Id==f.Instance));Assert(snapshot.Phase=="starting"&&snapshot.HostPid==0&&snapshot.DesktopPid==0&&!File.Exists(Path.Combine(folder,"state.json"))&&!File.Exists(Path.Combine(folder,"launch.json")),"History lease did not reproduce the actual transient starting state");

@@ -3,7 +3,7 @@
 Une application native pour gérer plusieurs instances Codex en parallèle,
 associer vos comptes à vos espaces, suivre leurs limites et transmettre des demandes entre comptes. Développée par **Creezio**.
 
-**Version 0.29.0-beta.4 — Catalogue de skills, planifications et objectifs depuis Switcher Live, Windows et l’API, avec pont vers les instances Codex ouvertes.** Windows 10/11 x64, interface en
+**Version 0.29.0-beta.5 — Ajout de plugins depuis Switcher Live avec suivi conservé après reconnexion et protection du profil Codex ouvert.** Windows 10/11 x64, interface en
 français et livraison portable incluant le runtime .NET 10, sans droits administrateur.
 
 Depuis le Site, un administrateur autorisé peut choisir un compte enregistré ou connecter un nouveau compte avec le lien et le code officiels OpenAI. Le compte réellement connecté est affiché avant confirmation ; le Switcher prépare ensuite son instance, son relais et ses skills sans ouvrir de fenêtre Codex. Les identifiants restent sur le PC. L’administration utilise une clé serveur distincte des clés de messages et une liste locale d’administrateurs. Voir [la configuration et le parcours](docs/WEBHOOKS.md#administration-distante-des-comptes-et-instances).
@@ -16,8 +16,8 @@ instance autorisée. Switcher Live propose les mêmes actions dans les ressource
 de l’instance. **Planifications** et le panneau **Tâches et objectif** d’une
 discussion permettent de préparer un planning Switcher ou de modifier son
 objectif natif. Les plannings sont créés en pause ; leur exécution exige que
-le PC et Switcher fonctionnent. La gestion des objectifs exige actuellement
-un profil arrêté et disponible. Voir [les interfaces et le contrat API](docs/PORTAL-MANAGEMENT.md).
+le PC et Switcher fonctionnent. Les objectifs peuvent aussi être modifiés quand
+l’instance Codex est ouverte. Voir [les interfaces et le contrat API](docs/PORTAL-MANAGEMENT.md).
 
 Dans **Webhooks**, créez une entrée vers une instance, un dossier et un chat
 nouveau ou existant. Copiez son URL et sa clé dans votre application : le Switcher

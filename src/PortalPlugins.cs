@@ -67,6 +67,17 @@ namespace Creezio.Switcher
         internal List<PortalPluginApp> Apps=new List<PortalPluginApp>();
         internal List<string> Warnings=new List<string>();
     }
+    internal sealed class PortalPluginProfileScope:IDisposable
+    {
+        internal const string CloseIssue="Fermez cette instance pour verifier les connexions ou installer un plugin. Le catalogue reste consultable ; aucun statut connecte n'est deduit.";
+        internal readonly bool CanInspectNative;internal readonly string Issue;
+        private readonly IDisposable lease;private readonly Action verify;private readonly int thread=Thread.CurrentThread.ManagedThreadId;private bool disposed;
+        internal PortalPluginProfileScope(IDisposable owner,bool native,Action validate=null)
+        {if(native&&owner==null)throw new ArgumentNullException("owner");lease=owner;CanInspectNative=native;Issue=native?null:CloseIssue;verify=validate;}
+        internal void Verify(){if(disposed||thread!=Thread.CurrentThread.ManagedThreadId)throw new InvalidOperationException("Le verrou du profil n'est plus disponible.");if(verify!=null)verify();}
+        internal void RequireNative(){Verify();if(!CanInspectNative)throw new WebhookException(409,CloseIssue);}
+        public void Dispose(){if(disposed)return;if(thread!=Thread.CurrentThread.ManagedThreadId)throw new InvalidOperationException("Le verrou du profil a change de proprietaire.");disposed=true;if(lease!=null)lease.Dispose();}
+    }
     internal sealed class PortalPluginDependencies
     {
         internal Func<string,string,string,PortalPluginTarget> Resolve=null;
@@ -74,21 +85,35 @@ namespace Creezio.Switcher
         internal Func<PortalPluginTarget,string,CancellationToken,object> Install=PortalPluginCli.Install;
         internal Func<PortalPluginTarget,CancellationToken,PortalPluginRuntime> Runtime=PortalPluginCli.Runtime;
         internal Func<PortalPluginTarget,string[],CancellationToken,IEnumerable<PortalPluginApp>> Metadata=PortalPluginCli.Metadata;
-        internal Func<PortalPluginTarget,IDisposable> MutationLease=PortalPluginCli.MutationLease;
+        internal Func<PortalPluginTarget,PortalPluginProfileScope> ProfileScope=PortalPluginCli.OpenProfileScope;
         internal Func<DateTime> Clock=()=>DateTime.UtcNow;
     }
     internal static class PortalPluginCli
     {
-        private sealed class EmptyLease:IDisposable{public void Dispose(){}}
-        internal static IDisposable MutationLease(PortalPluginTarget target)
+        private static InstanceState ProfileState(PortalPluginTarget target,string root)
+        {
+            var accounts=new AccountService(root);var instance=NamedInstances.Resolve(accounts,target.InstanceId);
+            NamedInstances.VerifyAccount(accounts,instance);
+            if(instance.IsLocal||!instance.AccountLocked||instance.AccountKey!=target.AccountKey||!RelayStore.SamePath(accounts.Instances.Home(instance),target.Home)||!RelayStore.SamePath(accounts.Settings.CodexExecutable,target.Executable))throw new WebhookException(409,"Le compte ou le dossier de cette instance a change.");
+            var state=accounts.Instances.Runtime.Probe(instance);
+            if(state.Phase=="unknown"||state.Phase=="starting"||state.Phase=="stopping")throw new WebhookException(409,"Cette instance est occupee ou son etat est inconnu.");
+            return state;
+        }
+        internal static PortalPluginProfileScope OpenProfileScope(PortalPluginTarget target)
         {
             string root=Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(target.Home)));
-            var accounts=new AccountService(root);var instance=NamedInstances.Resolve(accounts,target.InstanceId);
-            NamedInstances.VerifyAccount(accounts,instance);var state=accounts.Instances.Runtime.Probe(instance);
-            if(state.Phase=="unknown"||state.Phase=="starting"||state.Phase=="stopping")throw new InvalidOperationException("Cette instance est occupee ou son etat est inconnu.");
-            // An open desktop owns this mutex already and cannot switch its
-            // account. A closed profile must be protected from a concurrent start.
-            return state.Running?(IDisposable)new EmptyLease():new InstanceLease(InstancePaths.Folder(root,instance.Id));
+            var before=ProfileState(target,root);
+            if(before.Running){
+                if((before.Phase!="running"&&before.Phase!="background")||!DesktopRuntime.SameProcess(before.DesktopPid,before.DesktopStartTicks))throw new WebhookException(409,"Cette instance est occupee ou son etat est inconnu.");
+                return new PortalPluginProfileScope(null,false,()=>{var now=ProfileState(target,root);if(!now.Running||now.DesktopPid!=before.DesktopPid||now.DesktopStartTicks!=before.DesktopStartTicks||now.HostPid!=before.HostPid||now.HostStartTicks!=before.HostStartTicks||now.LaunchId!=before.LaunchId)throw new WebhookException(409,"Le proprietaire de cette instance a change. Actualisez le catalogue.");});
+            }
+            var lease=new InstanceLease(InstancePaths.Folder(root,target.InstanceId));
+            try{
+                // Probe's mutex check is recursive on this same synchronous
+                // owner thread. No synthetic starting state is bypassed here.
+                Action verify=()=>{if(ProfileState(target,root).Running)throw new WebhookException(409,PortalPluginProfileScope.CloseIssue);};
+                verify();return new PortalPluginProfileScope(lease,true,verify);
+            }catch{lease.Dispose();throw;}
         }
         internal static ProcessStartInfo StartInfo(PortalPluginTarget target,string selector)
         {
@@ -231,7 +256,7 @@ namespace Creezio.Switcher
             Uri uri;if(!Uri.TryCreate(value,UriKind.Absolute,out uri)||uri.Scheme!="https"||uri.Host!="chatgpt.com"||!uri.IsDefaultPort||uri.UserInfo.Length>0||uri.Query.Length>0||uri.Fragment.Length>0||!(uri.AbsolutePath.StartsWith("/apps/",StringComparison.Ordinal)||uri.AbsolutePath.StartsWith("/plugins/",StringComparison.Ordinal)))return null;
             return uri.AbsoluteUri;
         }
-        private PortalPluginTarget Resolve(string route,string actor,string instanceId)
+        private PortalPluginTarget Resolve(string route,string actor,string instanceId,bool requireAvailable=true)
         {
             var pending=Stopwatch.StartNew();bool waited=false;
             for(;;){
@@ -245,17 +270,23 @@ namespace Creezio.Switcher
             if(grant==null)throw new WebhookException(404,"Cette instance n'est pas autorisee sur le portail.");
             var accounts=new AccountService(root);var instance=NamedInstances.Resolve(accounts,instanceId);NamedInstances.VerifyAccount(accounts,instance);
             if(instance.IsLocal||!instance.AccountLocked||instance.AccountKey!=grant.AccountKey||!RelayStore.SamePath(accounts.Instances.Home(instance),grant.Home))throw new WebhookException(409,"Le compte ou le dossier de cette instance a change.");
+            // Durable receipts require the same authorization/account pins,
+            // but reading one must not inspect or acquire the busy runtime.
+            if(requireAvailable){
             var state=accounts.Instances.Runtime.Probe(instance);string folder=InstancePaths.Folder(root,instance.Id);
             bool launchEvidence=File.Exists(Path.Combine(folder,"state.json"))||File.Exists(Path.Combine(folder,"launch.json"));
             long remaining=750-pending.ElapsedMilliseconds;
             if(state.Phase=="starting"&&state.HostPid==0&&state.HostStartTicks==0&&state.DesktopPid==0&&state.DesktopStartTicks==0&&String.IsNullOrEmpty(state.LaunchId)&&!state.WindowReady&&!launchEvidence&&remaining>0){Thread.Sleep((int)Math.Min(40,remaining));waited=true;continue;}
             if(state.Phase=="unknown"||state.Phase=="starting"||state.Phase=="stopping"||waited&&launchEvidence)throw new WebhookException(409,"L'instance est occupee ou son etat est inconnu.");
+            }
             var profile=accounts.Data.Profiles.Single(item=>item.Key==instance.AccountKey);HeadlessRpc.ReadProfile(grant.Home,grant.AccountKey);
             return new PortalPluginTarget{InstanceId=instance.Id,AccountKey=instance.AccountKey,AccountEmail=Clip(profile.Email,160),Home=grant.Home,Executable=accounts.Settings.CodexExecutable,GrantRevision=grant.AuthorizationRevision,PolicyRevision=policy.Revision,SiteOrigin=policy.SiteOrigin};
             }
         }
-        private void Verify(string route,string actor,PortalPluginTarget target)
-        {var now=Resolve(route,actor,target.InstanceId);if(!SameTarget(now,target))throw new WebhookException(409,"L'autorisation ou le compte a change. Aucune autre instance n'a ete modifiee.");}
+        private void Verify(string route,string actor,PortalPluginTarget target,bool requireAvailable=true)
+        {var now=Resolve(route,actor,target.InstanceId,requireAvailable);if(!SameTarget(now,target))throw new WebhookException(409,"L'autorisation ou le compte a change. Aucune autre instance n'a ete modifiee.");}
+        private void Verify(string route,string actor,PortalPluginTarget target,PortalPluginProfileScope scope)
+        {Verify(route,actor,target);scope.Verify();}
         private static bool SameTarget(PortalPluginTarget left,PortalPluginTarget right)
         {return left!=null&&right!=null&&left.InstanceId==right.InstanceId&&left.AccountKey==right.AccountKey&&RelayStore.SamePath(left.Home,right.Home)&&left.GrantRevision==right.GrantRevision&&left.PolicyRevision==right.PolicyRevision&&left.SiteOrigin==right.SiteOrigin;}
         private static string CatalogName(string route,string actor,string instance){return "portal-plugin-catalog-"+Webhooks.Hash(route+"\n"+actor+"\n"+instance).Substring(0,32)+".dpapi";}
@@ -286,18 +317,23 @@ namespace Creezio.Switcher
         }
         internal object Catalog(string route,string actor,string instanceId,CancellationToken token)
         {
-            var target=Resolve(route,actor,instanceId);var warnings=new List<string>();var choices=Discover(route,actor,target,token,route+"\n"+actor+"\n"+target.InstanceId+"\n"+target.AccountKey+"\n"+target.GrantRevision,warnings);
+            var target=Resolve(route,actor,instanceId);using(var scope=dependencies.ProfileScope(target)){
+            Verify(route,actor,target,scope);var warnings=new List<string>();var choices=Discover(route,actor,target,token,route+"\n"+actor+"\n"+target.InstanceId+"\n"+target.AccountKey+"\n"+target.GrantRevision,warnings,scope);
             var catalog=new PortalPluginCatalog{Route=route,Actor=actor,Target=target,CreatedUtc=Now(),Plugins=choices.Select(choice=>new PortalPluginAdmission{Id=choice.Id,Selector=choice.Selector,RemoteId=choice.RemoteId,Installed=choice.Installed,CanInstall=choice.CanInstall,NeedsAuth=choice.NeedsAuth,Apps=choice.Apps}).ToList(),Warnings=warnings.Take(20).ToArray()};
             store.WriteRecord(CatalogName(route,actor,instanceId),catalog);
-            Reconcile(route,actor,target,choices);
+            if(scope.CanInspectNative)Reconcile(route,actor,target,choices);
             return new{instanceId=instanceId,accountEmail=target.AccountEmail,plugins=choices.Select(PublicChoice).ToArray(),warnings=catalog.Warnings,generatedUtc=catalog.CreatedUtc};
+            }
         }
-        private List<PortalPluginChoice> Discover(string route,string actor,PortalPluginTarget target,CancellationToken token,string binding,List<string> warnings)
+        private List<PortalPluginChoice> Discover(string route,string actor,PortalPluginTarget target,CancellationToken token,string binding,List<string> warnings,PortalPluginProfileScope scope)
         {
-            var runtime=dependencies.Runtime(target,token);Verify(route,actor,target);var raw=dependencies.Catalog(target,token);Verify(route,actor,target);warnings.AddRange(runtime.Warnings);var choices=Choices(raw,runtime,binding,warnings);
+            Verify(route,actor,target,scope);
+            var runtime=scope.CanInspectNative?dependencies.Runtime(target,token):new PortalPluginRuntime();Verify(route,actor,target,scope);var raw=dependencies.Catalog(target,token);Verify(route,actor,target,scope);warnings.AddRange(runtime.Warnings);if(!scope.CanInspectNative)warnings.Add(scope.Issue);var choices=Choices(raw,runtime,binding,warnings);
             var missing=choices.Where(choice=>choice.Installed).SelectMany(choice=>choice.Apps).Where(app=>String.IsNullOrEmpty(app.InstallUrl)).Select(app=>app.Id).Distinct().Take(100).ToArray();
-            if(missing.Length>0){foreach(var metadata in dependencies.Metadata(target,missing,token)){var app=runtime.Apps.FirstOrDefault(item=>item.Id==metadata.Id);if(app==null){app=new PortalPluginApp{Id=metadata.Id};runtime.Apps.Add(app);}app.Name=metadata.Name;app.InstallUrl=metadata.InstallUrl;}Verify(route,actor,target);choices=Choices(raw,runtime,binding,warnings);}
-            ApplyBindings(route,actor,target,choices,runtime);Verify(route,actor,target);return choices;
+            if(scope.CanInspectNative&&missing.Length>0){foreach(var metadata in dependencies.Metadata(target,missing,token)){var app=runtime.Apps.FirstOrDefault(item=>item.Id==metadata.Id);if(app==null){app=new PortalPluginApp{Id=metadata.Id};runtime.Apps.Add(app);}app.Name=metadata.Name;app.InstallUrl=metadata.InstallUrl;}Verify(route,actor,target,scope);choices=Choices(raw,runtime,binding,warnings);}
+            ApplyBindings(route,actor,target,choices,runtime);Verify(route,actor,target,scope);
+            if(!scope.CanInspectNative)foreach(var choice in choices){choice.CanInstall=false;choice.Callable=false;}
+            return choices;
         }
         private void SaveBinding(PortalPluginOperation operation,IEnumerable<PortalPluginApp> known,string version)
         {
@@ -329,16 +365,22 @@ namespace Creezio.Switcher
         {return new{id=operation.Id,instanceId=operation.Target.InstanceId,pluginId=operation.PluginId,state=operation.State,error=operation.Error,appsNeedingAuth=operation.AppsNeedingAuth.Select(PublicApp).ToArray(),nextPollMs=operation.State=="installing"?1000:0};}
         internal object Start(string route,string actor,string instanceId,string pluginId,string key)
         {
-            var target=Resolve(route,actor,instanceId);if(!Regex.IsMatch(pluginId??"",@"\A[a-f0-9]{64}\z")||String.IsNullOrEmpty(key)||key.Length>128||key.Any(value=>value<33||value>126))throw new WebhookException(400,"Selection et cle d'idempotence requises.");
+            var target=Resolve(route,actor,instanceId,false);if(!Regex.IsMatch(pluginId??"",@"\A[a-f0-9]{64}\z")||String.IsNullOrEmpty(key)||key.Length>128||key.Any(value=>value<33||value>126))throw new WebhookException(400,"Selection et cle d'idempotence requises.");
             string id=Webhooks.Hash("portal-plugin-operation\n"+route+"\n"+actor+"\n"+instanceId+"\n"+key).Substring(0,32);
             using(store.Lease("portal-plugin-admission")){
-                var previous=store.ReadRecord<PortalPluginOperation>(OpName(id));if(previous.Id!=null){if(previous.Route!=route||previous.Actor!=actor||previous.Target.InstanceId!=instanceId||previous.PluginId!=pluginId)throw new WebhookException(409,"Cette cle correspond deja a une autre installation.");Verify(route,actor,previous.Target);return Read(route,actor,instanceId,id);}
+                var previous=store.ReadRecord<PortalPluginOperation>(OpName(id));if(previous.Id!=null){if(previous.Route!=route||previous.Actor!=actor||previous.Target.InstanceId!=instanceId||previous.PluginId!=pluginId)throw new WebhookException(409,"Cette cle correspond deja a une autre installation.");Verify(route,actor,previous.Target,false);return Read(route,actor,instanceId,id);}
+                PortalPluginOperation operation;
+                using(var scope=dependencies.ProfileScope(target)){
+                scope.RequireNative();Verify(route,actor,target,scope);
                 var catalog=store.ReadRecord<PortalPluginCatalog>(CatalogName(route,actor,instanceId));DateTime at;
                 if(catalog.Target==null||!DateTime.TryParse(catalog.CreatedUtc,out at)||dependencies.Clock().ToUniversalTime()-at.ToUniversalTime()>TimeSpan.FromMinutes(10))throw new WebhookException(409,"Actualisez le catalogue avant cette installation.");Verify(route,actor,catalog.Target);
                 var choice=catalog.Plugins.SingleOrDefault(item=>item.Id==pluginId);if(choice==null||!ValidSelector(choice.Selector)||!choice.Installed&&!choice.CanInstall)throw new WebhookException(403,"Ce plugin n'est pas proposable pour cette instance.");
                 var active=store.ReadRecord<PortalPluginOperation>(ActiveName(target.Home));if(active.Id!=null){var pending=store.ReadRecord<PortalPluginOperation>(OpName(active.Id));if(pending.State=="installing"||pending.State=="uncertain")throw new WebhookException(409,"Verifiez d'abord l'installation deja en cours ou incertaine sur cette instance.");}
-                var operation=new PortalPluginOperation{Id=id,Route=route,Actor=actor,Target=target,PluginId=pluginId,Selector=choice.Selector,RemoteId=choice.RemoteId,State=choice.Installed?(choice.NeedsAuth?"needs-auth":"ready"):"installing",UpdatedUtc=Now(),OwnerPid=pid,OwnerStarted=started,AppsNeedingAuth=choice.Apps.Where(app=>!app.Callable).ToList()};
+                operation=new PortalPluginOperation{Id=id,Route=route,Actor=actor,Target=target,PluginId=pluginId,Selector=choice.Selector,RemoteId=choice.RemoteId,State=choice.Installed?(choice.NeedsAuth?"needs-auth":"ready"):"installing",UpdatedUtc=Now(),OwnerPid=pid,OwnerStarted=started,AppsNeedingAuth=choice.Apps.Where(app=>!app.Callable).ToList()};
                 using(OperationLease(id)){store.WriteRecord(OpName(id),operation);store.WriteRecord(ActiveName(target.Home),operation);if(operation.State=="installing")inFlight[id]=0;}
+                // The background worker acquires its own scope on its owner
+                // thread only after this admission scope has been released.
+                }
                 if(operation.State=="installing")Task.Run(()=>Install(operation));return View(operation);
             }
         }
@@ -347,17 +389,17 @@ namespace Creezio.Switcher
             using(var token=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token))try{
                 token.CancelAfter(TimeSpan.FromMinutes(3));
                 Verify(operation.Route,operation.Actor,operation.Target);
-                using(dependencies.MutationLease(operation.Target)){
-                    Verify(operation.Route,operation.Actor,operation.Target);
+                using(var scope=dependencies.ProfileScope(operation.Target)){
+                    scope.RequireNative();Verify(operation.Route,operation.Actor,operation.Target,scope);
                     // Validate the native account before the first CLI mutation.
-                    var current=Discover(operation.Route,operation.Actor,operation.Target,token.Token,"preflight",new List<string>()).SingleOrDefault(choice=>choice.Selector==operation.Selector);
-                    Verify(operation.Route,operation.Actor,operation.Target);
+                    var current=Discover(operation.Route,operation.Actor,operation.Target,token.Token,"preflight",new List<string>(),scope).SingleOrDefault(choice=>choice.Selector==operation.Selector);
+                    Verify(operation.Route,operation.Actor,operation.Target,scope);
                     if(current==null||current.RemoteId!=operation.RemoteId||!current.Installed&&!current.CanInstall)throw new InvalidOperationException("La source ou l'autorisation du plugin a change.");
                     if(current.Installed){operation.State=current.NeedsAuth?"needs-auth":"ready";operation.AppsNeedingAuth=current.Apps.Where(app=>!app.Callable).ToList();return;}
                     operation.NativeStarted=true;operation.UpdatedUtc=Now();using(OperationLease(operation.Id))store.WriteRecord(OpName(operation.Id),operation);
-                    var result=dependencies.Install(operation.Target,operation.Selector,token.Token);Verify(operation.Route,operation.Actor,operation.Target);
+                    var result=dependencies.Install(operation.Target,operation.Selector,token.Token);Verify(operation.Route,operation.Actor,operation.Target,scope);
                     foreach(var app in RelayEngine.Rows(Json.Get(result,"appsNeedingAuth")))operation.AppsNeedingAuth.Add(new PortalPluginApp{Id=Clip(Json.Get(app,"id"),300),Name=Clip(Json.Get(app,"name"),160),InstallUrl=SafeUrl(Json.Str(Json.Get(app,"installUrl")))});
-                    var observed=Discover(operation.Route,operation.Actor,operation.Target,token.Token,"observation",new List<string>()).SingleOrDefault(choice=>choice.Selector==operation.Selector&&choice.RemoteId==operation.RemoteId);Verify(operation.Route,operation.Actor,operation.Target);
+                    var observed=Discover(operation.Route,operation.Actor,operation.Target,token.Token,"observation",new List<string>(),scope).SingleOrDefault(choice=>choice.Selector==operation.Selector&&choice.RemoteId==operation.RemoteId);Verify(operation.Route,operation.Actor,operation.Target,scope);
                     if(observed==null||!observed.Installed)throw new InvalidOperationException("Installation non confirmee par le catalogue natif.");
                     SaveBinding(operation,observed.Apps,observed.Version);
                     operation.AppsNeedingAuth=observed.Apps.Where(app=>!app.Enabled||!app.Callable).ToList();
@@ -368,7 +410,7 @@ namespace Creezio.Switcher
         }
         internal object Read(string route,string actor,string instanceId,string id)
         {
-            RelayStore.MessageId(id);var operation=store.ReadRecord<PortalPluginOperation>(OpName(id));if(operation.Id!=id||operation.Route!=route||operation.Actor!=actor||operation.Target==null||operation.Target.InstanceId!=instanceId)throw new WebhookException(404,"Installation introuvable.");Verify(route,actor,operation.Target);
+            RelayStore.MessageId(id);var operation=store.ReadRecord<PortalPluginOperation>(OpName(id));if(operation.Id!=id||operation.Route!=route||operation.Actor!=actor||operation.Target==null||operation.Target.InstanceId!=instanceId)throw new WebhookException(404,"Installation introuvable.");Verify(route,actor,operation.Target,false);
             return View(CurrentOperation(id));
         }
         private PortalPluginOperation CurrentOperation(string id)

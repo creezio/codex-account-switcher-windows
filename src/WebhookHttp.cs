@@ -124,7 +124,8 @@ namespace Creezio.Switcher
             var portal=PortalPath(request.Path);
             if(portal.Success){
                 string slug=portal.Groups[1].Value,instance=portal.Groups[2].Value;
-                if(instance.Length==0)Portal.ListInstances(store,slug,Bearer(request));
+                if(instance.Length==0&&request.Method=="GET")Portal.ValidateListAccess(store,slug,Bearer(request));
+                else if(instance.Length==0)Portal.ListInstances(store,slug,Bearer(request));
                 else Portal.RequireGrant(store,slug,Bearer(request),instance);
                 return;
             }

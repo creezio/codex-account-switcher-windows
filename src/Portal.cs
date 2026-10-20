@@ -102,6 +102,12 @@ namespace Creezio.Switcher
         {return RequireGrant(store,slug,bearer,instanceId,new PortalNative(store));}
         internal static PortalInstanceGrant ResolveGrant(RelayStore store,string slug,string bearer,string instanceId)
         {return RequireGrant(store,slug,bearer,instanceId);}
+        internal static void ValidateListAccess(RelayStore store,string slug,string bearer)
+        {
+            // Header admission checks the private route and portal allowlist only.
+            // The response handler verifies and describes each instance once.
+            RequireConfig(store,Webhooks.Authorize(store,slug,bearer));
+        }
         internal static PortalInstanceGrant RequireGrant(RelayStore store,string slug,string bearer,string instanceId,IPortalNative native)
         {var route=Webhooks.Authorize(store,slug,bearer);var grant=Grant(RequireConfig(store,route),instanceId);native.Verify(grant);return Copy(grant);}
         internal static object ListInstances(RelayStore store,string slug,string bearer)

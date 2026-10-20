@@ -64,8 +64,14 @@ internal static class PortalEnrollmentTests
         internal PortalEnrollmentService NewService(){return new PortalEnrollmentService(Store,(route,actor)=>{Interlocked.Increment(ref Authorizations);if(Revoked||route!=Route.Id||(actor!=Actor&&actor!=OtherActor))throw new WebhookException(403,"Fictional authorization revoked");},Dependencies);}
         internal object Start(string key="one",string accountId=null,bool expose=true,string name="Équipe fictive",string loginMethod=null){return Normal(Service.Start(Route.Id,Actor,key,new EnrollmentRequest{Name=name,AccountId=accountId,ExposeInPortal=expose,LoginMethod=loginMethod}));}
         internal object Get(string id){return Normal(Service.Get(Route.Id,Actor,id));}
-        internal object Wait(string id,string state,int timeoutSeconds=5)
-        {DateTime end=DateTime.UtcNow.AddSeconds(timeoutSeconds);object value;do{value=Get(id);if(Value(value,"state")==state)return value;if(Value(value,"state")=="failed"&&state!="failed")throw new Exception("Unexpected fictional failure: "+Value(value,"error"));Thread.Sleep(5);}while(DateTime.UtcNow<end);throw new Exception("Expected "+state+", got "+Value(value,"state"));}
+        internal object Wait(string id,string state,int timeoutSeconds=20)
+        {
+            // Native calls are mocked, but asynchronous provisioning still uses
+            // real disk, ACL and DPAPI operations on the shared test machine.
+            var elapsed=Stopwatch.StartNew();var timeout=TimeSpan.FromSeconds(timeoutSeconds);object value;
+            do{value=Get(id);if(Value(value,"state")==state)return value;if(Value(value,"state")=="failed"&&state!="failed")throw new Exception("Unexpected fictional failure: "+Value(value,"error"));Thread.Sleep(5);}while(elapsed.Elapsed<timeout);
+            throw new Exception("Expected "+state+", got "+Value(value,"state")+" after "+elapsed.ElapsedMilliseconds+" ms (native readiness checks="+ReadinessChecks+", integration attempts="+Installs+").");
+        }
         internal object Preview(string key="one"){string id=Value(Start(key),"id");Wait(id,"awaiting-authorization");Logins.Single().Complete();return Wait(id,"identity-confirmation");}
         internal object Confirm(object view){return Normal(Service.Confirm(Route.Id,Actor,Value(view,"id"),Value(Json.Get(view,"identity"),"hash")));}
         internal Profile Known(string authentication=null)
