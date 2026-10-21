@@ -21,6 +21,7 @@ namespace Creezio.Switcher.Desktop
             assert(InstanceResourcesView.PermissionIndex(site,"publish")==2&&InstanceResourcesView.PermissionMode(site,2)=="publish"&&InstanceResourcesView.PermissionMode(page,2)=="read","Publication restaurée uniquement pour le Site modifiable");
             assert(InstanceResourcesView.SitePermissionDescription(2).Contains("Sauvegarder et publier les versions de ce Site")&&InstanceResourcesView.SitePermissionDescription(1).Contains("métadonnées uniquement"),"Notice distingue publication et simple modification des métadonnées");
             await InstanceResourceRefreshAcceptance(context,shell,owner,client,assert);
+            await ToolAccessModeAcceptance(context,shell,owner,assert);
         }
         private static async Task InstanceResourceRefreshAcceptance(DesktopContext context,ShellWindow shell,DesktopInstance owner,DesktopInstance client,Action<bool,string> assert)
         {

@@ -12,14 +12,14 @@
     <Compile Include="CloudJobTests.cs;CloudCapacityTests.cs"/>
     <Compile Include="CloudMissionQueueTests.cs;CloudQueueApiTests.cs;CloudQueueRepositoryTests.cs"/>
     <Compile Include="RelayReconnectTests.cs;RelayMcpBootstrapTests.cs;SwitcherUpdateTests.cs;SwitcherLifecycleTests.cs;SwitcherInstallationTests.cs"/>
-    <Compile Include="VaultConcurrencyTests.cs;PortalAdministrationTests.cs;PortalEnrollmentTests.cs;PortalNativeHeadlessTests.cs;PortalPluginTests.cs"/>
+    <Compile Include="VaultConcurrencyTests.cs;PortalAdministrationTests.cs;PortalResourceAccessTests.cs;PortalEnrollmentTests.cs;PortalNativeHeadlessTests.cs;PortalPluginTests.cs"/>
     <Compile Include="PortalSkillTests.cs;PortalConversationManagementTests.cs;DesktopGoalProxyTests.cs;PortalManagementHttpTests.cs"/>
     <Compile Include="CloudTasksBackendTests.cs"/>
     <Compile Include="CloudEnvironmentSetupTests.cs"/>
     <Compile Include="CloudGitHubTests.cs"/>
     <Compile Include="AtomicReplaceTests.cs"/>
     <Compile Include="WebhookTests.cs;WebhookHttpAuthTests.cs;WebhookDispatchTests.cs;CloudflareTunnelTests.cs;WebhookChatTests.cs;WebhookWebSocketTests.cs;PortalTests.cs;PortalMcpTests.cs;PortalHttpTests.cs;PortalComposerOptionsTests.cs;PortalComposerTests.cs;PortalPermissionTests.cs;PortalAttachmentTests.cs"/>
-    <Compile Include="ChatWatchTests.cs;CodexCompatibilityTests.cs;NativeFileUploadTests.cs;SitesArchiveTests.cs;ToolContractCompatibilityTests.cs"/>
+    <Compile Include="ChatWatchTests.cs;CodexCompatibilityTests.cs;NativeFileUploadTests.cs;SitesArchiveTests.cs;ToolContractCompatibilityTests.cs;GlobalToolAccessTests.cs"/>
     <Compile Include="HeadlessRuntimeTests.cs;HeadlessToolTests.cs;HeadlessTransportTests.cs;HeadlessApprovalTests.cs;HeadlessSourceTests.cs"/>
     <Compile Include="../src/*.cs"/><Compile Include="../desktop/JsonCompatibility.cs"/><Compile Include="../desktop/AssemblyInfo.cs"/>
     <Compile Include="TestRunner.cs;ProcessResourceTests.cs;TransferTests.cs;ThreadCopyTests.cs;LoginBrowserTests.cs;ResetTests.cs;InstanceTests.cs;SimpleWorkflowTests.cs;ToolTunnelTests.cs;SharedPagesTests.cs;ResourceLinksTests.cs;ResourceCatalogTests.cs;RelayTests.cs;GeneralRelayTests.cs;ProductTests.cs;ConsoleTests.cs;RemoteTests.cs;AssistanceTests.cs"/>

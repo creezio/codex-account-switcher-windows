@@ -25,6 +25,7 @@ namespace Creezio.Switcher
             try{
                 var identity=PortalAdministration.Authorize(store,request);var path=PortalAdministration.Path(request.Path);
                 using(request.Method=="POST"?ApplicationUpdates.AdmitPortalMutation(store):null){
+                if(PortalResourceAccessHttp.Path(request.Path).Success)return PortalResourceAccessHttp.Handle(store,request,identity);
                 if(PortalManagementHttp.Path(request.Path).Success)return PortalManagementHttp.Handle(store,request,identity);
                 if(path.Groups[5].Success){
                     var plugins=fixturePlugins??Plugins(store);string instance=path.Groups[5].Value,kind=path.Groups[6].Value,operation=path.Groups[7].Value;

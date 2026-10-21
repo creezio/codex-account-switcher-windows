@@ -183,7 +183,7 @@ namespace Creezio.Switcher
         internal object Accounts(string rootRouteId,string actorHash)
         {lock(sync){Require(rootRouteId,actorHash);return new{accounts=AccountRows(rootRouteId,actorHash)};}}
         internal object Capabilities(string rootRouteId,string actorHash)
-        {lock(sync){Require(rootRouteId,actorHash);return new{enabled=true,canCreateInstances=true,canManagePlugins=true,canManageSkills=true,canManageGoals=true,canManageSchedules=true,deviceCodeSupported=true,browserLoginSupported=true,localLoginWindowSeconds=600,accounts=AccountRows(rootRouteId,actorHash),active=OwnRecords(rootRouteId,actorHash).Where(record=>!Terminal(record.State)||record.Committed&&(record.State=="failed"||record.State=="interrupted")).OrderByDescending(record=>record.CreatedUtc).Take(20).Select(View).ToArray()};}}
+        {lock(sync){Require(rootRouteId,actorHash);return new{enabled=true,canCreateInstances=true,canManagePlugins=true,canManageSkills=true,canManageGoals=true,canManageSchedules=true,canManageResourceAccess=true,deviceCodeSupported=true,browserLoginSupported=true,localLoginWindowSeconds=600,accounts=AccountRows(rootRouteId,actorHash),active=OwnRecords(rootRouteId,actorHash).Where(record=>!Terminal(record.State)||record.Committed&&(record.State=="failed"||record.State=="interrupted")).OrderByDescending(record=>record.CreatedUtc).Take(20).Select(View).ToArray()};}}
         private static EnrollmentRequest Normalize(EnrollmentRequest value)
         {
             if(value==null)throw new WebhookException(400,"Précisez le nom de l'instance.");string name=(value.Name??"").Trim();

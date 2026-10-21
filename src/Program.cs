@@ -6,7 +6,7 @@ using System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("Creezio Codex Account Switcher")]
 [assembly: System.Reflection.AssemblyVersion("0.29.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersion("0.29.0-beta.7")]
+[assembly: System.Reflection.AssemblyInformationalVersion("0.29.0-beta.8")]
 [assembly: System.Reflection.AssemblyCompany("Creezio")]
 
 namespace Creezio.Switcher

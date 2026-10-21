@@ -50,8 +50,8 @@ namespace Creezio.Switcher
         private readonly ToolTunnel tunnel;
         internal SharedPages(RelayStore data,ToolTunnel transport=null){store=data;tunnel=transport??new ToolTunnel(data);}
         private static object ObjectValue(object value){return Json.Read<object>(Json.Write(value));}
-        private static bool Readable(TunnelGrant g){return g.Tools.Any(t=>t.Server==Server&&t.Name==ReadTool&&t.ReadOnly);}
-        private static bool Editable(TunnelGrant g){return g.Tools.Any(t=>t.Server==Server&&t.Name==EditTool&&!t.ReadOnly);}
+        private static bool Readable(TunnelGrant g){return ToolTunnel.GlobalGrantId(g.Id)||g.Tools.Any(t=>t.Server==Server&&t.Name==ReadTool&&t.ReadOnly);}
+        private static bool Editable(TunnelGrant g){return ToolTunnel.GlobalGrantId(g.Id)||g.Tools.Any(t=>t.Server==Server&&t.Name==EditTool&&!t.ReadOnly);}
         internal SharedPageEntry[] List(RelaySession session)
         {
             // List verifies the source even when there are no matching grants.

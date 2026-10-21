@@ -48,13 +48,14 @@ internal static class TestRunner
             if(args.Length==2&&args[1]=="--enrollment"){
                 VaultConcurrencyTests.RunAll(Check,sandbox);
                 PortalAdministrationTests.RunAll(Check,sandbox);
+                PortalResourceAccessTests.RunAll(Check,sandbox);
                 PortalEnrollmentTests.RunAll(Check,sandbox);
                 PortalNativeHeadlessTests.RunAll(Check,sandbox);
                 Console.WriteLine(passed+" tests passed.");return 0;
             }
             if(args.Length==2&&args[1]=="--tool-contract"){
                 ToolContractCompatibilityTests.RunAll(Check,sandbox);
-                ToolTunnelTests.RunAll(Check,sandbox);SitesArchiveTests.RunAll(Check,sandbox);
+                ToolTunnelTests.RunAll(Check,sandbox);GlobalToolAccessTests.RunAll(Check,sandbox);SitesArchiveTests.RunAll(Check,sandbox);
                 Console.WriteLine(passed+" tests passed.");return 0;
             }
             if(args.Length==2&&args[1]=="--cloud-budget"){
@@ -125,7 +126,7 @@ internal static class TestRunner
             SimpleWorkflowTests.RunAll(Check,sandbox,a,b);
             ThreadCopyTests.RunAll(Check,sandbox,a,b);
             TransferTests.RunAll(Check,sandbox);
-            ToolContractCompatibilityTests.RunAll(Check,sandbox);ToolTunnelTests.RunAll(Check,sandbox);SitesArchiveTests.RunAll(Check,sandbox);
+            ToolContractCompatibilityTests.RunAll(Check,sandbox);ToolTunnelTests.RunAll(Check,sandbox);GlobalToolAccessTests.RunAll(Check,sandbox);SitesArchiveTests.RunAll(Check,sandbox);
             Check("native file upload protocol suite",()=>Assert(NativeFileUploadTests.Main(new[]{Folder("native-file-upload")})==0,"native file upload regression"));
             SharedPagesTests.RunAll(Check,sandbox);ResourceLinksTests.RunAll(Check,sandbox);
             HeadlessToolTests.RunAll(Check,sandbox);
@@ -143,7 +144,7 @@ internal static class TestRunner
             SwitcherUpdateTests.RunAll(Check,sandbox);
             SwitcherLifecycleTests.RunAll(Check,sandbox);
             SwitcherInstallationTests.RunAll(Check,sandbox);
-            VaultConcurrencyTests.RunAll(Check,sandbox);PortalAdministrationTests.RunAll(Check,sandbox);PortalEnrollmentTests.RunAll(Check,sandbox);PortalNativeHeadlessTests.RunAll(Check,sandbox);
+            VaultConcurrencyTests.RunAll(Check,sandbox);PortalAdministrationTests.RunAll(Check,sandbox);PortalResourceAccessTests.RunAll(Check,sandbox);PortalEnrollmentTests.RunAll(Check,sandbox);PortalNativeHeadlessTests.RunAll(Check,sandbox);
             PortalPluginTests.RunAll(Check,sandbox);
             PortalSkillTests.RunAll(Check,sandbox);PortalConversationManagementTests.RunAll(Check,sandbox);DesktopGoalProxyTests.RunAll(Check,sandbox);PortalManagementHttpTests.RunAll(Check,sandbox);
             ProductTests.RunAll(Check,sandbox);

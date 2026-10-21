@@ -77,8 +77,9 @@ namespace Creezio.Switcher
         private readonly Func<string,TunnelOwner> resolveOwner;
         private readonly Func<TunnelOwner,IToolTunnelConnection> connect;
         private readonly Action<RelaySession> verifySource;
-        public ToolTunnel(RelayStore data,Func<string,TunnelOwner> resolver=null,Func<TunnelOwner,IToolTunnelConnection> connector=null,Action<RelaySession> verifier=null)
-        {store=data;resolveOwner=resolver??ResolveOwner;connect=connector??(o=>new ToolTunnelRpc(o.Executable,o.Home,o.Account,store));verifySource=verifier??VerifySource;}
+        private readonly Func<TunnelOwner[]> listOwners;
+        public ToolTunnel(RelayStore data,Func<string,TunnelOwner> resolver=null,Func<TunnelOwner,IToolTunnelConnection> connector=null,Action<RelaySession> verifier=null,Func<TunnelOwner[]> owners=null)
+        {store=data;resolveOwner=resolver??ResolveOwner;connect=connector??(o=>new ToolTunnelRpc(o.Executable,o.Home,o.Account,store));verifySource=verifier??VerifySource;listOwners=owners??ListOwners;}
         internal static bool AllowedServer(string name)
         {return !String.IsNullOrWhiteSpace(name)&&!new[]{"creezio-relay","codex_app","cua_repl","node_repl","code-review"}.Contains(name);}
         private TunnelOwner ResolveOwner(string id)
@@ -102,6 +103,29 @@ namespace Creezio.Switcher
             var a=new AccountService(Path.GetDirectoryName(store.Root));var instance=a.Data.Instances.SingleOrDefault(i=>!i.Archived&&RelayStore.SamePath(a.Instances.Home(i),session.Home));
             if(instance==null||instance.AccountKey!=session.Account)throw new InvalidOperationException("Compte source non reconnu.");
             NamedInstances.VerifyAccount(a,instance);AgentProviders.Create(store).Verify(c);
+        }
+        private TunnelOwner[] ListOwners()
+        {
+            // Metadata only: listing shares must not start a GUI, app-server or
+            // one connection per account. Native inventory is fetched on demand.
+            var accounts=new AccountService(Path.GetDirectoryName(store.Root));
+            return accounts.Data.Instances.Where(i=>!i.Archived&&!String.IsNullOrWhiteSpace(i.AccountKey))
+                .Select(i=>new TunnelOwner{Id=i.Id,Name=i.Name,Home=accounts.Instances.Home(i),Account=i.AccountKey}).ToArray();
+        }
+        internal static bool GlobalGrantId(string id){return id!=null&&id.StartsWith("global:",StringComparison.Ordinal);}
+        private static string GlobalId(TunnelOwner owner,ToolAccessPolicyState policy)
+        {
+            string home=Path.GetFullPath(owner.Home).TrimEnd('\\','/').ToUpperInvariant();
+            // The desktop (.NET) and worker (Framework) serialize Unicode
+            // differently. Hash raw framed identity text so both see one ID.
+            return "global:"+owner.Id+":"+Webhooks.Hash("global-tool-owner\n"+owner.Account.Length+":"+owner.Account+home).Substring(0,32)+":"+policy.Revision;
+        }
+        private TunnelGrant[] GlobalGrants(RelaySession session,ToolAccessPolicyState policy)
+        {
+            if(!policy.Enabled)return new TunnelGrant[0];
+            return listOwners().Where(o=>o!=null&&!String.IsNullOrEmpty(o.Id)&&!String.IsNullOrEmpty(o.Account)&&!String.IsNullOrEmpty(o.Home)&&!RelayStore.SamePath(o.Home,session.Home))
+                .Select(o=>new TunnelGrant{Id=GlobalId(o,policy),Name="Accès complet des ressources · "+o.Name,Instance=o.Id,InstanceName=o.Name,Home=o.Home,Account=o.Account,Enabled=true,Revision=policy.Revision,
+                    Sources=new Dictionary<string,string>{{session.Home,session.Account}}}).ToArray();
         }
         internal static string Canonical(object value)
         {
@@ -289,7 +313,11 @@ namespace Creezio.Switcher
         internal static bool CanUse(TunnelGrant g,RelaySession s)
         {return g.Enabled&&g.Sources!=null&&g.Sources.Any(p=>RelayStore.SamePath(p.Key,s.Home)&&p.Value==s.Account);}
         internal TunnelGrant Authorize(RelaySession session,string id)
-        {verifySource(session);var g=Grants().SingleOrDefault(x=>x.Id==id);if(g==null||!CanUse(g,session))throw new InvalidOperationException("Ce partage d'outils est absent, désactivé ou interdit à cette instance.");return g;}
+        {
+            verifySource(session);
+            var g=GlobalGrantId(id)?GlobalGrants(session,ToolAccessPolicy.Read(store)).SingleOrDefault(x=>x.Id==id):Grants().SingleOrDefault(x=>x.Id==id);
+            if(g==null||!CanUse(g,session))throw new InvalidOperationException("Ce partage d'outils est absent, désactivé ou interdit à cette instance.");return g;
+        }
         internal string CurrentName(TunnelGrant grant)
         {
             var instance=new Vault(Path.GetDirectoryName(store.Root)).Load().Instances.FirstOrDefault(i=>i.Id==grant.Instance);
@@ -298,10 +326,29 @@ namespace Creezio.Switcher
         public object List(RelaySession session)
         {
             verifySource(session);
-            return Grants().Where(g=>CanUse(g,session)).Select(g=>new{id=g.Id,name=g.Name,instance=g.Instance,instanceName=CurrentName(g),resourceField=g.ResourceField,resourceValue=g.ResourceValue,resourceValues=g.ResourceValues,resourceLabels=g.ResourceLabels,tools=g.Tools.Select(t=>new{server=t.Server,name=t.Name,group=t.Group,readOnly=t.ReadOnly,limitation=Limitation(t)}).ToArray()}).ToArray();
+            var policy=ToolAccessPolicy.Read(store);
+            return Grants().Where(g=>CanUse(g,session)).Concat(GlobalGrants(session,policy)).Select(g=>new{id=g.Id,name=g.Name,instance=g.Instance,instanceName=GlobalGrantId(g.Id)?g.InstanceName:CurrentName(g),resourceField=g.ResourceField,resourceValue=g.ResourceValue,resourceValues=g.ResourceValues,resourceLabels=g.ResourceLabels,
+                dynamic=GlobalGrantId(g.Id),allResources=GlobalGrantId(g.Id),access=GlobalGrantId(g.Id)?"read-write":null,
+                discovery=GlobalGrantId(g.Id)?new{server="*",tool="*",instruction="Use describe_shared_tool with this share and server/tool * to fetch only this owner's current native tools. All current and future resources and read/write actions are shared."}:null,
+                resourceLinks=GlobalGrantId(g.Id)?new{tool="get_shared_resource_link",instruction="Supply kind=page or kind=site with the exact resource ID from a verified native result."}:null,
+                tools=g.Tools.Select(t=>new{server=t.Server,name=t.Name,group=t.Group,readOnly=t.ReadOnly,limitation=Limitation(t)}).ToArray()}).ToArray();
         }
         public object Describe(RelaySession session,string grantId,string server,string name)
-        {var g=Authorize(session,grantId);var tool=g.Tools.Single(t=>t.Server==server&&t.Name==name);return new{instance=g.Instance,instanceName=CurrentName(g),resourceField=g.ResourceField,resourceValue=g.ResourceValue,resourceValues=g.ResourceValues,resourceLabels=g.ResourceLabels,limitation=Limitation(tool),fileTransfer="Declared Sites .tar.gz archives use the owner's authenticated upload, with full access required in the source chat. Other native file uploads are unavailable; credentials are returned once and redacted from storage.",tool=tool};}
+        {return DescribeAsync(session,grantId,server,name,CancellationToken.None).GetAwaiter().GetResult();}
+        public async Task<object> DescribeAsync(RelaySession session,string grantId,string server,string name,CancellationToken token)
+        {
+            var g=Authorize(session,grantId);bool global=GlobalGrantId(g.Id);TunnelTool[] tools=g.Tools.ToArray();
+            if(global){
+                var owner=resolveOwner(g.Instance);CheckOwner(new TunnelOwner{Id=g.Instance,Account=g.Account,Home=g.Home},owner);
+                using(var connection=connect(owner))tools=(await connection.Inventory(token).ConfigureAwait(false)).Where(t=>AllowedServer(t.Server)).ToArray();
+                CheckOwner(owner,resolveOwner(g.Instance));
+                if(Authorize(session,grantId).Revision!=g.Revision)throw new InvalidOperationException("Le mode d'accès complet a changé pendant l'inventaire.");
+                foreach(var t in tools)t.Signature=Signature(t);
+                if(server=="*"&&name=="*")return new{instance=g.Instance,instanceName=g.InstanceName,allResources=true,access="read-write",tools=tools};
+            }
+            var tool=tools.SingleOrDefault(t=>t.Server==server&&t.Name==name);if(tool==null)throw new InvalidOperationException("Cet outil n'est pas disponible dans ce partage.");
+            return new{instance=g.Instance,instanceName=global?g.InstanceName:CurrentName(g),resourceField=g.ResourceField,resourceValue=g.ResourceValue,resourceValues=g.ResourceValues,resourceLabels=g.ResourceLabels,allResources=global,limitation=Limitation(tool),fileTransfer="Declared Sites .tar.gz archives use the owner's authenticated upload, with full access required in the source chat. Other native file uploads are unavailable; credentials are returned once and redacted from storage.",tool=tool};
+        }
         private string Record(string id){RelayStore.MessageId(id);return "tool-call-"+id+".dpapi";}
         private void Persist(TunnelCall call)
         {
@@ -333,7 +380,8 @@ namespace Creezio.Switcher
         {
             RelayStore.MessageId(id);if(Encoding.UTF8.GetByteCount(Json.Write(args))>200000)throw new InvalidOperationException("Arguments limités à 200 Ko.");
             var grant=Authorize(session,grantId);CheckResource(grant,args);
-            var chosen=grant.Tools.SingleOrDefault(t=>t.Server==server&&t.Name==name);if(chosen==null)throw new InvalidOperationException("Cet outil n'est pas partagé.");
+            bool global=GlobalGrantId(grant.Id);
+            var chosen=grant.Tools.SingleOrDefault(t=>t.Server==server&&t.Name==name);if(!global&&chosen==null)throw new InvalidOperationException("Cet outil n'est pas partagé.");
             string hash=Hash(Json.Read<object>(Json.Write(new{grantId,server,name,args})));
             using(store.Lease("tool-call-"+id)){
                 var existing=store.ReadRecord<TunnelCall>(Record(id));
@@ -341,18 +389,29 @@ namespace Creezio.Switcher
                 var call=new TunnelCall{Id=id,Grant=grant.Id,GrantName=grant.Name,Instance=grant.Instance,Revision=grant.Revision,SourceThread=session.Thread,SourceHome=session.Home,SourceAccount=session.Account,Fingerprint=hash,Tool=server+"/"+name,State="preparing",Created=DateTime.UtcNow.ToString("o")};Persist(call);
                 bool sent=false;SitesArchive archive=null;
                 try{
-                    CheckArgumentSurface(chosen.Schema,args,"arguments");
-                    if(SitesArchive.Supplied(chosen,args))archive=SitesArchive.Open(chosen,args,session);
-                    else {CheckSitesTransport(chosen,args);CheckTransport(chosen.Schema,args);}
+                    if(!global){
+                        CheckArgumentSurface(chosen.Schema,args,"arguments");
+                        if(SitesArchive.Supplied(chosen,args))archive=SitesArchive.Open(chosen,args,session);
+                        else {CheckSitesTransport(chosen,args);CheckTransport(chosen.Schema,args);}
+                    }
                     var pinned=new TunnelOwner{Id=grant.Instance,Home=grant.Home,Account=grant.Account};var owner=resolveOwner(grant.Instance);CheckOwner(pinned,owner);
                     // Serializes direct calls to one account, including calls from different chats/processes.
                     using(store.Lease("tool-owner-"+Hash(owner.Account).Substring(0,32)))
                     using(var connection=connect(owner)){
                         var inventory=await connection.Inventory(token).ConfigureAwait(false);var live=inventory.SingleOrDefault(t=>t.Server==server&&t.Name==name);
-                        string difference=ContractDifference(chosen,live,args);call.ContractStatus=difference!=null?"breaking":Signature(chosen)==Signature(live)?"unchanged":"compatible";call.ContractReason=difference??(call.ContractStatus=="compatible"?"Documentation ou parametres optionnels compatibles ; droits et schema autorise conserves.":null);
+                        if(global){
+                            if(live==null||!AllowedServer(live.Server)||live.Schema==null)throw new InvalidOperationException("Cet outil n'est pas disponible dans l'inventaire natif du propriétaire.");
+                            // An explicit global policy authorizes the current
+                            // native contract, including future write tools and
+                            // resources, instead of a static selected snapshot.
+                            chosen=live;
+                            if(SitesArchive.Supplied(live,args))archive=SitesArchive.Open(live,args,session);
+                        }
+                        string difference=ContractDifference(chosen,live,args);call.ContractStatus=global?"global":difference!=null?"breaking":Signature(chosen)==Signature(live)?"unchanged":"compatible";call.ContractReason=difference??(global?"Accès complet explicite : contrat natif courant, toutes ressources et actions lecture/écriture.":call.ContractStatus=="compatible"?"Documentation ou parametres optionnels compatibles ; droits et schema autorise conserves.":null);
                         if(difference!=null)throw new InvalidOperationException("Le contrat de cet outil necessite une nouvelle autorisation : "+difference+". Aucun appel envoye. Actualisez uniquement ce partage si vous acceptez cette modification.");
-                        // No parameter introduced by a provider update is accepted
-                        // implicitly, even when that provider allows unknown keys.
+                        // Customized grants do not implicitly accept newly
+                        // introduced parameters. Global policy instead uses the
+                        // selected owner's current native contract above.
                         CheckArgumentSurface(live.Schema,args,"arguments");
                         if(archive==null){CheckSitesTransport(live,args);CheckTransport(live.Schema,args);}
                         var current=Authorize(session,grantId);if(current.Revision!=grant.Revision)throw new InvalidOperationException("Le partage a été modifié ou révoqué avant l'envoi.");

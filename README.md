@@ -280,6 +280,13 @@ les plugins connectés, Sites et Pages sont détectés automatiquement auprès d
 Choisissez **Partager avec**, cochez les ressources par leur nom, sélectionnez
 **Lecture** ou **Lecture et modification**, puis **Enregistrer les accès**.
 
+Pour ouvrir les ressources de toutes les instances dans les deux sens, utilisez
+**Accès global entre instances…**. Ce mode optionnel accorde la lecture et
+l'écriture, inclut les instances et ressources futures, et conserve les partages
+personnalisés pour leur remise en application à la désactivation. Il se configure
+aussi par API/webhook d'administration :
+[mode global et contrat HTTP](docs/GLOBAL-RESOURCE-ACCESS.md).
+
 **Renommer l’instance** reste accessible dans ses actions, quel que soit l’onglet ; le compte et
 le dossier restent associés à la même instance. Dans **Compte**, **Vérifier
 l’intégration** affiche immédiatement sa progression, puis un résultat daté ou

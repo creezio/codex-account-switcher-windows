@@ -11,8 +11,10 @@ namespace Creezio.Switcher.Desktop
     internal sealed class ToolSharingPage : CollectionPage
     {
         private bool history;
+        private readonly ToolAccessModeView accessMode;
         internal ToolSharingPage(DesktopContext c,ShellWindow s):base(c,s,"Outils partagés","Utilisez les plugins d’une autre instance, directement depuis votre agent. Aucun prompt n’est envoyé au propriétaire.")
         {
+            accessMode=new ToolAccessModeView(c,s,Refresh);Header.Children.Add(Ui.Card(accessMode));
             Command("Partager des outils",()=>Edit(null),true);
             Command("Mes partages",delegate{history=false;return Refresh();});
             Command("Historique des appels",delegate{history=true;return Refresh();});
@@ -20,9 +22,10 @@ namespace Creezio.Switcher.Desktop
         private ToolTunnel Tunnel {get{return new ToolTunnel(Context.Store);}}
         public override Task Refresh()
         {
+            accessMode.Refresh();
             if(history)Rows(Tunnel.Recent().Select(c=>new ItemRow{Id=c.Id,Title=c.GrantName,Summary=c.Tool,State=State(c.State),Revision=c.Updated,Value=c}));
             else Rows(Tunnel.Grants().Select(g=>new ItemRow{Id=g.Id,Title=g.Name,Summary=g.Tools.Count+" outil(s) · "+g.Sources.Count+" instance(s) cliente(s)",State=!g.Enabled?"Désactivé":String.IsNullOrEmpty(g.ResourceField)?"Actif · contenu du plugin":"Actif · ressource précise",Revision=g.Revision,Value=g}));
-            Notice.Text=history?"Les réponses sont chiffrées et les identifiants sensibles masqués. Un appel incertain n’est jamais renvoyé automatiquement.":"Codex doit rester ouvert chez le propriétaire. Les transferts de fichiers et la publication de nouvelles versions Sites ne sont pas disponibles dans ce tunnel.";
+            Notice.Text=history?"Les réponses sont chiffrées et les identifiants sensibles masqués. Un appel incertain n’est jamais renvoyé automatiquement.":accessMode.FullAccessEnabled?"Le mode global autorise les accès entre toutes les instances. Les partages personnalisés ci-dessous sont conservés pour sa désactivation.":"Les partages ci-dessous définissent les outils et ressources accessibles à chaque instance.";
             return Task.CompletedTask;
         }
         internal static string State(string value)

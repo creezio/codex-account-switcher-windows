@@ -28,6 +28,7 @@ namespace Creezio.Switcher.Desktop
         private readonly TextBlock state=Ui.Text("",13,true),summary=Ui.Text("",13),pageLabel=Ui.Text("",12,true);
         private readonly Button save,previous,next;
         private readonly Button refresh;
+        private readonly ToolAccessModeView accessMode;
         private bool changing,busy,disposed;
         private int page;
         private CancellationTokenSource discovery;
@@ -36,7 +37,7 @@ namespace Creezio.Switcher.Desktop
         internal Func<PluginAccess> PluginServiceFactory;
         internal Func<CancellationToken,Task<InstanceInventory>> DiscoveryFixture;
         internal bool Dirty=>Snapshot(initial)!=Snapshot(draft);
-        internal void UpdateOwnerName(string name){owner.Name=name;}
+        internal void UpdateOwnerName(string name){owner.Name=name;accessMode.Refresh();}
         private static string Snapshot(Dictionary<string,string> value)=>String.Join("|",value.OrderBy(p=>p.Key).Select(p=>p.Key+":"+p.Value));
         internal InstanceResourcesView(DesktopContext context,ShellWindow shell,DesktopInstance owner)
         {
@@ -49,6 +50,8 @@ namespace Creezio.Switcher.Desktop
             ConfirmDiscard=()=>Ui.Confirm(shell,"Abandonner les changements d'accès non enregistrés ?","Accès en cours de modification");
             RowDefinitions.Add(new RowDefinition());RowDefinitions.Add(new RowDefinition{Height=GridLength.Auto});
             var content=new StackPanel();var top=new StackPanel();content.Children.Add(top);
+            accessMode=new ToolAccessModeView(context,shell,()=>{Render();return Task.CompletedTask;});
+            top.Children.Add(Ui.Card(accessMode));
             var title=new DockPanel();top.Children.Add(title);
             refresh=Ui.AsyncButton("Actualiser",()=>Discover(true),e=>state.Text=Program.SafeError(e));title.Children.Add(refresh);
             DockPanel.SetDock(refresh,Dock.Right);state.VerticalAlignment=VerticalAlignment.Center;title.Children.Add(state);
@@ -105,7 +108,7 @@ namespace Creezio.Switcher.Desktop
         }
         private void Render()
         {
-            if(disposed||save==null)return;rows.Children.Clear();int total=Filtered().Count();page=Math.Max(0,Math.Min(page,Math.Max(0,(total-1)/40)));
+            if(disposed||save==null)return;accessMode.Configure.IsEnabled=!busy;rows.Children.Clear();int total=Filtered().Count();page=Math.Max(0,Math.Min(page,Math.Max(0,(total-1)/40)));
             previous.IsEnabled=page>0;next.IsEnabled=(page+1)*40<total;pageLabel.Text=total==0?"":$"{page*40+1}–{Math.Min(total,(page+1)*40)} / {total}";
             previous.Visibility=next.Visibility=pageLabel.Visibility=total>40?Visibility.Visible:Visibility.Collapsed;
             var unmatched=draft.Keys.Where(k=>!inventory.Resources.Any(r=>r.Key==k)).ToArray();

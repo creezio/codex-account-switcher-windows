@@ -36,24 +36,29 @@ namespace Creezio.Switcher
         private readonly Func<TunnelGrant,object,CancellationToken,Task<object>> navigate;
         internal SharedResourceLinks(RelayStore data,ToolTunnel transport=null,Func<TunnelGrant,object,CancellationToken,Task<object>> opener=null)
         {store=data;tunnel=transport??new ToolTunnel(data);navigate=opener??Navigate;}
-        private TunnelGrant Grant(RelaySession session,string share,string resource)
+        private TunnelGrant Grant(RelaySession session,string share,string resource,string kind=null)
         {
             ToolTunnel.Bound(resource,512,"Ressource");var g=tunnel.Authorize(session,share);
+            bool global=ToolTunnel.GlobalGrantId(g.Id);
+            if(global){
+                if(kind!="page"&&kind!="site")throw new InvalidOperationException("Indiquez kind=page ou kind=site pour un lien issu de l'accès complet des ressources.");
+                g.ResourceField=kind=="page"?"page_id":"project_id";
+            }else if(!String.IsNullOrEmpty(kind)&&kind!=(g.ResourceField=="page_id"?"page":g.ResourceField=="project_id"?"site":null))throw new InvalidOperationException("Le type de ressource ne correspond pas à ce partage.");
             string read=g.ResourceField=="page_id"?SharedPages.ReadTool:g.ResourceField=="project_id"?SiteRead:null;
-            if(read==null||!g.Tools.Any(t=>t.Server==SharedPages.Server&&t.Name==read&&t.ReadOnly))
+            if(read==null||(!global&&!g.Tools.Any(t=>t.Server==SharedPages.Server&&t.Name==read&&t.ReadOnly)))
                 throw new InvalidOperationException("Ce lien nécessite un partage de Page ou de Site avec son outil de lecture autorisé.");
-            ToolTunnel.CheckResource(g,new Dictionary<string,object>{{g.ResourceField,resource}});
+            if(!global)ToolTunnel.CheckResource(g,new Dictionary<string,object>{{g.ResourceField,resource}});
             ToolTunnel.CheckOwner(new TunnelOwner{Id=g.Instance,Account=g.Account,Home=g.Home},tunnel.Owner(g.Instance));return g;
         }
         private static string Label(TunnelGrant g,string resource)
         {string label;return g.ResourceLabels!=null&&g.ResourceLabels.TryGetValue(resource,out label)?label:g.Name;}
-        internal ResourceLinkInfo Create(RelaySession session,string share,string resource)
+        internal ResourceLinkInfo Create(RelaySession session,string share,string resource,string kind=null)
         {
-            var g=Grant(session,share,resource);var state=ResourceLinkServer.Ready(store);
+            var g=Grant(session,share,resource,kind);var state=ResourceLinkServer.Ready(store);
             ResourceLinkTicket ticket;
             using(store.Lease("resource-links")){
                 var links=store.ReadRecord<List<ResourceLinkTicket>>("resource-links.dpapi");
-                ticket=links.FirstOrDefault(x=>x.Share==share&&x.Resource==resource&&x.Owner==g.Instance&&x.OwnerAccount==g.Account&&RelayStore.SamePath(x.OwnerHome,g.Home)&&x.Source.Account==session.Account&&RelayStore.SamePath(x.Source.Home,session.Home));
+                ticket=links.FirstOrDefault(x=>x.Share==share&&x.Resource==resource&&x.Field==g.ResourceField&&x.Owner==g.Instance&&x.OwnerAccount==g.Account&&RelayStore.SamePath(x.OwnerHome,g.Home)&&x.Source.Account==session.Account&&RelayStore.SamePath(x.Source.Home,session.Home));
                 if(ticket==null){
                     if(links.Count>=1000)throw new InvalidOperationException("La limite de liens locaux est atteinte.");
                     ticket=new ResourceLinkTicket{Id=Guid.NewGuid().ToString("N")+Guid.NewGuid().ToString("N"),Share=share,Resource=resource,Field=g.ResourceField,Owner=g.Instance,OwnerAccount=g.Account,OwnerHome=g.Home};links.Add(ticket);
@@ -76,7 +81,7 @@ namespace Creezio.Switcher
         }
         private TunnelGrant Validate(ResourceLinkTicket ticket)
         {
-            var g=Grant(ticket.Source,ticket.Share,ticket.Resource);
+            var g=Grant(ticket.Source,ticket.Share,ticket.Resource,ticket.Field=="page_id"?"page":ticket.Field=="project_id"?"site":null);
             if(g.ResourceField!=ticket.Field)throw new InvalidOperationException("Le type de ressource a changé.");
             ToolTunnel.CheckOwner(new TunnelOwner{Id=ticket.Owner,Account=ticket.OwnerAccount,Home=ticket.OwnerHome},new TunnelOwner{Id=g.Instance,Account=g.Account,Home=g.Home});return g;
         }
