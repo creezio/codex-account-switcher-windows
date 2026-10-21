@@ -79,9 +79,17 @@ internal static class PortalEnrollmentTests
         internal string Source(Profile profile,string authentication,bool allowed=true)
         {using(VaultMutation.Acquire(Root,CancellationToken.None)){var accounts=new AccountService(Root);string id=Guid.NewGuid().ToString("N"),home=InstancePaths.Home(Root,id);Directory.CreateDirectory(home);File.WriteAllText(Path.Combine(home,"auth.json"),authentication);accounts.Data.Instances.Add(new DesktopInstance{Id=id,Name="Fictional source "+id.Substring(0,8),AccountKey=profile.Key,AccountLocked=true});if(allowed)accounts.Data.Profiles.Single(value=>value.Key==profile.Key).InstanceIds.Add(id);accounts.Save();return home;}}
         internal string KnownId(){return Value(RelayEngine.Rows(Json.Get(Normal(Service.Accounts(Route.Id,Actor)),"accounts")).Single(),"id");}
+        private string RecordPath(string id)
+        {RelayStore.MessageId(id);return Path.Combine(Store.Root,"portal-enrollment-"+Webhooks.Hash("portal-enrollment-owner\n"+Route.Id+"\n"+Actor).Substring(0,24)+"-"+id+".dpapi");}
         internal PortalEnrollmentRecord Record(string id)
-        {return Directory.GetFiles(Store.Root,"portal-enrollment-*.dpapi").Select(path=>Store.ReadRecord<PortalEnrollmentRecord>(Path.GetFileName(path))).Single(value=>value.Id==id);}
-        internal void Write(PortalEnrollmentRecord record){string file=Directory.GetFiles(Store.Root,"portal-enrollment-*.dpapi").Single(path=>Store.ReadRecord<PortalEnrollmentRecord>(Path.GetFileName(path)).Id==record.Id);Store.WriteRecord(Path.GetFileName(file),record);}
+        {
+            // This receipt already exists after Start. Read its exact reserved
+            // filename with required-file retries while the worker replaces it;
+            // a directory enumeration is not a snapshot of that atomic write.
+            var record=RelayStore.ReadFile<PortalEnrollmentRecord>(RecordPath(id),false,true);
+            Assert(record.Id==id&&record.RootRouteId==Route.Id&&record.ActorHash==Actor,"The enrollment receipt identity changed.");return record;
+        }
+        internal void Write(PortalEnrollmentRecord record){Store.WriteRecord(Path.GetFileName(RecordPath(record.Id)),record);}
         public void Dispose(){Service.Dispose();}
     }
     internal static void RunAll(Action<string,Action> check,string sandbox)
