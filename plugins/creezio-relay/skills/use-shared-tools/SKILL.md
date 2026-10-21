@@ -17,11 +17,11 @@ in Réglages avancés → Outils partagés. No account,
 plugin, project or resource is shared by default. This workflow performs direct
 tool calls; it never sends a mission or starts a model turn in the owner instance.
 
-The optional "Accès complet des ressources" mode is a separate explicit global
+The application-wide "Accès global → Accès complet global" checkbox is an explicit global
 policy, disabled by default. When the user enables it, every configured instance
 can use every other instance's current and future native resource tools, in
 read and write, including publication and deletion. This mode does not require
-individual resource/action grants or upgrade their stored configuration. Native
+individual resource/action grants. While enabled, it ignores customized restrictions, even when a client supplies an old disabled or read-only share ID; only global owner access is listed. Stored customized configuration is retained for disabling the mode. Native
 provider permissions and workflows still apply. Do not enable or reconfigure
 sharing yourself; use only the policy currently reported by Switcher.
 
@@ -41,7 +41,7 @@ sharing yourself; use only the policy currently reported by Switcher.
    discover only the chosen owner's current native tools. Then use its native
    resource listing/search tools to resolve the user's resource and exact ID;
    future resources need no additional sharing rule. The legacy
-   `list_shared_pages` view lists customized selections only and is not an
+   `list_shared_pages` view includes locally cached owner Pages in global mode and is not an
    exhaustive global catalog. Do not inventory every instance.
    For a customized share, the following exact resource restrictions apply:
    `resourceLabels` maps authorized IDs to human-readable names. Match the user's

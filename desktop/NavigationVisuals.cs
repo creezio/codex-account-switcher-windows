@@ -15,6 +15,7 @@ namespace Creezio.Switcher.Desktop
             {
                 case "Accueil": return "\uE80F";
                 case "Instances": return "\uE8A7";
+                case "Accès global": return "\uE774";
                 case "Compétences": return "\uE8F1";
                 case "Planifications": return "\uE787";
                 case "Performances": return "\uE9D9";

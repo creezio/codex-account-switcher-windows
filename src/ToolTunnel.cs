@@ -315,9 +315,16 @@ namespace Creezio.Switcher
         internal TunnelGrant Authorize(RelaySession session,string id)
         {
             verifySource(session);
-            var g=GlobalGrantId(id)?GlobalGrants(session,ToolAccessPolicy.Read(store)).SingleOrDefault(x=>x.Id==id):Grants().SingleOrDefault(x=>x.Id==id);
+            var policy=ToolAccessPolicy.Read(store);
+            var g=GlobalGrantId(id)?GlobalGrants(session,policy).SingleOrDefault(x=>x.Id==id):Grants().SingleOrDefault(x=>x.Id==id);
+            // Global mode replaces authorization by individual shares. An old
+            // client may still send a disabled/read-only/resource-scoped ID:
+            // use it only to identify the owner, never as an access restriction.
+            if(policy.Enabled&&g!=null&&!GlobalGrantId(id))g=GlobalGrants(session,policy).SingleOrDefault(x=>x.Instance==g.Instance);
             if(g==null||!CanUse(g,session))throw new InvalidOperationException("Ce partage d'outils est absent, désactivé ou interdit à cette instance.");return g;
         }
+        internal TunnelGrant[] EffectiveGrants(RelaySession session)
+        {verifySource(session);var policy=ToolAccessPolicy.Read(store);return policy.Enabled?GlobalGrants(session,policy):Grants().Where(g=>CanUse(g,session)).ToArray();}
         internal string CurrentName(TunnelGrant grant)
         {
             var instance=new Vault(Path.GetDirectoryName(store.Root)).Load().Instances.FirstOrDefault(i=>i.Id==grant.Instance);
@@ -325,9 +332,7 @@ namespace Creezio.Switcher
         }
         public object List(RelaySession session)
         {
-            verifySource(session);
-            var policy=ToolAccessPolicy.Read(store);
-            return Grants().Where(g=>CanUse(g,session)).Concat(GlobalGrants(session,policy)).Select(g=>new{id=g.Id,name=g.Name,instance=g.Instance,instanceName=GlobalGrantId(g.Id)?g.InstanceName:CurrentName(g),resourceField=g.ResourceField,resourceValue=g.ResourceValue,resourceValues=g.ResourceValues,resourceLabels=g.ResourceLabels,
+            return EffectiveGrants(session).Select(g=>new{id=g.Id,name=g.Name,instance=g.Instance,instanceName=GlobalGrantId(g.Id)?g.InstanceName:CurrentName(g),resourceField=g.ResourceField,resourceValue=g.ResourceValue,resourceValues=g.ResourceValues,resourceLabels=g.ResourceLabels,
                 dynamic=GlobalGrantId(g.Id),allResources=GlobalGrantId(g.Id),access=GlobalGrantId(g.Id)?"read-write":null,
                 discovery=GlobalGrantId(g.Id)?new{server="*",tool="*",instruction="Use describe_shared_tool with this share and server/tool * to fetch only this owner's current native tools. All current and future resources and read/write actions are shared."}:null,
                 resourceLinks=GlobalGrantId(g.Id)?new{tool="get_shared_resource_link",instruction="Supply kind=page or kind=site with the exact resource ID from a verified native result."}:null,
@@ -385,7 +390,7 @@ namespace Creezio.Switcher
             string hash=Hash(Json.Read<object>(Json.Write(new{grantId,server,name,args})));
             using(store.Lease("tool-call-"+id)){
                 var existing=store.ReadRecord<TunnelCall>(Record(id));
-                if(existing.Id!=null){SameCaller(existing,session);if(existing.Fingerprint!=hash)throw new InvalidOperationException("Cet identifiant a déjà été utilisé avec d'autres arguments.");return existing;}
+                if(existing.Id!=null){SameCaller(existing,session);if(existing.Fingerprint!=hash)throw new InvalidOperationException("Cet identifiant a déjà été utilisé avec d'autres arguments.");if(global&&(existing.Grant!=grant.Id||existing.Revision!=grant.Revision))throw new InvalidOperationException("Le mode global ou le compte propriétaire a changé depuis cet appel. Aucun renvoi effectué.");return existing;}
                 var call=new TunnelCall{Id=id,Grant=grant.Id,GrantName=grant.Name,Instance=grant.Instance,Revision=grant.Revision,SourceThread=session.Thread,SourceHome=session.Home,SourceAccount=session.Account,Fingerprint=hash,Tool=server+"/"+name,State="preparing",Created=DateTime.UtcNow.ToString("o")};Persist(call);
                 bool sent=false;SitesArchive archive=null;
                 try{

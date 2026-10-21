@@ -69,6 +69,38 @@ internal static class GlobalToolAccessTests
     }
     internal static void RunAll(Action<string,Action> check,string root)
     {
+        check("application global mode ignores disabled shares recipients resources and selected read only tools",delegate{
+            var f=new Fixture(root);var old=f.Explicit();f.Tunnel.Disable(old.Id);byte[] bytes=File.ReadAllBytes(Path.Combine(f.Store.Root,"tool-grants.dpapi"));var policy=f.Enable();
+            Assert(f.Shares().Length==2&&f.Shares().All(r=>ToolTunnel.GlobalGrantId(Json.Str(Json.Get(r,"id")))),"custom restrictions still advertised");
+            Assert(f.Call(old.Id).State=="completed"&&f.Call(old.Id,source:f.Session(2)).State=="completed","old disabled share or recipient restriction limited global access");
+            Assert(bytes.SequenceEqual(File.ReadAllBytes(Path.Combine(f.Store.Root,"tool-grants.dpapi"))),"global override rewrote old shares");
+            ToolAccessPolicy.Save(f.Store,false,policy.Revision);Refused(()=>f.Call(old.Id));Assert(f.Calls==2,"disabled share remained globally authorized after off");
+        });
+        check("application global mode overrides old share schema and restores its original resource restriction on disable",delegate{
+            var f=new Fixture(root);var old=f.Explicit();var policy=f.Enable();Assert(f.Call(old.Id).ContractStatus=="global","old share still used static read-only contract");
+            ToolAccessPolicy.Save(f.Store,false,policy.Revision);Refused(()=>f.Call(old.Id,"unseen_read",args:new Dictionary<string,object>{{"resource","other"}}));
+            Assert(f.Call(old.Id,"unseen_read",args:new Dictionary<string,object>{{"resource","exact-old-resource"}}).State=="completed","original selected access was not restored");
+        });
+        check("application global mode rechecks revocation for clients using a legacy share id",delegate{
+            var f=new Fixture(root);var old=f.Explicit();var policy=f.Enable();f.Connections[f.Owners[1].Id].OnInventory=()=>ToolAccessPolicy.Save(f.Store,false,policy.Revision);
+            Assert(f.Call(old.Id).State=="blocked"&&f.Calls==0,"legacy id bypassed global revocation");
+        });
+        check("application global mode cannot replay old legacy id receipts after a policy generation changes",delegate{
+            var f=new Fixture(root);var old=f.Explicit();var policy=f.Enable();string id=Guid.NewGuid().ToString("N");var args=new Dictionary<string,object>{{"resource","new"}};
+            Assert(f.Call(old.Id,id:id,args:args).State=="completed","initial write failed");ToolAccessPolicy.Save(f.Store,false,policy.Revision);f.Enable();
+            Refused(()=>f.Call(old.Id,id:id,args:args));Assert(f.Calls==1,"legacy receipt crossed global generations");
+        });
+        check("application global Pages listing uses owner caches without requiring shares recipients or provider fanout",delegate{
+            var f=new Fixture(root);var owner=f.Owners[1];f.Store.WriteRecord(InstanceResources.CacheName(owner.Id),new InstanceInventory{Instance=owner.Id,Account=owner.Account,Home=owner.Home,Resources=new List<InstanceResource>{new InstanceResource{Field="page_id",Value="unshared-page",Title="Unshared Page",CanModify=false}}});
+            var policy=f.Enable();var pages=new SharedPages(f.Store,f.Tunnel).List(f.Session());Assert(pages.Length==1&&pages[0].CanEdit&&pages[0].Page=="unshared-page"&&ToolTunnel.GlobalGrantId(pages[0].Share)&&f.Inventories==0,"global Pages still depended on selected shares");
+            ToolAccessPolicy.Save(f.Store,false,policy.Revision);Assert(new SharedPages(f.Store,f.Tunnel).List(f.Session()).Length==0,"global cached Page leaked into customized mode");
+        });
+        check("application global Page editing and typed links accept legacy read-only share ids without limiting resources",delegate{
+            var f=new Fixture(root);DocumentTools(f);var old=f.Explicit();old.ResourceField="page_id";old.ResourceValue="old-page";old.Tools=f.Connections[f.Owners[1].Id].Tools.Where(t=>t.Name==SharedPages.ReadTool).ToList();f.Tunnel.SaveGrant(old);f.Enable();
+            var viewer=new SharedPages(f.Store,f.Tunnel);var read=viewer.Read(f.Session(),old.Id,"different-page",CancellationToken.None).GetAwaiter().GetResult();
+            var result=viewer.Save(f.Session(),Guid.NewGuid().ToString("N"),old.Id,"different-page",read.ReadId,"block","Global change",CancellationToken.None).GetAwaiter().GetResult();Assert(result.State=="saved","old Page share remained read-only");
+            var links=new SharedResourceLinks(f.Store,f.Tunnel,(g,t,c)=>Task.FromResult<object>(new{requested=true}));using(var server=ResourceLinkServer.Start(f.Store,links)){var link=links.Create(f.Session(),old.Id,"different-page");Assert(link.Kind=="Page","legacy Page kind was not resolved");}
+        });
         check("global resource access is disabled by default and reads never create policy or start owners",delegate{
             var f=new Fixture(root);Assert(!ToolAccessPolicy.Read(f.Store).Enabled&&ToolAccessPolicy.Read(f.Store).Revision=="initial","implicit access");Assert(f.Shares().Length==0&&f.Resolves==0&&f.Inventories==0,"default list contacted owners");Assert(!File.Exists(Path.Combine(f.Store.Root,ToolAccessPolicy.FileName)),"read wrote policy");
         });

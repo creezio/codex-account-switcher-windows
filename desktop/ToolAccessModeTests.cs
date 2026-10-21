@@ -63,6 +63,24 @@ namespace Creezio.Switcher.Desktop
                     assert(Descendants(resources).OfType<TextBlock>().Any(t=>t.Text==ToolAccessModeView.StatusLabel(ToolAccessPolicy.Read(context.Store).Enabled)),"Ressources et accès affiche l’état réel du mode global");
                 }finally{window.Content=null;resources.Dispose();}
                 assert(reads>0&&grantsBefore.SequenceEqual(File.ReadAllBytes(grantsPath)),"Toutes les lectures et modifications de recette conservent les partages précédents");
+                var appPage=new GlobalAccessPage(context,shell,read,write);fail=false;await appPage.Refresh();
+                assert(shell.Pages.ContainsKey("Accès global")&&shell.Navigation.Items.Contains("Accès global")&&appPage.FullAccess.IsEnabled,"Accès global est un réglage de l’application accessible dans la navigation principale");
+                appPage.FullAccess.IsChecked=true;appPage.FullAccess.RaiseEvent(new RoutedEventArgs(CheckBox.ClickEvent));await Until(()=>current.Enabled&&appPage.FullAccess.IsEnabled);
+                assert(current.Enabled,"Case globale applique immédiatement le choix à toute l’application");
+                appPage.FullAccess.IsChecked=false;appPage.FullAccess.RaiseEvent(new RoutedEventArgs(CheckBox.ClickEvent));await Until(()=>!current.Enabled&&appPage.FullAccess.IsEnabled);
+                assert(!current.Enabled&&grantsBefore.SequenceEqual(File.ReadAllBytes(grantsPath)),"Case globale rétablit le mode personnalisé sans réécrire ses partages");
+                fail=true;appPage.FullAccess.IsChecked=true;appPage.FullAccess.RaiseEvent(new RoutedEventArgs(CheckBox.ClickEvent));await Until(()=>appPage.FullAccess.IsEnabled);
+                assert(appPage.FullAccess.IsChecked==false&&!current.Enabled,"Échec de modification globale rétablit l’état réellement enregistré");
+                string policyPath=Path.Combine(context.Store.Root,ToolAccessPolicy.FileName);byte[] policyBefore=File.Exists(policyPath)?File.ReadAllBytes(policyPath):null;
+                try{
+                    var policy=ToolAccessPolicy.Read(context.Store);policy=ToolAccessPolicy.Save(context.Store,true,policy.Revision);
+                    resources=new InstanceResourcesView(context,shell,owner);window.Content=resources;window.UpdateLayout();
+                    assert(!Descendants(resources).OfType<CheckBox>().Any(c=>System.Windows.Automation.AutomationProperties.GetName(c).StartsWith("Partager "))&&!Descendants(resources).OfType<ComboBox>().Any(c=>System.Windows.Automation.AutomationProperties.GetName(c).StartsWith("Droits pour ")),"Mode global retire les sélections de partage et de droits par ressource");
+                    assert(Descendants(resources).OfType<Button>().Where(b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Enregistrer les accès").All(b=>!b.IsVisible),"Mode global masque l’enregistrement des restrictions personnalisées");
+                    ToolAccessPolicy.Save(context.Store,false,policy.Revision);resources.UpdateOwnerName(owner.Name);window.UpdateLayout();
+                    assert(Descendants(resources).OfType<CheckBox>().Any(c=>System.Windows.Automation.AutomationProperties.GetName(c).StartsWith("Partager ")),"Désactiver le mode global rétablit les contrôles personnalisés");
+                    resources.Dispose();window.Content=null;
+                }finally{if(policyBefore==null)File.Delete(policyPath);else SafeFiles.AtomicWrite(policyPath,policyBefore);}
             }finally{
                 if(dialog!=null&&!dialog.Saved){dialog.ConfirmDiscard=()=>true;dialog.Close();}
                 window.Close();

@@ -41,6 +41,10 @@ namespace Creezio.Switcher
             ToolTunnel.Bound(resource,512,"Ressource");var g=tunnel.Authorize(session,share);
             bool global=ToolTunnel.GlobalGrantId(g.Id);
             if(global){
+                if(String.IsNullOrEmpty(kind)&&!ToolTunnel.GlobalGrantId(share)){
+                    var previous=tunnel.Grants().SingleOrDefault(old=>old.Id==share);
+                    kind=previous!=null&&previous.ResourceField=="page_id"?"page":previous!=null&&previous.ResourceField=="project_id"?"site":null;
+                }
                 if(kind!="page"&&kind!="site")throw new InvalidOperationException("Indiquez kind=page ou kind=site pour un lien issu de l'accès complet des ressources.");
                 g.ResourceField=kind=="page"?"page_id":"project_id";
             }else if(!String.IsNullOrEmpty(kind)&&kind!=(g.ResourceField=="page_id"?"page":g.ResourceField=="project_id"?"site":null))throw new InvalidOperationException("Le type de ressource ne correspond pas à ce partage.");
@@ -54,7 +58,7 @@ namespace Creezio.Switcher
         {string label;return g.ResourceLabels!=null&&g.ResourceLabels.TryGetValue(resource,out label)?label:g.Name;}
         internal ResourceLinkInfo Create(RelaySession session,string share,string resource,string kind=null)
         {
-            var g=Grant(session,share,resource,kind);var state=ResourceLinkServer.Ready(store);
+            var g=Grant(session,share,resource,kind);share=g.Id;var state=ResourceLinkServer.Ready(store);
             ResourceLinkTicket ticket;
             using(store.Lease("resource-links")){
                 var links=store.ReadRecord<List<ResourceLinkTicket>>("resource-links.dpapi");

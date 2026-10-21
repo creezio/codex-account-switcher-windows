@@ -54,8 +54,17 @@ namespace Creezio.Switcher
         private static bool Editable(TunnelGrant g){return ToolTunnel.GlobalGrantId(g.Id)||g.Tools.Any(t=>t.Server==Server&&t.Name==EditTool&&!t.ReadOnly);}
         internal SharedPageEntry[] List(RelaySession session)
         {
-            // List verifies the source even when there are no matching grants.
-            tunnel.List(session);
+            var effective=tunnel.EffectiveGrants(session);
+            if(effective.Any(g=>ToolTunnel.GlobalGrantId(g.Id))||(effective.Length==0&&ToolAccessPolicy.Read(store).Enabled)){
+                // Metadata only: do not start every owner's native inventory.
+                var catalog=new InstanceResources(store);
+                return effective.SelectMany(g=>catalog.Cached(g.Instance,g.Account,g.Home).Resources.Where(r=>r.Field=="page_id")
+                    .Select(r=>new SharedPageEntry{Share=g.Id,Page=r.Value,Title=r.Title,Owner=g.InstanceName,CanEdit=true})
+                    .Concat(tunnel.Grants().Where(old=>old.Instance==g.Instance&&old.ResourceField=="page_id")
+                        .SelectMany(old=>(old.ResourceValues!=null&&old.ResourceValues.Count>0?old.ResourceValues:new List<string>{old.ResourceValue})
+                            .Where(p=>!String.IsNullOrEmpty(p)).Select(p=>new SharedPageEntry{Share=g.Id,Page=p,Title=old.ResourceLabels!=null&&old.ResourceLabels.ContainsKey(p)?old.ResourceLabels[p]:old.Name,Owner=g.InstanceName,CanEdit=true}))))
+                    .GroupBy(p=>p.Share+"/"+p.Page).Select(group=>group.First()).OrderBy(p=>p.Owner).ThenBy(p=>p.Title).ToArray();
+            }
             return tunnel.Grants().Where(g=>ToolTunnel.CanUse(g,session)&&Readable(g)&&g.ResourceField=="page_id")
                 .SelectMany(g=>(g.ResourceValues!=null&&g.ResourceValues.Count>0?g.ResourceValues:new List<string>{g.ResourceValue})
                     .Where(p=>!String.IsNullOrEmpty(p)).Select(p=>new SharedPageEntry{Share=g.Id,Page=p,Title=g.ResourceLabels!=null&&g.ResourceLabels.ContainsKey(p)?g.ResourceLabels[p]:g.Name,Owner=tunnel.CurrentName(g),CanEdit=Editable(g)}))
@@ -104,7 +113,7 @@ namespace Creezio.Switcher
         {
             RelayStore.MessageId(id);if(markdown==null||String.IsNullOrWhiteSpace(markdown)||Encoding.UTF8.GetByteCount(markdown)>80000)throw new InvalidOperationException("Saisissez entre 1 et 80 Ko de texte. La suppression de blocs se fait dans l'éditeur propriétaire.");
             var g=Grant(session,share,page);if(!Editable(g))throw new InvalidOperationException("Cette Page est partagée en lecture seule.");
-            var read=tunnel.Read(session,readId);if(read.Grant!=share)throw new InvalidOperationException("La lecture appartient à un autre partage.");
+            var read=tunnel.Read(session,readId);if(read.Grant!=share&&read.Grant!=g.Id)throw new InvalidOperationException("La lecture appartient à un autre partage.");
             var content=Content(read,page);var blocks=RelayEngine.Rows(Json.Get(content,"blocks")).ToArray();
             object operation;
             if(String.IsNullOrEmpty(blockId)){

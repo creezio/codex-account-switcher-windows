@@ -12,20 +12,24 @@ namespace Creezio.Switcher.Desktop
     {
         private bool history;
         private readonly ToolAccessModeView accessMode;
+        private readonly Button shareCommand,customCommand;
         internal ToolSharingPage(DesktopContext c,ShellWindow s):base(c,s,"Outils partagés","Utilisez les plugins d’une autre instance, directement depuis votre agent. Aucun prompt n’est envoyé au propriétaire.")
         {
             accessMode=new ToolAccessModeView(c,s,Refresh);Header.Children.Add(Ui.Card(accessMode));
-            Command("Partager des outils",()=>Edit(null),true);
-            Command("Mes partages",delegate{history=false;return Refresh();});
+            shareCommand=Command("Partager des outils",()=>Edit(null),true);
+            customCommand=Command("Mes partages",delegate{history=false;return Refresh();});
             Command("Historique des appels",delegate{history=true;return Refresh();});
         }
         private ToolTunnel Tunnel {get{return new ToolTunnel(Context.Store);}}
         public override Task Refresh()
         {
             accessMode.Refresh();
+            shareCommand.Visibility=customCommand.Visibility=accessMode.FullAccessEnabled?Visibility.Collapsed:Visibility.Visible;
+            Body.Visibility=accessMode.FullAccessEnabled&&!history?Visibility.Collapsed:Visibility.Visible;
             if(history)Rows(Tunnel.Recent().Select(c=>new ItemRow{Id=c.Id,Title=c.GrantName,Summary=c.Tool,State=State(c.State),Revision=c.Updated,Value=c}));
+            else if(accessMode.FullAccessEnabled)Rows(new ItemRow[0]);
             else Rows(Tunnel.Grants().Select(g=>new ItemRow{Id=g.Id,Title=g.Name,Summary=g.Tools.Count+" outil(s) · "+g.Sources.Count+" instance(s) cliente(s)",State=!g.Enabled?"Désactivé":String.IsNullOrEmpty(g.ResourceField)?"Actif · contenu du plugin":"Actif · ressource précise",Revision=g.Revision,Value=g}));
-            Notice.Text=history?"Les réponses sont chiffrées et les identifiants sensibles masqués. Un appel incertain n’est jamais renvoyé automatiquement.":accessMode.FullAccessEnabled?"Le mode global autorise les accès entre toutes les instances. Les partages personnalisés ci-dessous sont conservés pour sa désactivation.":"Les partages ci-dessous définissent les outils et ressources accessibles à chaque instance.";
+            Notice.Text=history?"Les réponses sont chiffrées et les identifiants sensibles masqués. Un appel incertain n’est jamais renvoyé automatiquement.":accessMode.FullAccessEnabled?"Accès complet global actif : toutes les instances et toutes leurs ressources sont disponibles. Aucune configuration de partage n’est appliquée.":"Les partages ci-dessous définissent les outils et ressources accessibles à chaque instance.";
             return Task.CompletedTask;
         }
         internal static string State(string value)

@@ -50,6 +50,7 @@ namespace Creezio.Switcher.Desktop
                 view.DiscoveryFixture=token=>{refreshes++;return pending.Task;};
                 var refresh=view.Discover(true);window.UpdateLayout();
                 assert(refreshes==1&&!recipient.IsEnabled&&!SelectedSite().IsEnabled,"Actualiser démarre avec un brouillon et fige le destinataire pendant la détection");
+                assert(Descendants(view).OfType<Button>().Single(b=>Name(b)=="Accès global entre instances…").IsEnabled,"Réglage global reste accessible pendant la détection des ressources d’un compte");
                 view.ConfirmDiscard=()=>false;
                 assert(!view.CanLeave()&&view.Dirty,"Navigation pendant une actualisation protège encore le brouillon d’accès");
                 view.ConfirmDiscard=()=>throw new Exception("An inventory refresh must not discard an access draft.");

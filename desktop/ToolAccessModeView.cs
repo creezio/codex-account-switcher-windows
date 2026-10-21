@@ -25,6 +25,7 @@ namespace Creezio.Switcher.Desktop
             this.owner=owner;this.read=read;this.save=save;this.changed=changed;
             Children.Add(status);Children.Add(detail);
             Configure=Ui.AsyncButton("Accès global entre instances…",async()=>{
+                if(this.owner is ShellWindow shell){shell.Navigate("Accès global");return;}
                 var dialog=CreateDialog(this.owner,this.read,this.save);dialog.ShowDialog();Refresh();
                 if(dialog.Saved&&this.changed!=null)await this.changed();
             },e=>status.Text=Program.SafeError(e));
@@ -38,7 +39,7 @@ namespace Creezio.Switcher.Desktop
             try{
                 var value=read();if(value==null)throw new InvalidOperationException("Le réglage global n’a pas pu être lu.");
                 FullAccessEnabled=value.Enabled;status.Text=StatusLabel(value.Enabled);
-                detail.Text=value.Enabled?"Toutes les instances et toutes leurs ressources sont incluses. Les sélections ci-dessous restent conservées pour le mode personnalisé.":"Chaque instance utilise ses partages enregistrés. Le mode global peut inclure toutes les instances et leurs ressources.";
+                detail.Text=value.Enabled?"Mode global de l’application : toutes les ressources sont accessibles à toutes les instances. Les restrictions de partage sont ignorées.":"Les partages personnalisés sont appliqués. Le mode global se règle pour toute l’application dans Accès global.";
             }catch(Exception error){FullAccessEnabled=false;status.Text="Accès global à vérifier";detail.Text=Program.SafeError(error);}
         }
         internal static EditWindow CreateDialog(Window owner,Func<ToolAccessPolicyState> read,Func<bool,string,Task<ToolAccessPolicyState>> save)

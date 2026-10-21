@@ -281,7 +281,9 @@ Choisissez **Partager avec**, cochez les ressources par leur nom, sélectionnez
 **Lecture** ou **Lecture et modification**, puis **Enregistrer les accès**.
 
 Pour ouvrir les ressources de toutes les instances dans les deux sens, utilisez
-**Accès global entre instances…**. Ce mode optionnel accorde la lecture et
+**Accès global → Accès complet global** dans la navigation principale. Ce
+réglage de toute l’application ignore les restrictions de partage, même pour
+les anciens identifiants, et accorde la lecture et
 l'écriture, inclut les instances et ressources futures, et conserve les partages
 personnalisés pour leur remise en application à la désactivation. Il se configure
 aussi par API/webhook d'administration :

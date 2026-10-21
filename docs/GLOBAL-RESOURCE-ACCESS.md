@@ -1,15 +1,21 @@
 # Accès complet des ressources entre instances
 
-Dans **Instances → Ressources & accès**, ou dans **Outils partagés**, ouvrir
-**Accès global entre instances…**, cocher **Accès complet entre toutes les
-instances**, puis enregistrer.
+Dans la navigation principale de Switcher, ouvrir **Accès global** et cocher
+**Accès complet global**. Le choix est enregistré immédiatement pour toute
+l’application. Il reste accessible pendant l’inventaire d’un compte, sans
+ouvrir ni connecter ce compte. Les anciens boutons des ressources ouvrent ce
+même écran global.
 
 Ce mode est désactivé par défaut. Une fois activé, toutes les instances peuvent
 utiliser les ressources et connecteurs des autres instances en lecture et en
 écriture, y compris la publication et la suppression lorsqu'elles sont proposées
 par le service natif. Les instances, plugins et ressources ajoutés ensuite sont
 inclus automatiquement. Aucune liste de ressources sélectionnées ni permission
-de lecture seule de Switcher ne réduit ces accès globaux.
+de lecture seule de Switcher ne réduit ces accès globaux. Les partages
+personnalisés sont ignorés, y compris les anciens identifiants de partages
+désactivés ou limités qui sont encore utilisés par un client. Les interfaces de
+sélection du destinataire, des ressources et des droits sont masquées pendant
+ce mode : aucune configuration de partage n’est nécessaire.
 
 Les partages personnalisés restent enregistrés séparément. Désactiver le mode
 global les remet immédiatement en application. Changer ce réglage ne lance
