@@ -13,16 +13,17 @@ internal static class ResourceCatalogTests
     private static object Obj(object x){return Json.Read<object>(Json.Write(x));}
     private sealed class Connection:IToolTunnelConnection
     {
-        internal int Pages,Calls;internal bool Repeat,Fail,Drift;internal Action ChangeOwner;
+        internal int Pages,Calls;internal bool Repeat,Fail,Drift,InventoryFail;internal Action ChangeOwner;
+        internal Func<string,object,object> Response;
         internal TunnelTool[] Tools={
             Tool("chatgpt_space.list_pages",true,""),Tool("chatgpt_space.read_page",true,"page_id"),Tool("chatgpt_space.edit_page",false,"page_id"),Tool("chatgpt_space.delete_page",false,"page_id"),
             new TunnelTool{Server="private_mcp",Name="query",Group="Mon plugin",Schema=Obj(new{type="object",properties=new{}}),ReadOnly=true}
         };
         private static TunnelTool Tool(string name,bool read,string field){return new TunnelTool{Server="codex_apps",Name=name,Group="Pages",ConnectorId="pages",ReadOnly=read,Description=name,Schema=Obj(new{type="object",properties=String.IsNullOrEmpty(field)?new Dictionary<string,object>():new Dictionary<string,object>{{field,new{type="string"}}}})};}
-        public Task<TunnelTool[]> Inventory(CancellationToken token){return Task.FromResult(Json.Read<TunnelTool[]>(Json.Write(Tools)));}
+        public Task<TunnelTool[]> Inventory(CancellationToken token){if(InventoryFail)throw new InvalidOperationException("tool inventory unavailable");return Task.FromResult(Json.Read<TunnelTool[]>(Json.Write(Tools)));}
         public Task<object> Invoke(string server,string name,object args,CancellationToken token)
         {
-            Calls++;if(name!="chatgpt_space.list_pages")return Task.FromResult(Obj(new{structuredContent=new{ok=true}}));Pages++;
+            Calls++;if(Response!=null)return Task.FromResult(Response(name,args));if(name!="chatgpt_space.list_pages")return Task.FromResult(Obj(new{structuredContent=new{ok=true}}));Pages++;
             if(Fail)throw new InvalidOperationException("catalog unavailable");if(Drift&&ChangeOwner!=null)ChangeOwner();
             var response=new{items=new[]{new{page_id=Pages==1?"page-a":"page-b",title=Pages==1?"Page A":"Page B",access=new{can_read=true,can_write=true},token="never retain this unrelated field"}},next_cursor=Repeat||Pages==1?"next":null};return Task.FromResult(Obj(new{structuredContent=response}));
         }
@@ -56,6 +57,12 @@ internal static class ResourceCatalogTests
         fixture.Inventory.Resources.Add(new InstanceResource{Key=InstanceResources.ResourceKey(plugin,"project_id","site-a"),Kind="Site",Title="Site A",Field="project_id",Value="site-a",Plugin=plugin,CanModify=true});
         fixture.Inventory.Resources.Add(new InstanceResource{Key=InstanceResources.ResourceKey(plugin,"project_id","site-b"),Kind="Site",Title="Site B",Field="project_id",Value="site-b",Plugin=plugin,CanModify=true});
     }
+    private static object SitePage(string[] ids,string cursor=null,bool partial=false)
+    {return Obj(new{structuredContent=new{items=ids.Select(id=>new{id,title="Title "+id}).ToArray(),cursor,partial_results=partial}});}
+    private static void DiscoverSites(Fixture fixture)
+    {
+        SiteCatalog(fixture);fixture.Connection.Response=(name,args)=>SitePage(Json.Str(Json.Get(args,"role"))=="owner"?new[]{"site-a","site-b"}:new string[0]);fixture.Discover();
+    }
     internal static void RunAll(Action<string,Action> check,string root)
     {
         check("resource discovery paginates and never creates a grant",delegate{var f=new Fixture(root);f.Discover();Assert(f.Connection.Pages==2&&f.Inventory.Resources.Count==2,"pagination incomplete");Assert(f.Tunnel.Grants().Count==0,"discovery granted access");Assert(!Json.Write(f.Inventory).Contains("never retain"),"unrelated provider fields retained");});
@@ -64,6 +71,41 @@ internal static class ResourceCatalogTests
         check("resource catalog belongs to the exact owner identity",delegate{var f=new Fixture(root);f.Discover();Assert(f.Catalog.Cached("owner","another",f.Owner.Home).Resources.Count==0,"account bleed");Assert(f.Catalog.Cached("owner",f.Owner.Account,f.Owner.Home).Resources.Count==2,"cache lost");});
         check("resource discovery rejects owner changes before cache publication",delegate{var f=new Fixture(root);f.Connection.Drift=true;f.Connection.ChangeOwner=()=>f.Owner.Account="other";Refused(()=>f.Discover());Assert(!File.Exists(Path.Combine(f.Store.Root,InstanceResources.CacheName("owner"))),"wrong account cached");});
         check("resource provider failure is reported without deleting shares",delegate{var f=new Fixture(root);f.Discover();f.Save(new Dictionary<string,string>{{f.Inventory.Resources[0].Key,"read"}});f.Connection.Fail=true;f.Discover();Assert(f.Inventory.Plugins.Single(p=>p.Name=="Pages").State=="error"&&f.Tunnel.Grants().Count==1,"failure erased grant");});
+        check("Sites discovery paginates owner and editor roles without duplicate resources",delegate{
+            var f=new Fixture(root);SiteCatalog(f);f.Connection.Response=(name,args)=>{
+                string role=Json.Str(Json.Get(args,"role")),cursor=Json.Str(Json.Get(args,"cursor"));
+                Assert(Convert.ToInt32(Json.Get(args,"limit"))==50,"Site page size changed");
+                return role=="owner"?(cursor.Length==0?SitePage(new[]{"site-a"},"next"):SitePage(new[]{"site-b"})):SitePage(new[]{"site-a","site-c"});
+            };f.Discover();Assert(f.Connection.Calls==3&&f.Inventory.Resources.Count==3&&f.Inventory.Resources.All(r=>!r.CacheRetained),"Site pagination or deduplication incomplete");Assert(f.Inventory.Resources.Single(r=>r.Value=="site-a").Access=="Propriétaire"&&f.Inventory.Resources.Single(r=>r.Value=="site-c").Access=="Éditeur","Site role lost");
+        });
+        check("later Site page failure retains old missing rows and leaves access bytes unchanged",delegate{
+            var f=new Fixture(root);DiscoverSites(f);var old=f.Inventory;f.Save(new Dictionary<string,string>{{f.Inventory.Resources[0].Key,"read"}});string grants=Path.Combine(f.Store.Root,"tool-grants.dpapi");var before=File.ReadAllBytes(grants);
+            f.Connection.Response=(name,args)=>{if(Json.Str(Json.Get(args,"cursor")).Length>0)throw new InvalidOperationException("later page failed");return SitePage(new[]{"site-a","site-new"},"next");};f.Discover();
+            Assert(f.Inventory.Resources.Count==3&&f.Inventory.Resources.Select(r=>r.Key).Distinct().Count()==3,"failed page removed old rows or introduced duplicates");Assert(f.Inventory.Resources.Single(r=>r.Value=="site-b").CacheRetained&&f.Inventory.Resources.Where(r=>r.Value!="site-b").All(r=>!r.CacheRetained),"fresh and retained rows confused");Assert(old.Resources.All(r=>!r.CacheRetained),"previous in-memory snapshot changed");Assert(f.Inventory.Plugins.Single().State=="error"&&f.Inventory.Plugins.Single().Message.Contains("Dernier inventaire conservé"),"preserved inventory not identified");Assert(before.SequenceEqual(File.ReadAllBytes(grants)),"discovery rewrote access registry");
+            Refused(()=>f.Save(new Dictionary<string,string>{{f.Inventory.Resources.Single(r=>r.Value=="site-b").Key,"edit"}}));Assert(before.SequenceEqual(File.ReadAllBytes(grants)),"retained resource enabled access");
+            f.Discover();Assert(f.Inventory.Resources.Count==3&&f.Catalog.Cached(f.Owner.Id,f.Owner.Account,f.Owner.Home).Resources.Single(r=>r.Value=="site-b").CacheRetained,"repeated failure lost retained rows");
+        });
+        check("a complete empty Site response replaces old catalog without changing existing shares",delegate{
+            var f=new Fixture(root);DiscoverSites(f);f.Save(new Dictionary<string,string>{{f.Inventory.Resources[0].Key,"read"}});string grants=Path.Combine(f.Store.Root,"tool-grants.dpapi");var before=File.ReadAllBytes(grants);f.Connection.Response=(name,args)=>SitePage(new string[0]);f.Discover();Assert(f.Inventory.Resources.Count==0&&f.Inventory.Plugins.Single().State=="ready","successful empty inventory was not applied");Assert(before.SequenceEqual(File.ReadAllBytes(grants)),"complete refresh changed existing permissions");
+        });
+        check("partial and repeated Site cursors retain previous rows until a complete confirmation",delegate{
+            var f=new Fixture(root);DiscoverSites(f);f.Connection.Response=(name,args)=>SitePage(Json.Str(Json.Get(args,"role"))=="owner"?new[]{"site-a"}:new string[0],null,true);f.Discover();Assert(f.Inventory.Resources.Count==2&&f.Inventory.Plugins.Single().State=="partial"&&f.Inventory.Resources.Single(r=>r.Value=="site-b").CacheRetained,"provider partial result erased old resource");
+            f.Connection.Response=(name,args)=>Json.Str(Json.Get(args,"role"))=="owner"?SitePage(new[]{"site-a"},"repeat"):SitePage(new string[0]);f.Discover();Assert(f.Inventory.Resources.Count==2&&f.Inventory.Plugins.Single().State=="partial","cursor repetition erased previous inventory");
+            f.Connection.Response=(name,args)=>SitePage(Json.Str(Json.Get(args,"role"))=="owner"?new[]{"site-b"}:new string[0]);f.Discover();Assert(f.Inventory.Resources.Count==1&&f.Inventory.Resources.Single().Value=="site-b"&&!f.Inventory.Resources.Single().CacheRetained&&f.Inventory.Plugins.Single().State=="ready","complete refresh did not reset retained state");
+        });
+        check("malformed Site item collections never turn a valid catalog into an empty one",delegate{
+            foreach(object items in new object[]{"invalid",new{unexpected="shape"}}){var f=new Fixture(root);DiscoverSites(f);f.Connection.Response=(name,args)=>Obj(new{structuredContent=new{items}});f.Discover();Assert(f.Inventory.Resources.Count==2&&f.Inventory.Resources.All(r=>r.CacheRetained)&&f.Inventory.Plugins.Single().State=="error","invalid provider shape evicted old catalog");}
+        });
+        check("old resource fallback never crosses owner account or home boundaries",delegate{
+            foreach(bool changeAccount in new[]{true,false}){var f=new Fixture(root);DiscoverSites(f);if(changeAccount)f.Owner.Account="other-account";else f.Owner.Home=Path.Combine(f.Owner.Home,"other");f.Connection.Response=(name,args)=>{throw new InvalidOperationException("catalog unavailable");};f.Discover();Assert(f.Inventory.Resources.Count==0,"old catalog crossed an owner boundary");}
+        });
+        check("global discovery failure and owner drift leave the last encrypted catalog intact",delegate{
+            var f=new Fixture(root);DiscoverSites(f);string path=Path.Combine(f.Store.Root,InstanceResources.CacheName(f.Owner.Id));var before=File.ReadAllBytes(path);f.Connection.InventoryFail=true;Refused(()=>f.Discover());Assert(before.SequenceEqual(File.ReadAllBytes(path)),"failed tool inventory rewrote cached resources");f.Connection.InventoryFail=false;
+            f.Connection.Response=(name,args)=>{f.Owner.Account="other-account";return SitePage(new string[0]);};Refused(()=>f.Discover());Assert(before.SequenceEqual(File.ReadAllBytes(path)),"owner drift published invalid catalog");
+        });
+        check("cancellation keeps the exact last encrypted catalog",delegate{
+            var f=new Fixture(root);DiscoverSites(f);string path=Path.Combine(f.Store.Root,InstanceResources.CacheName(f.Owner.Id));var before=File.ReadAllBytes(path);f.Connection.Response=(name,args)=>{throw new OperationCanceledException();};bool cancelled=false;try{f.Discover();}catch(OperationCanceledException){cancelled=true;}Assert(cancelled&&before.SequenceEqual(File.ReadAllBytes(path)),"cancellation replaced the cached catalog");
+        });
         check("resource selections form one exact allowlist without future resources",delegate{var f=new Fixture(root);f.Discover();f.Save(f.Inventory.Resources.ToDictionary(r=>r.Key,r=>"read"));var g=f.Tunnel.Grants().Single();Assert(g.ResourceValues.Count==2&&g.Tools.All(t=>t.ReadOnly),"broad grant");ToolTunnel.CheckResource(g,Obj(new{page_id="page-a"}));Refused(()=>ToolTunnel.CheckResource(g,Obj(new{page_id="future-page"})));Refused(()=>ToolTunnel.CheckResource(g,Obj(new{page_id=new[]{"page-a"}})));});
         check("basic edit permission does not grant deletion or access management",delegate{var f=new Fixture(root);f.Discover();f.Save(new Dictionary<string,string>{{f.Inventory.Resources[0].Key,"edit"}});var g=f.Tunnel.Grants().Single();Assert(g.Tools.Any(t=>t.Name.EndsWith("edit_page"))&&!g.Tools.Any(t=>t.Name.EndsWith("delete_page")),"edit escalated to destructive permission");});
         check("Site publication is an explicit separate grant and preserves metadata-only edit",delegate{

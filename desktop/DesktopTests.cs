@@ -274,7 +274,7 @@ namespace Creezio.Switcher.Desktop
                     await CloudEnvironmentWizardAcceptance(shell,root,assert);
                     await CloudJobsAcceptance(context,shell,toolOwner,toolClient,root,assert);
                     CloudMissionPresentationAcceptance(assert);
-                    InstanceResourcePublishAcceptance(assert);
+                    await InstanceResourcePublishAcceptance(context,shell,toolOwner,toolClient,assert);
                     await CloudTimelineAcceptance(context,shell,toolOwner,root,assert);
                     await CloudPreparedQueueTests(context,shell,root,assert);
                     await HeadlessUiAcceptance(context,shell,toolOwner,root,assert);

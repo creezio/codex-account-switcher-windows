@@ -19,6 +19,7 @@ namespace Creezio.Switcher
         public string Access {get;set;}
         public bool CanModify {get;set;}
         public bool NativeEditor {get;set;}
+        public bool CacheRetained {get;set;}
     }
     public sealed class InstancePlugin
     {
@@ -65,6 +66,7 @@ namespace Creezio.Switcher
         internal async Task<InstanceInventory> Discover(string instance,CancellationToken token)
         {
             var owner=tunnel.Owner(instance);var data=new InstanceInventory{Instance=owner.Id,Account=owner.Account,Home=owner.Home,Updated=DateTime.UtcNow.ToString("o")};
+            var previous=Cached(owner.Id,owner.Account,owner.Home);
             using(var connection=tunnel.Connection(owner)){
                 var tools=await connection.Inventory(token).ConfigureAwait(false);
                 foreach(var group in tools.GroupBy(PluginKey).OrderBy(g=>g.First().Group)){
@@ -79,7 +81,7 @@ namespace Creezio.Switcher
                             for(int page=0;page<50;page++){
                                 token.ThrowIfCancellationRequested();var args=new Dictionary<string,object>{{"limit",sites?50:100}};if(sites)args["role"]=role;if(cursor!=null)args["cursor"]=cursor;
                                 var response=Value(await connection.Invoke(list.Server,list.Name,args,token).ConfigureAwait(false));
-                                if(!(Json.Get(response,"items") is System.Collections.IEnumerable))throw new InvalidOperationException("La structure du catalogue a changé. Aucun partage n'a été modifié.");
+                                var items=Json.Get(response,"items");if(!(items is System.Collections.IEnumerable)||items is string||items is System.Collections.IDictionary)throw new InvalidOperationException("La structure du catalogue a changé. Aucun partage n'a été modifié.");
                                 foreach(var item in RelayEngine.Rows(Json.Get(response,"items"))){
                                     string id=Json.Str(Json.Get(item,sites?"id":"page_id"));if(String.IsNullOrWhiteSpace(id)||id.Length>512)continue;
                                     if(!sites&&Object.Equals(Json.Get(Json.Get(item,"access"),"can_read"),false))continue;
@@ -95,12 +97,26 @@ namespace Creezio.Switcher
                             }
                             if(data.Resources.Count>=5000)break;
                         }
-                    }catch(OperationCanceledException){throw;}catch(Exception e){plugin.State="error";plugin.Message=Program.SafeError(e);}
+                    }catch(OperationCanceledException){throw;}catch(Exception e){plugin.State="error";plugin.Message="La lecture du catalogue a échoué. "+Program.SafeError(e);}
+                    if(plugin.State!="ready")RetainPrevious(data,previous,plugin);
                 }
             }
             ToolTunnel.CheckOwner(owner,tunnel.Owner(instance));
             if(Encoding.UTF8.GetByteCount(Json.Write(data))>3000000)throw new InvalidOperationException("Inventaire trop volumineux. Le dernier catalogue est conservé.");
             store.WriteRecord(CacheName(instance),data);return data;
+        }
+        private static void RetainPrevious(InstanceInventory data,InstanceInventory previous,InstancePlugin plugin)
+        {
+            var keys=new HashSet<string>(data.Resources.Select(r=>r.Key));int retained=0;
+            foreach(var resource in previous.Resources.Where(r=>r.Plugin==plugin.Key)){
+                if(!keys.Add(resource.Key))continue;
+                if(data.Resources.Count>=5000)throw new InvalidOperationException("Inventaire incomplet trop volumineux. Le dernier catalogue est conservé.");
+                // Keep only metadata from this exact owner's previous cache.
+                // A retained row is display-only until the provider confirms it
+                // again; discovering resources never changes an access grant.
+                var copy=Json.Read<InstanceResource>(Json.Write(resource));copy.CacheRetained=true;data.Resources.Add(copy);retained++;
+            }
+            if(retained>0)plugin.Message+=" Dernier inventaire conservé : "+retained+" ressource(s) non revérifiée(s).";
         }
         internal static bool Managed(TunnelGrant g,string instance,string client)
         {return g.Instance==instance&&g.CatalogClient==client&&String.IsNullOrEmpty(g.CatalogPlugin);}
@@ -135,7 +151,7 @@ namespace Creezio.Switcher
                 using(var connection=tunnel.Connection(owner)){
                     var tools=await connection.Inventory(token).ConfigureAwait(false);
                     var resources=selected.Select(p=>new{Resource=inventory.Resources.SingleOrDefault(r=>r.Key==p.Key),Mode=p.Value}).ToArray();
-                    if(resources.Any(x=>x.Resource==null||x.Resource.NativeEditor||!new[]{"read","edit","publish"}.Contains(x.Mode)||(x.Mode!="read"&&!x.Resource.CanModify)||(x.Mode=="publish"&&(x.Resource.Kind!="Site"||x.Resource.Field!="project_id"))))throw new InvalidOperationException("Une ressource ou un droit sélectionné n'est plus disponible. Actualisez le catalogue.");
+                    if(resources.Any(x=>x.Resource==null||x.Resource.CacheRetained||x.Resource.NativeEditor||!new[]{"read","edit","publish"}.Contains(x.Mode)||(x.Mode!="read"&&!x.Resource.CanModify)||(x.Mode=="publish"&&(x.Resource.Kind!="Site"||x.Resource.Field!="project_id"))))throw new InvalidOperationException("Une ressource ou un droit sélectionné n'est plus disponible ou n'a pas été revérifié. Actualisez le catalogue.");
                     foreach(var group in resources.GroupBy(x=>x.Resource.Plugin+"/"+x.Resource.Field+"/"+x.Mode)){
                         var item=group.First();var allowed=tools.Where(t=>Compatible(t,item.Resource,item.Mode)).ToList();
                         if(allowed.Count==0||(item.Mode!="read"&&!allowed.Any(t=>!t.ReadOnly))||(item.Mode=="publish"&&!allowed.Any(t=>!t.ReadOnly&&SitePublishingTool(t))))throw new InvalidOperationException("Les outils correspondant à ces accès ne sont plus disponibles.");

@@ -34,6 +34,7 @@ namespace Creezio.Switcher.Desktop
         private DateTime attempted;
         internal Func<bool> ConfirmDiscard;
         internal Func<PluginAccess> PluginServiceFactory;
+        internal Func<CancellationToken,Task<InstanceInventory>> DiscoveryFixture;
         internal bool Dirty=>Snapshot(initial)!=Snapshot(draft);
         internal void UpdateOwnerName(string name){owner.Name=name;}
         private static string Snapshot(Dictionary<string,string> value)=>String.Join("|",value.OrderBy(p=>p.Key).Select(p=>p.Key+":"+p.Value));
@@ -65,7 +66,7 @@ namespace Creezio.Switcher.Desktop
             var footer=Ui.Actions(bottom);save=Ui.Button("Enregistrer les accès",async()=>{try{await Save();}catch(Exception e){state.Text=Program.SafeError(e);}finally{UpdateSummary();}},true);footer.Children.Add(save);
             footer.Children.Add(Ui.Button("Annuler les changements",()=>{if(busy)return;draft=new Dictionary<string,string>(initial);Render();}));
             previous=Ui.Button("Précédentes",()=>{page--;Render();});next=Ui.Button("Suivantes",()=>{page++;Render();});footer.Children.Add(previous);footer.Children.Add(pageLabel);footer.Children.Add(next);
-            recipient.SelectionChanged+=delegate{if(changing)return;if(!CanLeave()){changing=true;recipient.SelectedValue=client;changing=false;return;}client=recipient.SelectedValue as string;LoadSelection();};
+            recipient.SelectionChanged+=delegate{if(changing)return;if(busy||!CanLeave()){changing=true;recipient.SelectedValue=client;changing=false;return;}client=recipient.SelectedValue as string;LoadSelection();};
             Search.TextChanged+=delegate{page=0;Render();scroll.ScrollToTop();};plugin.SelectionChanged+=delegate{page=0;Render();scroll.ScrollToTop();};
             client=recipient.SelectedValue as string;LoadFilters();LoadSelection();
         }
@@ -87,7 +88,7 @@ namespace Creezio.Switcher.Desktop
             if(client==null)return false;
             return legacyGrants.Any(g=>g.Sources.Any(s=>RelayStore.SamePath(s.Key,clientHomes[client])&&s.Value==clients[client].AccountKey)&&g.Tools.Any(t=>InstanceResources.PluginKey(t)==r.Plugin)&&(String.IsNullOrEmpty(g.ResourceField)||(g.ResourceField==r.Field&&(g.ResourceValue==r.Value||(g.ResourceValues?.Contains(r.Value)??false)))));
         }
-        private bool Selectable(InstanceResource r)=>client!=null&&!busy&&!r.NativeEditor&&InstanceResources.Fresh(inventory)&&!Legacy(r);
+        private bool Selectable(InstanceResource r)=>client!=null&&!busy&&!r.NativeEditor&&!r.CacheRetained&&InstanceResources.Fresh(inventory)&&!Legacy(r);
         internal static string[] PermissionChoices(InstanceResource resource)
         {return !resource.CanModify?new[]{"Lecture"}:resource.Kind=="Site"&&resource.Field=="project_id"?new[]{"Lecture","Lecture et modification","Lecture, modification et publication"}:new[]{"Lecture","Lecture et modification"};}
         internal static int PermissionIndex(InstanceResource resource,string mode)
@@ -108,13 +109,14 @@ namespace Creezio.Switcher.Desktop
             previous.IsEnabled=page>0;next.IsEnabled=(page+1)*40<total;pageLabel.Text=total==0?"":$"{page*40+1}–{Math.Min(total,(page+1)*40)} / {total}";
             previous.Visibility=next.Visibility=pageLabel.Visibility=total>40?Visibility.Visible:Visibility.Collapsed;
             var unmatched=draft.Keys.Where(k=>!inventory.Resources.Any(r=>r.Key==k)).ToArray();
-            if(unmatched.Length>0){rows.Children.Add(Ui.Text($"{unmatched.Length} ressource(s) déjà partagée(s) absente(s) de cet inventaire. Actualisez avant de modifier ces accès, ou utilisez Tout décocher pour les révoquer.",13));}
+            if(unmatched.Length>0){rows.Children.Add(Ui.Text($"{unmatched.Length} ressource(s) sélectionnée(s) absente(s) de cet inventaire. Vos choix sont conservés ; actualisez avant d’enregistrer ces accès.",13));}
             foreach(var resource in Visible()){
                 bool legacy=Legacy(resource);var card=new StackPanel();var heading=new DockPanel();card.Children.Add(heading);
                 var check=new CheckBox{IsChecked=draft.ContainsKey(resource.Key),VerticalAlignment=VerticalAlignment.Top,Margin=new Thickness(0,3,12,0),IsEnabled=Selectable(resource)};
                 System.Windows.Automation.AutomationProperties.SetName(check,"Partager "+resource.Title);DockPanel.SetDock(check,Dock.Left);heading.Children.Add(check);
                 var text=new StackPanel();text.Children.Add(Ui.Text(resource.Title,16));string pluginName=inventory.Plugins.FirstOrDefault(p=>p.Key==resource.Plugin)?.Name??resource.Kind;
                 text.Children.Add(Ui.Text(resource.Kind+" · "+pluginName+" · "+resource.Access,12,true));heading.Children.Add(text);
+                if(resource.CacheRetained)card.Children.Add(Ui.Text("Dernier inventaire conservé · cette ressource n’a pas pu être revérifiée. Actualisez avant de modifier son accès.",12,true));
                 var permissionChoices=PermissionChoices(resource);var choices=new ComboBox{ItemsSource=permissionChoices,SelectedIndex=PermissionIndex(resource,draft.TryGetValue(resource.Key,out var mode)?mode:"read"),IsEnabled=check.IsEnabled&&check.IsChecked==true,MaxWidth=320,HorizontalAlignment=HorizontalAlignment.Left};
                 System.Windows.Automation.AutomationProperties.SetName(choices,"Droits pour "+resource.Title);choices.Width=permissionChoices.Length==3?310:resource.CanModify?184:90;DockPanel.SetDock(choices,Dock.Right);heading.Children.Insert(1,choices);
                 TextBlock siteHint=null;if(resource.Kind=="Site"){siteHint=Ui.Text(SitePermissionDescription(choices.SelectedIndex),12,true);card.Children.Add(siteHint);}
@@ -125,7 +127,8 @@ namespace Creezio.Switcher.Desktop
                 var resourceCard=Ui.Card(card);resourceCard.Padding=new Thickness(12);resourceCard.Margin=new Thickness(0,0,0,8);rows.Children.Add(resourceCard);
             }
             bool actionsOnly=inventory.Plugins.Any(p=>p.Key==(string)plugin.SelectedValue&&p.State=="unsupported");
-            if(total==0&&!actionsOnly)rows.Children.Add(Ui.Text(String.IsNullOrWhiteSpace(inventory.Updated)?"Les ressources apparaîtront après la détection du compte.":"Aucune ressource correspondant à cette recherche.",15,true));
+            bool incomplete=inventory.Plugins.Any(p=>(p.State=="error"||p.State=="partial")&&(String.IsNullOrEmpty(plugin.SelectedValue as string)||p.Key==(string)plugin.SelectedValue));
+            if(total==0&&!actionsOnly)rows.Children.Add(Ui.Text(incomplete?"Catalogue incomplet : les ressources n’ont pas pu être toutes récupérées. Consultez le détail ci-dessous.":String.IsNullOrWhiteSpace(inventory.Updated)?"Les ressources apparaîtront après la détection du compte.":"Aucune ressource correspondant à cette recherche.",15,true));
             foreach(var p in inventory.Plugins.Where(p=>p.State!="ready"&&(String.IsNullOrEmpty(plugin.SelectedValue as string)||p.Key==(string)plugin.SelectedValue))){
                 var item=new StackPanel();item.Children.Add(Ui.Text(p.Name+" · "+p.Tools+" actions",16));item.Children.Add(Ui.Text(p.State=="unsupported"?"Ce plugin se partage par actions. Choisissez ce que l’instance destinataire pourra utiliser.":p.Message,13,true));
                 if(p.State=="unsupported"){
@@ -141,13 +144,21 @@ namespace Creezio.Switcher.Desktop
         }
         internal async Task Discover(bool force=false)
         {
-            if(disposed||busy||context.Fixture||(!force&&(InstanceResources.Fresh(inventory)||DateTime.UtcNow-attempted<TimeSpan.FromMinutes(1))))return;
-            if(Dirty){state.Text="Enregistrez ou annulez les changements avant d’actualiser.";return;}
-            attempted=DateTime.UtcNow;busy=true;refresh.IsEnabled=false;Render();state.Text="Détection des plugins, Sites et Pages du compte…";discovery=new CancellationTokenSource(TimeSpan.FromMinutes(2));
-            try{var found=await service.Discover(owner.Id,discovery.Token);if(disposed)return;inventory=found;LoadFilters();LoadSelection();state.Text=$"{inventory.Plugins.Count} plugins connectés · {inventory.Resources.Count} ressources détectées · {DateTime.Now:t}";}
+            if(disposed||busy||(context.Fixture&&DiscoveryFixture==null)||(!force&&(InstanceResources.Fresh(inventory)||DateTime.UtcNow-attempted<TimeSpan.FromMinutes(1))))return;
+            bool preserveDraft=Dirty;
+            attempted=DateTime.UtcNow;busy=true;refresh.IsEnabled=false;recipient.IsEnabled=false;Render();state.Text="Détection des plugins, Sites et Pages du compte…";discovery=new CancellationTokenSource(TimeSpan.FromMinutes(2));
+            try{
+                var found=await (context.Fixture?DiscoveryFixture(discovery.Token):service.Discover(owner.Id,discovery.Token));if(disposed)return;
+                inventory=found;LoadFilters();
+                // Refresh metadata without rebasing a pending access edit onto a
+                // newer grant revision. Save must retain its concurrency check.
+                if(preserveDraft){RefreshRules();Render();}else LoadSelection();
+                bool incomplete=inventory.Plugins.Any(p=>p.State=="error"||p.State=="partial");
+                state.Text=(incomplete?$"Catalogue incomplet · {inventory.Resources.Count} ressources affichées · {DateTime.Now:t}":$"{inventory.Plugins.Count} plugins connectés · {inventory.Resources.Count} ressources détectées · {DateTime.Now:t}")+(preserveDraft?" · Vos changements d’accès non enregistrés sont conservés.":"");
+            }
             catch(OperationCanceledException){if(!disposed)state.Text="Détection interrompue. Le dernier inventaire est conservé.";}
             catch(Exception e){if(!disposed)state.Text=Program.SafeError(e)+" Le dernier inventaire est conservé.";}
-            finally{busy=false;discovery?.Dispose();discovery=null;if(!disposed){refresh.IsEnabled=true;Render();}}
+            finally{busy=false;discovery?.Dispose();discovery=null;if(!disposed){refresh.IsEnabled=true;recipient.IsEnabled=true;Render();}}
         }
         private async Task Save()
         {
@@ -158,7 +169,7 @@ namespace Creezio.Switcher.Desktop
             }finally{busy=false;recipient.IsEnabled=true;Render();}
         }
         internal bool CanLeave()
-        {if(busy&&discovery!=null){discovery.Cancel();return true;}if(busy){state.Text="Enregistrement en cours. Attendez sa fin avant de changer d’instance.";return false;}if(!Dirty)return true;if(!ConfirmDiscard())return false;draft=new Dictionary<string,string>(initial);Render();return true;}
+        {if(busy&&discovery!=null){if(Dirty&&!ConfirmDiscard())return false;discovery.Cancel();if(Dirty)draft=new Dictionary<string,string>(initial);return true;}if(busy){state.Text="Enregistrement en cours. Attendez sa fin avant de changer d’instance.";return false;}if(!Dirty)return true;if(!ConfirmDiscard())return false;draft=new Dictionary<string,string>(initial);Render();return true;}
         public void Dispose(){disposed=true;discovery?.Cancel();}
     }
 }
