@@ -71,6 +71,10 @@ namespace Creezio.Switcher
                     var plugin=store.ReadRecord<PortalPluginOperation>(Path.GetFileName(file));
                     if(plugin.State=="installing"&&DesktopRuntime.SameProcess(plugin.OwnerPid,plugin.OwnerStarted))return "Un plugin est en cours d'installation.";
                 }
+                foreach(string file in Directory.GetFiles(store.Root,"conversation-transfer-op-*.dpapi")){
+                    var operation=store.ReadRecord<ConversationTransferOperation>(Path.GetFileName(file));
+                    if((operation.State=="queued"||operation.State=="running")&&DesktopRuntime.SameProcess(operation.OwnerPid,operation.OwnerStarted))return "Une copie ou un transfert de conversation est en cours.";
+                }
                 return null;
             }catch(Exception e){if(e is IOException||e is UnauthorizedAccessException||e is System.ComponentModel.Win32Exception||e is InvalidOperationException||e is System.Security.Cryptography.CryptographicException)return "L'activité doit être vérifiée avant de redémarrer Switcher.";throw;}
         }

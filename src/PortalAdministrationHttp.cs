@@ -20,10 +20,12 @@ namespace Creezio.Switcher
         private static WebhookHttpResponse Error(int status,string message){return Result(status,new{error=message});}
         internal static WebhookHttpResponse Handle(RelayStore store,WebhookHttpRequest request)
         {return Handle(store,request,null);}
-        internal static WebhookHttpResponse Handle(RelayStore store,WebhookHttpRequest request,PortalEnrollmentService fixtureService,PortalPluginService fixturePlugins=null)
+        internal static WebhookHttpResponse Handle(RelayStore store,WebhookHttpRequest request,PortalEnrollmentService fixtureService,PortalPluginService fixturePlugins=null,ConversationTransfers fixtureTransfers=null)
         {
             try{
                 var identity=PortalAdministration.Authorize(store,request);var path=PortalAdministration.Path(request.Path);
+                // The transfer service owns admission and its durable activity pin.
+                if(ConversationTransfersHttp.Path(request.Path).Success)return ConversationTransfersHttp.Handle(store,request,identity,fixtureTransfers);
                 using(request.Method=="POST"?ApplicationUpdates.AdmitPortalMutation(store):null){
                 if(PortalResourceAccessHttp.Path(request.Path).Success)return PortalResourceAccessHttp.Handle(store,request,identity);
                 if(PortalManagementHttp.Path(request.Path).Success)return PortalManagementHttp.Handle(store,request,identity);

@@ -30,9 +30,10 @@ internal static class TestRunner
         try
         {
             string a=FakeAuth("alice","workspace-a"),b=FakeAuth("bob","workspace-b");
+            if(args.Length==2&&args[1]=="--conversation-transfers"){ConversationTransferTests.RunAll(Check,sandbox);TransferTests.RunAll(Check,sandbox);ThreadCopyTests.RunAll(Check,sandbox,a,b);GeneralRelayTests.RunAll(Check,sandbox);PortalManagementHttpTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
             if(args.Length==2&&args[1]=="--plugins"){PortalPluginTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
             if(args.Length==2&&args[1]=="--skills"){PortalSkillTests.RunAll(Check,sandbox);PortalManagementHttpTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
-            if(args.Length==2&&args[1]=="--management"){PortalSkillTests.RunAll(Check,sandbox);PortalConversationManagementTests.RunAll(Check,sandbox);DesktopGoalProxyTests.RunAll(Check,sandbox);PortalNativeHeadlessTests.RunAll(Check,sandbox);PortalManagementHttpTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
+            if(args.Length==2&&args[1]=="--management"){ConversationTransferTests.RunAll(Check,sandbox);PortalSkillTests.RunAll(Check,sandbox);PortalConversationManagementTests.RunAll(Check,sandbox);DesktopGoalProxyTests.RunAll(Check,sandbox);PortalNativeHeadlessTests.RunAll(Check,sandbox);PortalManagementHttpTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
             if(args.Length==2&&args[1]=="--updates"){SwitcherUpdateTests.RunAll(Check,sandbox);SwitcherLifecycleTests.RunAll(Check,sandbox);SwitcherInstallationTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
             if(args.Length==2&&args[1]=="--lifecycle"){SwitcherLifecycleTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
             if(args.Length==2&&args[1]=="--installation"){SwitcherInstallationTests.RunAll(Check,sandbox);Console.WriteLine(passed+" tests passed.");return 0;}
@@ -126,6 +127,7 @@ internal static class TestRunner
             SimpleWorkflowTests.RunAll(Check,sandbox,a,b);
             ThreadCopyTests.RunAll(Check,sandbox,a,b);
             TransferTests.RunAll(Check,sandbox);
+            ConversationTransferTests.RunAll(Check,sandbox);
             ToolContractCompatibilityTests.RunAll(Check,sandbox);ToolTunnelTests.RunAll(Check,sandbox);GlobalToolAccessTests.RunAll(Check,sandbox);SitesArchiveTests.RunAll(Check,sandbox);
             Check("native file upload protocol suite",()=>Assert(NativeFileUploadTests.Main(new[]{Folder("native-file-upload")})==0,"native file upload regression"));
             SharedPagesTests.RunAll(Check,sandbox);ResourceLinksTests.RunAll(Check,sandbox);

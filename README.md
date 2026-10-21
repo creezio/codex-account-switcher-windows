@@ -239,6 +239,11 @@ sur les pages, sites et plugins ne sont pas transférés. **Copies récentes**
 permet de rouvrir une copie ou de vérifier une réponse perdue sans la dupliquer.
 [Fonctionnement, formats pris en charge et limites](docs/THREAD-COPY.md).
 
+Les agents disposent aussi de `list_instance_conversations`, `copy_conversation`,
+`transfer_conversation`, `get_conversation_transfer` et `resume_conversation_transfer`.
+Les mêmes opérations sont accessibles par API et webhooks d'administration signés,
+sans prompt ni délégation. [Parcours, endpoints et reprise](docs/CONVERSATION-TRANSFER-API.md).
+
 Le même menu sépare quatre autres usages : **Transférer une conversation**,
 **Ouvrir les fichiers d’un projet**, **Cloner un projet local** et **Transférer
 les conversations d’un projet**. Un résumé précède l’exécution et les opérations

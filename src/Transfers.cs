@@ -52,7 +52,7 @@ namespace Creezio.Switcher
         internal async Task<TransferRecord> Prepare(TransferRequest request,CancellationToken token)
         {
             RelayStore.MessageId(request.Id);if(request.Source==request.Destination)throw new InvalidOperationException("Choisissez deux instances différentes.");
-            if(!ProjectKind(request.Kind)&&request.Kind!="transfer_thread")throw new InvalidOperationException("Action de transfert inconnue.");
+            if(!ProjectKind(request.Kind)&&request.Kind!="transfer_thread"&&request.Kind!="copy_thread")throw new InvalidOperationException("Action de transfert inconnue.");
             if(String.IsNullOrWhiteSpace(request.Title)||request.Title.Length>160)throw new InvalidOperationException("Saisissez un nom de 1 à 160 caractères.");
             using(store.Lease("transfer-"+request.Id)){
                 var old=store.ReadRecord<TransferRecord>("transfer-"+request.Id+".dpapi");
@@ -105,7 +105,7 @@ namespace Creezio.Switcher
                             if(!await backend.IsArchived(r.Request.Source,item.Source,token).ConfigureAwait(false))throw new InvalidOperationException("Archivage non confirmé. Reprenez la vérification ; les copies ne seront pas recréées.");item.Archived=true;Save(r);
                         }
                     }
-                    Report(r,"completed",Archives(r.Request.Kind)?"Transfert vérifié. Conversations originales archivées ; fichiers et projet source conservés.":r.Request.Kind=="link_project"?"Projet accessible dans Codex, avec les mêmes fichiers et sans historique importé.":"Projet et conversations copiés, vérifiés et associés dans Codex. Sources conservées.",progress);return r;
+                    Report(r,"completed",Archives(r.Request.Kind)?"Transfert vérifié. Conversations originales archivées ; fichiers et projet source conservés.":r.Request.Kind=="copy_thread"?"Conversation copiée et vérifiée. Original conservé.":r.Request.Kind=="link_project"?"Projet accessible dans Codex, avec les mêmes fichiers et sans historique importé.":"Projet et conversations copiés, vérifiés et associés dans Codex. Sources conservées.",progress);return r;
                 }catch(Exception e){r.Message="Opération suspendue : "+Program.SafeError(e)+" Les étapes confirmées sont conservées ; Reprendre ne recrée pas les copies.";Save(r);throw;}
             }
         }

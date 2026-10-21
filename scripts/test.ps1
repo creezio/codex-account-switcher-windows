@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([switch]$ProtocolSmoke, [switch]$LiveReadOnly, [switch]$DesktopSmoke, [string]$DesktopAuthFile, [string]$TestDirectory,[switch]$HeadlessOnly,[switch]$StorageOnly,[switch]$ChatWatchOnly,[switch]$ToolContractOnly,[switch]$WebhookOnly,[switch]$McpBootstrapOnly,[switch]$EnrollmentOnly,[switch]$PluginsOnly,[switch]$UpdatesOnly,[switch]$LifecycleOnly,[switch]$InstallationOnly,[switch]$SkillsOnly,[switch]$ManagementOnly)
+param([switch]$ProtocolSmoke, [switch]$LiveReadOnly, [switch]$DesktopSmoke, [string]$DesktopAuthFile, [string]$TestDirectory,[switch]$HeadlessOnly,[switch]$StorageOnly,[switch]$ChatWatchOnly,[switch]$ToolContractOnly,[switch]$WebhookOnly,[switch]$McpBootstrapOnly,[switch]$EnrollmentOnly,[switch]$PluginsOnly,[switch]$UpdatesOnly,[switch]$LifecycleOnly,[switch]$InstallationOnly,[switch]$SkillsOnly,[switch]$ManagementOnly,[switch]$ConversationsOnly)
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $testOutput = Join-Path $projectRoot 'work\test-bin'
@@ -56,6 +56,7 @@ $sources += Join-Path $projectRoot 'tests\PortalSkillTests.cs'
 $sources += Join-Path $projectRoot 'tests\PortalConversationManagementTests.cs'
 $sources += Join-Path $projectRoot 'tests\DesktopGoalProxyTests.cs'
 $sources += Join-Path $projectRoot 'tests\PortalManagementHttpTests.cs'
+$sources += Join-Path $projectRoot 'tests\ConversationTransferTests.cs'
 $sources += Join-Path $projectRoot 'tests\PortalNativeHeadlessTests.cs'
 $sources += Join-Path $projectRoot 'tests\RelayMcpBootstrapTests.cs'
 $sources += Join-Path $projectRoot 'tests\SwitcherUpdateTests.cs'
@@ -67,6 +68,7 @@ $sources += Join-Path $projectRoot 'tests\CloudflareTunnelTests.cs'
 if ($LASTEXITCODE -ne 0) { throw 'Test compilation failed.' }
 if (-not $TestDirectory) { $TestDirectory = Join-Path $projectRoot 'work\test-sandbox' }
 $testArgs=@($TestDirectory);if($HeadlessOnly){$testArgs+='--headless'}
+if($ConversationsOnly){$testArgs+='--conversation-transfers'}
 if($StorageOnly){$testArgs+='--storage'}
 if($ChatWatchOnly){$testArgs+='--chat-watch'}
 if($ToolContractOnly){$testArgs+='--tool-contract'}

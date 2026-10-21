@@ -49,7 +49,7 @@ namespace Creezio.Switcher
         internal const string Record="portal-administration-v1.dpapi";
         internal const int MaximumBody=4096;
         private static readonly Regex Endpoint=new Regex(@"\A/v1/admin/([a-f0-9]{32})/(?:(capabilities|instance-enrollments)(?:/([a-f0-9]{32})(?:/(confirm|cancel|browser-callback))?)?|instances/([a-f0-9]{32})/(plugins|plugin-installs)(?:/([a-f0-9]{32}))?)\z");
-        internal static Match Path(string path){var match=Endpoint.Match(path??"");if(match.Success)return match;match=PortalManagementHttp.Path(path);return match.Success?match:PortalResourceAccessHttp.Path(path);}
+        internal static Match Path(string path){var match=Endpoint.Match(path??"");if(match.Success)return match;match=PortalManagementHttp.Path(path);if(match.Success)return match;match=PortalResourceAccessHttp.Path(path);return match.Success?match:ConversationTransfersHttp.Path(path);}
         internal static int MaximumBodyFor(string path){return PortalManagementHttp.MaximumBody(path);}
         internal static PortalAdministrationPolicy Policy(RelayStore store){return store.ReadRecord<PortalAdministrationPolicy>(Record);}
         internal static string NewSecret(){var bytes=new byte[32];using(var random=RandomNumberGenerator.Create())random.GetBytes(bytes);return Hex(bytes);}
