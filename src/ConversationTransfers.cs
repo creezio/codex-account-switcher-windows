@@ -70,10 +70,12 @@ namespace Creezio.Switcher
         internal async Task<object> List(string route,string actor,RelaySession session,string instance,string query,string cursor,CancellationToken token)
         {
             Principal(route,actor,session);var pin=Resolve(route,instance);
+            if(String.IsNullOrEmpty(cursor))cursor=null;
+            if(String.IsNullOrWhiteSpace(query))query=null;
             if((query??"").Length>200||(cursor??"").Length>4096)throw new WebhookException(400,"Recherche ou curseur trop long.");
             var page=dependencies.List!=null?await dependencies.List(pin.Id,query,cursor,token).ConfigureAwait(false):await new ThreadCopies(store).List(pin.Id,query,cursor,token).ConfigureAwait(false);
             Principal(route,actor,session);if(!Same(pin,Resolve(route,pin.Id)))throw new WebhookException(409,"Le compte ou l'autorisation a changé pendant la lecture.");
-            return new{instanceId=pin.Id,conversations=page.Threads.Select(t=>new{id=t.Id,title=t.Title,folder=t.Folder,status=t.Status}).ToArray(),cursor=page.Cursor};
+            return new{instanceId=pin.Id,conversations=page.Threads.Select(t=>new{id=t.Id,title=t.Title,folder=t.Folder,status=t.Status}).ToArray(),cursor=String.IsNullOrEmpty(page.Cursor)?null:page.Cursor};
         }
         internal object Start(string route,string actor,RelaySession session,string key,string kind,string source,string destination,string thread,string title,bool explicitRequest)
         {

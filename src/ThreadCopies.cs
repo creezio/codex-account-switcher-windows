@@ -260,7 +260,9 @@ namespace Creezio.Switcher
         {
             var a=Accounts();var owner=Instance(a,instance);
             using(var rpc=connect(a.Instances.Home(owner))){
-                var page=await rpc.Call("thread/list",new{limit=50,cursor=cursor,searchTerm=String.IsNullOrWhiteSpace(query)?null:query,sortKey="updated_at",useStateDbOnly=true},token).ConfigureAwait(false);
+                // Include local histories which predate or have not yet entered
+                // the native state index; Codex owns their merged pagination.
+                var page=await rpc.Call("thread/list",new{limit=50,cursor=cursor,searchTerm=String.IsNullOrWhiteSpace(query)?null:query,sortKey="updated_at",useStateDbOnly=false},token).ConfigureAwait(false);
                 var choices=RelayEngine.Rows(Json.Get(page,"data")).Select(Choice).ToArray();
                 foreach(var c in choices)if(String.IsNullOrWhiteSpace(c.Title))c.Title="Conversation "+c.Id;
                 return new CopyThreadPage{Threads=choices,Cursor=Json.Str(Json.Get(page,"nextCursor"))};

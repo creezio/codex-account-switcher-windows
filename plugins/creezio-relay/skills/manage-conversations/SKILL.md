@@ -7,7 +7,8 @@ Bind this actual chat with `../../scripts/bind-chat.ps1` (or `bind_headless_chat
 for its existing owned headless mission). Keep the returned session private.
 Use `list_instances` and `list_instance_conversations` to resolve the user's
 source instance, destination instance and exact conversation ID. The listing
-is paginated: pass its cursor with the same instance and query.
+is paginated: pass its cursor with the same instance and query; stop when the
+cursor is null or empty.
 
 `copy_conversation` preserves the original. `transfer_conversation` copies and
 verifies the history, then archives the original after checking both histories
